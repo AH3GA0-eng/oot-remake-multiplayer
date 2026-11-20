@@ -127,6 +127,20 @@ std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<
                                     const std::function<bool(const std::string&)>& played,
                                     const std::function<bool(std::uint64_t)>& ours = nullptr);
 
+// Crossing last kills (review-dc-0118): two owners each kill their own last enemy of an event within one round trip,
+// so each game has no owned enemy alive when the other's kill lands, and both keep it (nobody plays the event). The
+// tiebreak (pure): another game's kill of `keeper` kept here for `kept_for_us` lands anyway once it was kept
+// kCrossingUs, if one of the same event's kill actors that our game owned died here within kCrossingGapUs of that
+// kill being kept (`ours_died`, the caller's check: a crossing, not one kill long after the other) and our player
+// number is below the keeper's owner's. So exactly one of the crossing owners (the lowest) plays the event and the
+// others get its flags; a game that owned none of them, or whose own enemy died long before, still only waits (in a
+// kill after kill the last enemy's owner plays it). kCrossingUs is longer than a room event plays, so the playing
+// game's flags have come by then in every case that is no crossing.
+inline constexpr std::uint64_t kCrossingUs = 15'000'000;
+inline constexpr std::uint64_t kCrossingGapUs = 2'000'000;
+bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
+                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died);
+
 // The follow triggers' keepers in `scene` (pure): for each event our game has not played, its follow actors of group
 // 0 and the largest of each linked group. coop_world (WorldSync::SetTriggerKeepers) keeps another game's move, rest
 // place and fall of a keeper until it is no keeper any more (the event played here, or a scene change).

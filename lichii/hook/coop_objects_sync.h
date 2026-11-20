@@ -1061,6 +1061,8 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // Our own player number (0: not known yet).
+    std::uint8_t Self() const { return self_; }
     // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
     // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
     bool OwnerSaysDead(std::uint64_t address) const;

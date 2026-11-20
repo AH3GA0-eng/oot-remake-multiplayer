@@ -726,6 +726,23 @@ std::set<std::uint64_t> KillKeepers(std::string_view scene, const std::function<
     return out;
 }
 
+bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
+                       std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died) {
+    if (kept_for_us < kCrossingUs || self == 0 || !keeper_owner || *keeper_owner == 0 || self >= *keeper_owner ||
+        !ours_died) {
+        return false;
+    }
+    for (const auto& t : kTriggers) {
+        if (t.kind != Trigger::kill || t.scene != scene || t.id != keeper) continue;
+        for (const auto& o : kTriggers) {  // another kill actor of the same event that was ours and died here
+            if (o.kind == Trigger::kill && o.scene == scene && o.event == t.event && o.id != keeper && ours_died(o.id)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 std::set<std::uint64_t> FollowKeepers(std::string_view scene, const std::function<bool(const std::string&)>& played) {
     std::set<std::uint64_t> out;
     std::map<std::pair<std::string_view, std::uint64_t>, std::uint64_t> largest;  // (event, group) -> its keeper
