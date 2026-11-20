@@ -1,6 +1,6 @@
 # Nucleus Co-op handler for Squadala!
 
-`OoTCoop.js` is a handler for [Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus), a free Windows tool that runs several copies of a PC game split-screen on one PC, each with its own controller. With it, 2 to 4 players on one PC start Squadala! on Longshot in one click: player 1's game hosts on this PC, and the others join it. Friends on other PCs can join the same session too, with the invite code that the server window shows.
+`OoTCoop.js` is a handler for [Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus), a free Windows tool that runs several copies of a PC game split-screen on one PC, each with its own controller. With it, 2 to 4 players on one PC start Squadala! on Longshot in one click: player 1's game hosts on this PC, and the others join it. Friends on other PCs can join the same session too, with the invite code that the server window shows. When another PC hosts, the option **This PC: Join a game on this network** makes every game on this PC join that host instead.
 
 How to play with it: [docs/play-lan.md, "Split screen (experimental)"](../../docs/play-lan.md#split-screen-experimental).
 
@@ -18,7 +18,7 @@ For each player, Nucleus makes an instance folder (`C:\Nucleus\content\OoTCoopLo
 
 | File | What it holds |
 |---|---|
-| `coop.ini` | The session's server and port (below), the player's Nucleus nickname (1 to 16 characters, else `Player N`), and the session's join password. Player 1's start makes the session and keeps it in `nucleus-players\session.txt` beside the game (a line each: password, server, port) |
+| `coop.ini` | The session's server and port (below), the player's Nucleus nickname (1 to 16 characters, else `Player N`), and the session's join password. Player 1's start makes the session and keeps it in `nucleus-players\session.txt` beside the game (a line each: password, server, port). With **Join a game on this network**: `join_lan` and the name only (below) |
 | `coop-options.ini` | The kit's `coop-options.ini` (or the game's own copy), plus this game's controller: `LICHII_COOP_PAD=<Nucleus's pad number>` and `LICHII_COOP_KEYBOARD=off`. The keyboard player gets `LICHII_COOP_PAD=none` and `LICHII_COOP_KEYBOARD=focus`. Players 2 to 4 have no `color` line, so each gets its slot's colour |
 | `user` | A junction (no admin needed). Player 1's points to the game's own `user` folder, so player 1 plays their own saves. Player N's (N from 2 to 4) points to `nucleus-players\playerN\user` beside the game. A guest plays from its co-op save folder, which is filled with the host's save when it joins |
 | `player-key.txt` | Player 1's own key, or a key kept for player N in `nucleus-players\playerN` (the Lobby's mutes and bans follow it) |
@@ -30,6 +30,15 @@ Player 1's start also runs the kit's `start-server.cmd <port>` in a window of it
 If a `coop_server.exe` already runs on this PC when player 1 starts (`Host.bat`, `start-server.cmd`, a session not ended), the handler starts no server and says so (a message box, else Nucleus's log): that server has another password or holds the port, and it is left alone (friends may be on it). With no kit above the game (no `server\coop_server.exe`), or a kit without `start-server.cmd`, it starts no server and says so in Nucleus's log; the games then look for one at `127.0.0.1`, port 27510. The server window runs `start-server.cmd` through `cmd /c`, so it closes with the server.
 
 When the session ends, Nucleus closes every `coop_server.exe` on this PC (`Game.KillProcessesOnClose`).
+
+### This PC: Host on this PC, or Join a game on this network
+
+The handler's one option on Nucleus's setup screen (`Context.Options["ThisPC"]`):
+
+- **Host on this PC** (the default): all of the above. Any other value counts as this one: no choice yet, an older Nucleus, or the `Online` key of an older handler.
+- **Join a game on this network**, when another PC on your network hosts: no server is started, and `session.txt` is removed. Each game's `coop.ini` has `join_lan = first` and its `name`, with no `server`, `port` or `password`. With `join_lan_host = <name>` in the kit's `coop-options.ini` (or the game's, as above), it is `join_lan = <name>`. At its start, the game listens for games hosted on this network and joins the first one it can join (or the one whose host has that name), with no password: a host lets its own network in. After 60 seconds with none, it says so, and the player can pick one under **Browse games**. Saves, controllers, keys, logs and the 15 seconds between starts stay as above. Ending the session still closes every `coop_server.exe` on this PC.
+
+Nucleus keeps the choice in its game profile with the rest of the setup (`game profiles\<game>\Profile[n].json`, key `Options`), so a saved profile starts the same way next time.
 
 Each game reads its own controller and keeps reading it while another window is in front (patch 0015, `LICHII_COOP_PAD`). So the handler uses none of Nucleus's input hooks (no x360ce or XInput DLLs in the game folder). It does say it uses XInput (`Game.Hook.XInputEnabled = true`): that only makes Nucleus list the controllers on its setup screen and give each player its pad number; the DLLs come only with `Game.Hook.CustomDllEnabled`, `Game.XInputPlusDll`, `Game.UseX360ce` and `Game.ProtoInput`, all off. The module reads `coop-options.ini` beside `longshot.exe` because the instance folder has no kit of its own (`CoopTitle::ApplyKitOptions`). A kit counts only when it is the game's own: the game is its `hookshot\game`, or `OOT_COOP_KIT` or `coop-kit.txt` names it. So Nucleus unzipped inside a kit folder works too. A co-op game built before that change gives every copy the same controller: build it again (`Build-Hookshot-Coop.bat`).
 
@@ -49,4 +58,4 @@ Windows only, nothing to install:
 cscript //nologo //E:jscript tools\nucleus\test_handler.js
 ```
 
-It runs `Game.Play` for three players (two controllers and one keyboard) against a stand-in of Nucleus's `Context` on a made-up kit in `%TEMP%`, then checks every file above, including real junctions, and the server start (the server window's command line, the kit's port, password, bind and allow lines, `session.txt`, no kit). It prints `ok: N checks` and exits with 0 when all pass. It cannot check Nucleus itself: how it places the windows, its pad numbers, and the admin prompt.
+It runs `Game.Play` for three players (two controllers and one keyboard) against a stand-in of Nucleus's `Context` on a made-up kit in `%TEMP%`, then checks every file above, including real junctions, the server start (the server window's command line, the kit's port, password, bind and allow lines, `session.txt`, no kit), and both values of **This PC** (no server and `join_lan` in join mode, `join_lan_host`, an old `Online` value hosting). It prints `ok: N checks` and exits with 0 when all pass. It cannot check Nucleus itself: how it places the windows, its pad numbers, its option screen, and the admin prompt.

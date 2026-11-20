@@ -874,9 +874,52 @@ bool Translated(bool filled, HosCoopMenuPage* out) {
 
 }  // namespace
 
+// Nucleus's "Join a game on this network" (tools/nucleus/OoTCoop.js): coop.ini's join_lan ("first", or a host's
+// name) and no server: at the start the games on this network are listened for, and the first that can be joined (or
+// that host's) is joined, with no password (a host lets its own network in). None in kLanJoinMs: said, and the player
+// picks one in Browse games. g_mutex.
+std::string g_lan_join;            // what to join, "" none (or done)
+std::uint64_t g_lan_join_since = 0;
+constexpr std::uint64_t kLanJoinMs = 60000;
+
+void LanJoinStep(std::uint64_t now) {
+    if (g_lan_join.empty()) return;
+    if (g_lan_join_since == 0) {
+        g_lan_join_since = now;
+        LOG_INFO(Core, "coop: multiplayer tab: join_lan: listening for a game on this network to join ({})",
+                 g_lan_join == "first" ? std::string("the first that can be joined") : "the host " + g_lan_join);
+    }
+    if (const HosCoopStatus st = Status(); st.state != HOS_COOP_IDLE && st.state != HOS_COOP_FAILED) {
+        g_lan_join.clear();   // (a session already: the player's own)
+        return;
+    }
+    CoopLanNet::Look(true, now);
+    if (const auto pick = CoopLan::PickToJoin(CoopLanNet::Games(now), g_lan_join, coop::protocol::kProtocolVersion)) {
+        LOG_INFO(Core, "coop: multiplayer tab: join_lan: joining {}'s game on this network ({} ms after the start)",
+                 pick->game.name, now - g_lan_join_since);
+        g_lan_join.clear();
+        CoopLanNet::Look(false, now);
+        const std::string line = pick->address + ":" + std::to_string(pick->game.port);
+        if (!Join(line)) LOG_INFO(Core, "coop: multiplayer tab: join_lan: the join did not start");
+        return;
+    }
+    if (now - g_lan_join_since > kLanJoinMs) {
+        LOG_INFO(Core, "coop: multiplayer tab: join_lan: no game found on this network in {} s",
+                 kLanJoinMs / 1000);
+        g_lan_join.clear();
+        CoopLanNet::Look(false, now);
+        g_menu.SetNote({"No game found on this network. Pick one in Browse games, or host one."});
+    }
+}
+
 void Init(bool coop_on) {
     std::lock_guard lock(g_mutex);
     g_coop_on = coop_on;
+    if (!coop_on) {
+        if (const auto want = CoopTitleMenu::IniGet(ReadText(CoopIni()), "join_lan"); want && !CoopTitleMenu::Trim(*want).empty()) {
+            g_lan_join = std::string(CoopTitleMenu::Trim(*want));
+        }
+    }
     LOG_INFO(Core, "coop: multiplayer tab: ready (the first tab of Hookshot's menu: F1, or Home on a pad){}",
              coop_on ? "; co-op came with the game's start" : "");
 }
@@ -926,6 +969,7 @@ void Tick() {
     g_next_follow_ms = now + 250;
     Follow(Status());
     RefreshFound(now);
+    LanJoinStep(now);
     // (a test's trigger, LICHII_COOP_TEST_TO_TITLE=1 only: a file "to-title.now" in the game's folder starts the way
     // back to the title a join with a file loaded takes, with no host to join)
     static const bool test_to_title = [] {

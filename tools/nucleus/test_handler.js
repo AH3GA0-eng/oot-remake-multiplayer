@@ -47,7 +47,8 @@ var System = {
         File: {
             Exists: function (p) { return fso.FileExists(p); },
             ReadAllText: function (p) { return readFile(p); },
-            WriteAllText: function (p, t) { writeFile(p, t); }
+            WriteAllText: function (p, t) { writeFile(p, t); },
+            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); }
         },
         Directory: {
             Exists: function (p) { return fso.FolderExists(p); },
@@ -266,9 +267,12 @@ for (var m = 0; m < modes.length; m++) {
 }
 attrMode = "number";
 
-// No choice on Nucleus's setup screen: the handler adds no option and reads none.
-check(Game.Options.length === 0, "no option on Nucleus's setup screen");
-check(readFile(fso.BuildPath(here, "OoTCoop.js")).indexOf("Context.Options") < 0, "the handler reads no option");
+// One choice on Nucleus's setup screen: This PC, Host on this PC (the default) or Join a game on this network.
+var opt = Game.Options.length === 1 ? Game.Options[0] : {};
+check(Game.Options.length === 1 && opt.name === "This PC" && opt.key === "ThisPC", "the option This PC");
+check(opt.values && opt.values.length === 2 && opt.values[0] === "Host on this PC" &&
+      opt.values[1] === "Join a game on this network" && opt.def === "Host on this PC",
+      "its two values, Host on this PC the default: " + (opt.values ? opt.values.join(" | ") : ""));
 
 // A run as player p (0-based); returns its coop.ini.
 function playAs(p) {
@@ -315,6 +319,22 @@ coopSession = null;
 var on2b = playAs(1);
 check(on2b.indexOf("server = 127.0.0.1\r\nport = 27515\r\n") >= 0 && on2b.indexOf("password = " + onPw) >= 0 &&
       startedWindows.length === 1, "a later player from session.txt starts nothing: " + on2b);
+
+// Host on this PC, chosen or not: the same. An old "Online" key, another value, no value: host too.
+var hostChoices = [{ ThisPC: "Host on this PC" }, { Online: "Allow online players" }, { ThisPC: "Online" }, {}];
+for (var hc = 0; hc < hostChoices.length; hc++) {
+    newSession();
+    Context.Options = hostChoices[hc];
+    var h1 = playAs(0), h2 = playAs(1);
+    Context.Options = undefined;
+    var hPw = coopSession.password, hWhat = "host (choice " + hc + "): ";
+    check(startedServers.length === 0 && startedWindows.length === 1 &&
+          /\\start-server\.cmd" 27515"$/.test(startedWindows[0].args), hWhat + "one server window");
+    check(h1.indexOf("server = 127.0.0.1\r\nport = 27515\r\n") >= 0 && h1.indexOf("password = " + hPw + "\r\n") >= 0 &&
+          h2.indexOf("server = 127.0.0.1\r\nport = 27515\r\n") >= 0 && h2.indexOf("password = " + hPw + "\r\n") >= 0 &&
+          h1.indexOf("join_lan") < 0 && h2.indexOf("join_lan") < 0, hWhat + "coop.ini: " + h2);
+    check(readFile(sessionTxt) === hPw + "\r\n127.0.0.1\r\n27515\r\n", hWhat + "session.txt: " + readFile(sessionTxt));
+}
 
 // The kit's server_password, server_bind and server_allow (coop-options.ini), as Host.bat passes them: this PC's
 // players go to the bound address, and 127.0.0.1 is added to the allowed ones.
@@ -379,6 +399,70 @@ coopSession = null;
 var old = playAs(1);
 check(old.indexOf("server = 127.0.0.1\r\nport = 27510\r\n") >= 0 && old.indexOf("password = oldpassword\r\n") >= 0,
       "an old session.txt: " + old);
+
+// Join a game on this network: no server window, no coop_server, no session.txt; each coop.ini has join_lan and its
+// name, no server, port or password. A stale session.txt (a host session before) is not used.
+var JOIN = { ThisPC: "Join a game on this network" };
+function joinOnly(ini, lan, what) {
+    check(ini.indexOf("join_lan = " + lan + "\r\n") >= 0 && !/server|port|password/.test(ini), what + ": " + ini);
+}
+writeFile(sessionTxt, "stalepassword\r\n192.168.1.99\r\n27599\r\n");
+newSession();
+logged = [];
+Context.Options = JOIN;
+var j = [playAs(0), playAs(1), playAs(2)];
+check(startedWindows.length === 0 && startedServers.length === 0, "join: no server window and no coop_server");
+check(!fso.FileExists(sessionTxt), "join: session.txt removed");
+check(logged.join("\n").indexOf("join_lan = first") >= 0, "join: logged: " + logged.join(" | "));
+joinOnly(j[0], "first", "join: player 1's coop.ini");
+joinOnly(j[1], "first", "join: player 2's coop.ini");
+joinOnly(j[2], "first", "join: player 3's coop.ini");
+check(j[0].indexOf("name = Saria\r\n") >= 0 && j[2].indexOf("name = Player 3\r\n") >= 0, "join: the names kept");
+check(readFile(fso.BuildPath(instances[1], "coop-options.ini")).indexOf("LICHII_COOP_PAD=") >= 0 &&
+      readFile(fso.BuildPath(instances[2], "coop-options.ini")).indexOf("LICHII_COOP_KEYBOARD=focus") >= 0,
+      "join: the pads and the keyboard player as before");
+check(readFile(fso.BuildPath(instances[0], "longshot_options.ini")).indexOf("fullscreen=0") >= 0, "join: longshot options");
+
+// A later player run anew with a stale session.txt, or with a host session still in memory: join_lan all the same.
+writeFile(sessionTxt, "stalepassword\r\n192.168.1.99\r\n27599\r\n");
+coopSession = null;
+joinOnly(playAs(1), "first", "join: a later player ignores a stale session.txt");
+coopSession = { password: "stalepassword", server: "192.168.1.99", port: 27599, pads: 0 };
+joinOnly(playAs(2), "first", "join: a later player ignores a host session in memory");
+fso.DeleteFile(sessionTxt);
+
+// A coop_server already running on this PC (the host may be here): join mode starts none and says nothing of it.
+newSession();
+logged = [];
+System.Diagnostics.Process.running = 1;
+joinOnly(playAs(0), "first", "join with a server running");
+System.Diagnostics.Process.running = 0;
+check(startedWindows.length === 0 && logged.join("\n").indexOf("already running") < 0, "join: a running server left alone");
+
+// join_lan_host in the kit's coop-options.ini: that host's name.
+writeFile(kitOptions, kitOptionsText + "join_lan_host =  Malon \r\n");
+newSession();
+var jh = [playAs(0), playAs(1)];
+joinOnly(jh[0], "Malon", "join_lan_host: player 1");
+joinOnly(jh[1], "Malon", "join_lan_host: player 2");
+writeFile(kitOptions, kitOptionsText);
+
+// No kit: the game's own coop-options.ini.
+var gameOptions = fso.BuildPath(game, "coop-options.ini");
+writeFile(gameOptions, "join_lan_host = Mido\r\n");
+fso.DeleteFile(fso.BuildPath(kit, "server\\coop_server.exe"));
+newSession();
+joinOnly(playAs(0), "Mido", "join_lan_host from the game's options (no kit)");
+writeFile(fso.BuildPath(kit, "server\\coop_server.exe"), "");
+fso.DeleteFile(gameOptions);
+check(startedWindows.length === 0 && startedServers.length === 0, "join, no kit: no server");
+Context.Options = undefined;
+
+// Back to host after a join session: the server again, at 127.0.0.1.
+newSession();
+var back = playAs(0);
+check(startedWindows.length === 1 && back.indexOf("server = 127.0.0.1\r\n") >= 0 && back.indexOf("join_lan") < 0 &&
+      fso.FileExists(sessionTxt), "host after join: " + back);
 
 // Clean up: the links first (rmdir removes a link, not what it names), then the rest.
 for (var r = 0; r < 3; r++) shell.Run("cmd /c rmdir \"" + fso.BuildPath(instances[r], "user") + "\"", 0, true);
