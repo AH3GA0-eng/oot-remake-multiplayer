@@ -955,8 +955,9 @@ class NoFairyTest(unittest.TestCase):
         for f in sorted(glob.glob(os.path.join(HERE, "..", "scenarios", "*.txt"))):
             if f.endswith(".steps.txt"):
                 continue
-            with open(f, encoding="utf-8") as fh:
-                text = fh.read()
+            if f.endswith(".inc.txt"):
+                continue  # a shared part, checked inside the scenarios that include it
+            text = hs.read_script(f)  # with its `include` lines in place
             if "BottleItem Fairy" in text:
                 continue  # puts a fairy in on purpose (hs-fairy-revive)
             steps = hs.parse(text)
