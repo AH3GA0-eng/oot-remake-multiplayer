@@ -921,6 +921,12 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
             if ((down & kLeft) != 0) events.emplace_back(HOS_COOP_MENU_LEFT, 0);
             if ((down & kRight) != 0) events.emplace_back(HOS_COOP_MENU_RIGHT, 0);
             const bool back = (down & kB) != 0 || ((down & kA) != 0 && focused == CoopTitleNative::kButtons - 1);
+            if ((down & kA) != 0) {   // (the log: what an A did here, for a tester's run)
+                LOG_INFO(Core, "coop: title: page: A on button {} (the menu's row {}{})", focused,
+                         focused >= 0 && focused < CoopTitleNative::kButtons ? look.rows[static_cast<std::size_t>(focused)]
+                                                                             : -1,
+                         back ? ", Back" : "");
+            }
             if ((down & kA) != 0 && !back && focused >= 0 && focused < CoopTitleNative::kButtons &&
                 look.rows[static_cast<std::size_t>(focused)] >= 0) {
                 events.emplace_back(HOS_COOP_MENU_SELECT, look.rows[static_cast<std::size_t>(focused)]);

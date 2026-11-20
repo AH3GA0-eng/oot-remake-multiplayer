@@ -307,7 +307,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
-    o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or("")));
+    o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or(kDefaultRelay)));
     o.relay_key = std::string(Trim(IniGet(options_ini, "relay_key").value_or("")));
     o.relay_room = std::string(Trim(IniGet(options_ini, "relay_room").value_or("")));
     o.list_name = std::string(Trim(IniGet(options_ini, "list_name").value_or("")));
@@ -327,6 +327,20 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     return o;
 }
 
+bool RoomNameOk(std::string_view room) {
+    if (room.empty()) return true;
+    if (room.size() < 3 || room.size() > 24) return false;
+    return std::all_of(room.begin(), room.end(), [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '-' || c == '_';
+    });
+}
+
+bool RelayOk(std::string_view relay) {
+    if (relay.empty()) return true;
+    if (relay.size() > 128) return false;
+    return std::all_of(relay.begin(), relay.end(), [](unsigned char c) { return c > 0x20 && c < 0x7f; });
+}
+
 void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     coop_ini = IniSet(coop_ini, "name", Trim(name), true);
     std::string o = options_ini;
@@ -340,6 +354,9 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
+    // (the relay: the kit's default needs no line; a room name, or none)
+    o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
+    o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);
     o = upnp ? IniUnset(o, "upnp") : IniSet(o, "upnp", "no", true);
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
@@ -914,22 +931,26 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
         l.focus = 0;
         return l;
     }
+    // Options always on the game's own Options button (its third with a save, its second without), Multiplayer on the
+    // slot left: an Options row on another slot chose the game's Options in its place, and the game showed that
+    // button pressed, the one with Multiplayer's word on it, a moment first (a tester's run, 2026-11-19).
     if (any_save && !one_start) {
-        // Continue and New Game each their own (no file select of a mod's that does both): the game's fourth slot
-        // shown for Options, decided in its place (the game's third button is under Multiplayer).
+        // (Continue and New Game each their own, no file select of a mod's that does both: the fourth slot shown)
         l.btn_num_frame = 4;
         l.rows = {{{"0001", TitleDo::kGame},
                    {"0000", TitleDo::kGame},
-                   {"0104", TitleDo::kMultiplayer},
-                   {"0105", TitleDo::kDecide, 2}}};
+                   {"0105", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer}}};
         l.count = 4;
         return l;
     }
     l.btn_num_frame = 3;
-    l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame},   // (Start; New Game when no mod has a file select)
-               {"0104", TitleDo::kMultiplayer},
-               any_save ? TitleMenuRow{"0105", TitleDo::kGame} : TitleMenuRow{"0105", TitleDo::kDecide, 1},
-               {}}};
+    if (any_save) {   // (one Start for Continue and New Game: Start on Continue's slot, Multiplayer on New Game's)
+        l.rows = {{{"0103", TitleDo::kGame}, {"0104", TitleDo::kMultiplayer}, {"0105", TitleDo::kGame}, {}}};
+    } else {          // (no save: New Game, or Start, then the game's Options, then Multiplayer on the third slot)
+        l.rows = {{{one_start ? "0103" : "0000", TitleDo::kGame}, {"0105", TitleDo::kGame},
+                   {"0104", TitleDo::kMultiplayer}, {}}};
+    }
     l.count = 3;
     return l;
 }
