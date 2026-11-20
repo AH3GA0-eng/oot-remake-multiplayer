@@ -1254,6 +1254,31 @@ bool AutoRejoining() {
     return g_rejoin.Retrying();
 }
 
+bool SetHostPort(int port) {
+    std::lock_guard lock(g_mutex);
+    if (port < 1 || port > 65535) return false;
+    CoopTitleMenu::Options o = ReadOptions();
+    o.host_port = static_cast<std::uint16_t>(port);
+    g_menu.Show(o);
+    Save();
+    const bool again = g_doing == "hosting" && !g_coop_on;
+    LOG_INFO(Core, "coop: multiplayer tab: the port when hosting is {} now (from the pause menu's Multiplayer page){}", port,
+             again ? ": hosting again on it" : "");
+    if (again && !Host()) SayOnPage(kSayRefused);
+    return true;
+}
+
+bool SetRelay(const std::string& relay) {
+    std::lock_guard lock(g_mutex);
+    if (!relay.empty() && !CoopTitleMenu::RelayOk(relay)) return false;
+    CoopTitleMenu::Options o = ReadOptions();
+    o.relay = relay;
+    g_menu.Show(o);
+    Save();
+    LOG_INFO(Core, "coop: multiplayer tab: the relay {} (from the pause menu's Multiplayer page)", relay.empty() ? "cleared" : "set");
+    return true;
+}
+
 void SetAutoRejoin(bool on) {
     std::lock_guard lock(g_mutex);
     CoopTitleMenu::Options o = ReadOptions();   // (the files' settings: the menu's are defaults until it opens)

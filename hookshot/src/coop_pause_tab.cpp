@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 
 namespace CoopPauseTab {
@@ -56,11 +57,19 @@ const std::string& TextField::Letters() const {
     // first, so the pad's up and down reach them soonest)
     static const std::string password =
         "ABCDEFGHJKLMNPQRSTUVWXYZ23456789IO01abcdefghijklmnopqrstuvwxyz!#$%&*+-.=?@_";
-    return kind_ == Kind::kRoom ? room : password;
+    static const std::string port = "0123456789";
+    static const std::string address = "abcdefghijklmnopqrstuvwxyz0123456789.-:";
+    return kind_ == Kind::kRoom ? room : kind_ == Kind::kPort ? port : kind_ == Kind::kAddress ? address : password;
+}
+
+int TextField::PortValue() const {
+    if (kind_ != Kind::kPort || text_.empty() || text_.size() > 5) return 0;
+    const int v = std::atoi(text_.c_str());
+    return v >= 1 && v <= 65535 ? v : 0;
 }
 
 bool TextField::Allowed(char c) const {
-    if (kind_ == Kind::kRoom) return Letters().find(c) != std::string::npos;
+    if (kind_ != Kind::kPassword) return Letters().find(c) != std::string::npos;
     return c > 0x20 && c < 0x7f;
 }
 
@@ -105,7 +114,7 @@ void TextField::Backspace() {
 bool TextField::Type(std::uint32_t cp) {
     if (cp >= 0x80) return false;
     char c = static_cast<char>(cp);
-    if (kind_ == Kind::kRoom && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');   // (any case: the relay's)
+    if ((kind_ == Kind::kRoom || kind_ == Kind::kAddress) && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');   // (any case)
     if (!Allowed(c) || text_.size() >= Max()) return false;
     if (cursor_ > text_.size()) cursor_ = text_.size();
     text_.insert(text_.begin() + static_cast<std::ptrdiff_t>(cursor_), c);
@@ -314,7 +323,7 @@ bool Page::TakeBack() {
 
 void Page::StartTyping(int which) {
     if (!shown_) return;
-    typing_ = which == 2 ? 2 : which == 1 ? 1 : 0;
+    typing_ = which >= 0 && which < kFields ? which : 0;
     typing_was_ = Field(typing_).text();
     keys_.Reset();
     repeat_since_ = repeat_last_ = 0;
@@ -621,7 +630,9 @@ RowAction ActionFor(int row, const Session& s) {
     case kRowLetIn:
         if (!s.in_one && !s.by_launcher) return RowAction::kAutoRejoin;   // (not in a session: the switch)
         if (!s.hosting) return s.in_one && s.can_resync ? RowAction::kResync : RowAction::kNone;   // (only a host lets in)
-        return RowAction::kViewLetIn;   // (a friend's answer code is pasted on that view)
+        // (somebody asks, or an invite code whose friends may send an answer code: the Let in view; else nothing: a
+        // tester pressed "Let in: nobody asks" and a view with nothing to do came)
+        return s.asking || s.invite ? RowAction::kViewLetIn : RowAction::kNone;
     case kRowLeave:
         if (s.by_launcher) return RowAction::kOpenMain;   // (not stopped here: the main page says to start the game again)
         return s.in_one ? RowAction::kConfirmLeave : RowAction::kNone;   // (a second A leaves: never one stray press)
@@ -802,7 +813,7 @@ std::vector<std::string> RowTexts(const SessionView& v) {
                                          : "Players: " + std::to_string(v.players);
     if (v.s.hosting) {
         if (v.asking.empty()) {
-            rows[kRowLetIn] = "Let in: nobody asks";   // (a friend's answer code: on the Let in view)
+            rows[kRowLetIn] = v.s.invite ? "Let in: answer code" : "Let in: nobody asks";   // (ActionFor)
         } else if (v.asking.size() == 1) {
             rows[kRowLetIn] = "Let in " + v.asking.front();
         } else {
@@ -1018,6 +1029,8 @@ const char* ActionWords(RowAction a) {
     case RowAction::kShowPassword: return "the join password shown or hidden";
     case RowAction::kViewPassword: return "the Join password view";
     case RowAction::kChangePassword: return "a new join password typed on the keyboard";
+    case RowAction::kChangePort: return "the port when hosting typed on the keyboard";
+    case RowAction::kTypeRelay: return "the relay's address typed on the keyboard";
     case RowAction::kBrowseLan: return "the browser lists the games on this network";
     case RowAction::kBrowseOnline: return "the browser lists the relay's public rooms";
     case RowAction::kBrowsePage: return "the browser's next page of games";
@@ -1163,12 +1176,17 @@ void SettingMove(int count, int dy, int* page, int* row) {
 std::vector<ListLine> ListLines(const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
     if (v.s.in_one || v.s.by_launcher) return lines;
-    lines[0] = ListLine{"Game", "Players"};
+    // (a heading of text: "Game | Players" with its value box read as a button that did nothing, a tester)
+    lines[0] = ListLine{v.s.online ? "Online games" : "Games on this network", ""};
     const std::vector<ListLine>& list = v.s.online ? v.online_list : v.lan_list;
     if (list.empty()) {
         lines[1].name = FitTo(v.s.online ? (v.online_state.empty() ? std::string("Asking the relay...") : v.online_state)
                                          : std::string("Looking for games..."),
                               kListNameChars);
+        if (v.s.online && !v.relay_set) {   // (no relay: typed here, saved as Co-op Settings' Relay row)
+            lines[1].name = "No relay set: A to type one";
+            lines[1].act = RowAction::kTypeRelay;
+        }
         return lines;
     }
     for (int c = 0; c < kCells; ++c) {
@@ -1228,7 +1246,8 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     // they are, with a capital letter.
     if (v.s.hosting && v.says.empty()) {
         if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED) {
-            why = !v.room.empty() ? "Online friends: room name" : "Online friends: invite code";
+            // (what to forward by hand; the invite code or a room still gets friends in meanwhile)
+            why = v.port > 0 ? "Forward UDP " + std::to_string(v.port) + " to this PC" : "Forward the port to this PC";
         } else if (v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
             why = "Only this network can join";
         } else if (v.problem == HOS_COOP_PROBLEM_SYMMETRIC_NAT) {
@@ -1238,12 +1257,17 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
         }
     }
     if (v.s.hosting && v.says.empty()) {
+        // (each line that can do something does it on an A or a click, as a tester expected of rows that look like
+        // the game's Options: the room's name or code copied, the players listed, a new join password, another port)
         add("Room", !v.room.empty() ? v.room : v.s.invite ? "Invite code" : "Coming...");
-        add("Players", std::to_string(std::max(v.players, 1)));
+        if (v.s.code) lines[at - 1].act = RowAction::kCopyCode;
+        add("Players in", std::to_string(std::max(v.players, 1)));
+        if (v.s.listed > 1) lines[at - 1].act = RowAction::kViewPlayers;
         if (!v.s.has_password) {
             add("Join password", "None");
         } else if (!v.s.password_shown || v.host_password.empty()) {
             add("Join password", "Hidden");
+            lines[at - 1].act = RowAction::kChangePassword;
         } else {
             // (in fives, ten letters a line: a made one is 20, two lines; a longer one cut on its third)
             for (std::size_t r = 0; r < 3 && r * 10 < v.host_password.size(); ++r) {
@@ -1254,14 +1278,21 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
                 }
                 if (r == 2 && v.host_password.size() > 30) line = FitTo(line + "...", kListValueChars);
                 add(r == 0 ? "Join password" : " ", line);
+                lines[at - 1].act = RowAction::kChangePassword;
             }
         }
         if (!v.asking.empty()) add("Asking to join", std::to_string(v.asking.size()));   // (nobody: the Let in row says so)
+        // (the port itself: a shut one is forwarded by hand; an A types another, and hosting starts again on it)
+        const std::string port = v.port > 0 ? std::to_string(v.port) + " " : std::string();
+        const std::size_t before = at;
         if (v.port_open) {
-            add("Router", "Port open");
+            add("Port", port + "open");
         } else if (v.problem == HOS_COOP_PROBLEM_UPNP_REFUSED || v.problem == HOS_COOP_PROBLEM_NO_INVITE_CODE) {
-            add("Router", "Port shut");
+            add("Port", port + "shut");
+        } else if (v.port > 0) {
+            add("Port", std::to_string(v.port));
         }
+        if (at > before) lines[at - 1].act = RowAction::kChangePort;
     } else if (v.s.in_one && !v.connecting && v.says.empty() && v.turned_away.empty()) {
         if (!v.host_name.empty()) add("Host", v.host_name);
         if (v.players > 0) add("Players", std::to_string(v.players));

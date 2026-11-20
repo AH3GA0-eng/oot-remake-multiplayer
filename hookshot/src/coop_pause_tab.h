@@ -140,14 +140,16 @@ struct Facts {
 // takes them in any case), 3 to 24. A join password: any printable character but a space, at most 128.
 class TextField {
 public:
-    enum class Kind { kRoom, kPassword };
+    enum class Kind { kRoom, kPassword, kPort, kAddress };   // (kPort: digits; kAddress: a relay's host[:port])
     explicit TextField(Kind kind) : kind_(kind) {}
     Kind kind() const { return kind_; }
     const std::string& text() const { return text_; }
     std::size_t cursor() const { return cursor_; }
-    std::size_t Max() const { return kind_ == Kind::kRoom ? 24 : 128; }
+    std::size_t Max() const { return kind_ == Kind::kRoom ? 24 : kind_ == Kind::kPort ? 5 : kind_ == Kind::kAddress ? 64 : 128; }
     // A room name the relay takes (3 or more of its letters); a password: any, none included.
     bool Ready() const { return kind_ == Kind::kRoom ? text_.size() >= 3 : true; }
+    // A port typed: 1 to 65535, else 0.
+    int PortValue() const;
     bool Allowed(char c) const;
     // The letters a pad cycles through, in order.
     const std::string& Letters() const;
@@ -235,9 +237,15 @@ public:
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
-    // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password.
-    TextField& Field(int which) { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
-    const TextField& Field(int which) const { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
+    // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password,
+    // 3 the port when hosting (the details' Router line), 4 the relay's address (the browser's online list).
+    static constexpr int kFields = 5;
+    TextField& Field(int which) {
+        return which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+    }
+    const TextField& Field(int which) const {
+        return which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+    }
     // Typing into a field brings up the on-screen keyboard (coop_keyboard.h): the pad's arrows move over its keys and
     // A presses the one under the cursor, B deletes (with nothing typed: Cancel), + is OK, L and R move in the text.
     void StartTyping(int which);
@@ -254,7 +262,7 @@ public:
 private:
     void TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms);
     TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword},
-        new_password_{TextField::Kind::kPassword};
+        new_password_{TextField::Kind::kPassword}, port_{TextField::Kind::kPort}, relay_{TextField::Kind::kAddress};
     int typing_ = -1, typed_ = -1;
     CoopKeyboard::Cursor keys_;
     std::string typing_was_;   // (the field before typing: Cancel puts it back)
@@ -352,6 +360,8 @@ enum class RowAction {
                      // (only on A: friends who found the game on this network type it)
     kViewPassword,   // the host's Session view: the Join password view (show it, change it)
     kChangePassword, // the Join password view: a new one typed on the keyboard, then the session's from then on
+    kChangePort,     // the details' Router line: the port when hosting typed on the keyboard, hosting again on it
+    kTypeRelay,      // the browser's online list with no relay: the relay's address typed on the keyboard, saved
                      // (players who join after need it; players in stay in)
     // The game browser (View::kLan): the games in the cells on the right, the list chosen on the rows.
     kBrowseLan,      // the cells list the games on this network
@@ -531,6 +541,7 @@ struct SessionView {
     std::string why;                  // co-op's last problem or hint (its status message), "" none
     int problem = 0;                  // ... as its number (HOS_COOP_PROBLEM_*), 0 none: the known ones in words of ours
     bool port_open = false;           // hosting: the router forwards the port (UPnP, PCP or NAT-PMP)
+    int port = 0;                     // hosting: the port the game listens on (0 not known)
     std::string player_name;          // a player's view: who
     // 0.11.6 (owner OK, 2026-11-19): this kit's release, "Squadala! v0.11.6" (CoopWindowBrand::TitleOf), "" none
     // (a developer's build). The details list's last line (DetailLines), "Release".

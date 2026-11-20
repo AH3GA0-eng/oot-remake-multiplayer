@@ -470,8 +470,8 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
     CHECK(ActionFor(kRowJoinCode, joined) == RowAction::kViewSession);
     CHECK(ActionFor(kRowJoinCode, idle) == RowAction::kViewJoin);
     // Let in: the host's Let in view; a guest Resync from host when its game can take the host's save; else nothing.
-    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kViewLetIn);
-    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kViewLetIn);
+    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kNone);   // (a room, nobody asks: nothing; below)
+    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kNone);   // (nobody asks, no answer codes: nothing)
     CHECK(ActionFor(kRowLetIn, joined) == RowAction::kNone);
     CHECK(ActionFor(kRowLetIn, idle) == RowAction::kAutoRejoin);
     Session resync = joined;
@@ -501,6 +501,8 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     // A relay room has no answer codes: Let in is its view (Let in or Refuse who asks).
     Session relay;
     relay.hosting = relay.in_one = relay.code = true;
+    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kNone);   // (nobody asks yet)
+    relay.asking = true;
     CHECK(ActionFor(kRowLetIn, relay) == RowAction::kViewLetIn);
     // A guest the host could not reach: Join code copies this game's answer code (co-op's menu's Copy answer).
     Session waiting;
@@ -516,7 +518,7 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     v.s.hosting = v.s.in_one = v.s.code = v.s.invite = true;
     v.players = 1;
     CHECK(RowTexts(v) ==
-          std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Let in: nobody asks", "Stop hosting"});
+          std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Let in: answer code", "Stop hosting"});
     CHECK(RowTexts(View::kLetIn, v)[3] == "Paste answer code");
     v.asking = {"Saria"};
     v.s.asking = true;
@@ -995,21 +997,28 @@ TEST_CASE("pause tab: the details list: who can reach a host, the router in word
     // The router kept its port shut: a line of ours for it and one hint line, the release still on the last.
     hv.problem = HOS_COOP_PROBLEM_UPNP_REFUSED;
     hv.why = "the router did not open the port (UPnP, PCP and NAT-PMP are off on it, or it said no)";
+    hv.port = 27510;
     d = DetailLines(View::kMain, hv);
     CHECK(d[1].name == "Room");
     CHECK(d[1].value == "Invite code");
-    CHECK(d[4].name == "Router");
-    CHECK(d[4].value == "Port shut");
-    CHECK(d[5].name == "Online friends: invite code");
+    CHECK(d[1].act == RowAction::kCopyCode);          // (an A copies it)
+    CHECK(d[2].name == "Players in");
+    CHECK(d[2].act == RowAction::kNone);              // (just us: no list)
+    CHECK(d[3].act == RowAction::kChangePassword);    // (a new one on the keyboard)
+    CHECK(d[4].name == "Port");
+    CHECK(d[4].value == "27510 shut");
+    CHECK(d[4].act == RowAction::kChangePort);        // (another port, hosting again on it)
+    CHECK(d[5].name == "Forward UDP 27510 to this PC");   // (what to forward by hand)
     CHECK(d[5].value.empty());
+    CHECK(d[5].act == RowAction::kNone);
     CHECK(d[6].name == "Release");
     for (const ListLine& l : d) {
         CHECK(l.name.find("UPnP") == std::string::npos);
         CHECK(l.name.size() <= kListNameChars);
         CHECK(l.value.size() <= kListValueChars);
     }
-    hv.room = "forest-gang";
-    CHECK(DetailLines(View::kMain, hv)[5].name == "Online friends: room name");
+    hv.s.listed = 2;
+    CHECK(DetailLines(View::kMain, hv)[2].act == RowAction::kViewPlayers);
     // No invite code and no room: this network only.
     SessionView lan;
     lan.s.hosting = lan.s.in_one = true;
@@ -1024,8 +1033,8 @@ TEST_CASE("pause tab: the details list: who can reach a host, the router in word
     open.port_open = true;
     d = DetailLines(View::kMain, open);
     CHECK(d[0].value == "Online");
-    CHECK(d[4].name == "Router");
-    CHECK(d[4].value == "Port open");
+    CHECK(d[4].name == "Port");
+    CHECK(d[4].value == "open");   // (no port known here)
     // Another hint keeps its words, with a capital letter.
     open.why = "voice chat is off";
     CHECK(DetailLines(View::kMain, open)[5].name == "Voice chat is off");
@@ -1435,8 +1444,8 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(rows[kRows - 1] == "Back");
     auto lines = ListLines(v);
     REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
-    CHECK(lines[0].name == "Game");      // (the header: the columns' names)
-    CHECK(lines[0].value == "Players");
+    CHECK(lines[0].name == "Games on this network");   // (a heading of text: no box that reads as a button)
+    CHECK(lines[0].value.empty());
     CHECK(lines[1].name == "Looking for games...");
     CHECK(lines[1].value.empty());
     CHECK(lines[2].name.empty());
@@ -1454,8 +1463,13 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     rows = RowTexts(View::kLan, v);
     CHECK(rows[0] == "Local games (2)");
     CHECK(rows[1] == "Online games (0)");
-    CHECK(ListLines(v)[0].name == "Game");
+    CHECK(ListLines(v)[0].name == "Online games");
+    CHECK(ListLines(v)[1].name == "No relay set: A to type one");   // (typed on the keyboard, saved)
+    CHECK(ListLines(v)[1].act == RowAction::kTypeRelay);
+    v.relay_set = true;   // (a relay that lists nothing: why, as it says)
     CHECK(ListLines(v)[1].name == "No relay set");
+    CHECK(ListLines(v)[1].act == RowAction::kNone);
+    v.relay_set = false;
     v.online_state.clear();
     v.online_rows.assign(10, "kokiri (1/4)");
     v.online_list.assign(10, ListLine{"kokiri (Saria)", "1/4"});
@@ -2034,4 +2048,21 @@ TEST_CASE("pause tab: the Settings page's list: a category's settings, its pages
     page = 0, row = 0;
     SettingMove(10, -1, &page, &row);
     CHECK((page == 0 && row == 0));
+}
+
+TEST_CASE("pause tab: the port and relay fields take what each can hold") {
+    TextField port(TextField::Kind::kPort);
+    for (char c : std::string("27a5.10")) port.Type(static_cast<unsigned char>(c));
+    CHECK(port.text() == "27510");   // (digits only)
+    CHECK(port.PortValue() == 27510);
+    port.Type('9');                  // (five digits at most)
+    CHECK(port.text() == "27510");
+    port.Set("70000");
+    CHECK(port.PortValue() == 0);    // (past 65535: no port)
+    port.Set("");
+    CHECK(port.PortValue() == 0);
+    TextField relay(TextField::Kind::kAddress);
+    for (char c : std::string("Relay.Example.org:27530 x")) relay.Type(static_cast<unsigned char>(c));
+    CHECK(relay.text() == "relay.example.org:27530x");   // (lower case, no spaces)
+    CHECK(relay.Shown(false, 40) == "relay.example.org:27530x");   // (shown as it is, not as a password)
 }

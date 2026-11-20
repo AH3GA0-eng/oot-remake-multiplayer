@@ -100,6 +100,11 @@ bool ListRoom();
 // The kit's relay ("host" or "host:port", coop-options.ini relay), "" none: the files' setting.
 std::string Relay();
 void SetListRoom(bool on);
+// The page's own typing (the details' Router line, the browser's online list): the port when hosting, saved at once
+// (coop-options.ini server_port) and, while hosting, hosting again on it; the relay's address (relay), saved at once.
+// False when refused (not a port, not a relay address): the page's note says why.
+bool SetHostPort(int port);
+bool SetRelay(const std::string& relay);
 // The page's "Games on this network": join the game at that address and port, with `password` (the Join view's,
 // "" none). Refused or failed: PageSays why.
 void JoinLanNow(const std::string& address, std::uint16_t port, const std::string& password);
