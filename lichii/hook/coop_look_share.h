@@ -140,11 +140,12 @@ private:
     std::array<Ready, kSlots> ready_{};
 };
 
-// Which pick goes out (coop_hook reads the saved Ints twice a second): the character and its Customize options as
-// one value (OwnPick::Of). A guest plays the host's save (CoopSave), whose Ints are the HOST's pick and options, not
-// the guest's: until the guest changes either on that save, the pick it had on its own save goes out (kept in
+// Which pick goes out (coop_hook reads the mod's Ints twice a second): the character and its Customize options as
+// one value (OwnPick::Of). A guest plays the host's save (CoopSave), whose saved Int is the HOST's pick: until the
+// guest picks a character on that save, the pick and options it had on its own save go out (kept in
 // coop-character.txt for the next start; none known: Link), so the others never see the guest as the host's
-// character. A new save load is a new start (CoopSave::SaveLoadStarts). The guest's own screen still shows the save's
+// character, nor the guest's own character in options set for another. The options are unsaved (0 after any load):
+// a change of them alone is no new pick. A new save load is a new start (CoopSave::SaveLoadStarts). The guest's own screen still shows the save's
 // pick (the mod's code reads those Ints; we leave the game's data alone). Not thread-safe (the game's thread only).
 class OwnPick {
 public:

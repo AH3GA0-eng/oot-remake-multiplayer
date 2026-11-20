@@ -399,7 +399,10 @@ TEST_CASE("look share: a guest on the host's save sends its own pick, not the ho
     OwnPick g;
     CHECK(g.Update(OwnPick::Of(9, 0x000011), false, 0) == OwnPick::Of(9, 0x000011));
     CHECK(g.Update(OwnPick::Of(30, 0x222222), true, 1) == OwnPick::Of(9, 0x000011));   // the host's pick and options
-    CHECK(g.Update(OwnPick::Of(30, 0x222223), true, 1) == OwnPick::Of(30, 0x222223));  // the guest changed an option
+    // The options are unsaved (0 after a load): one changed on the host's save is no pick of the guest's own.
+    CHECK(g.Update(OwnPick::Of(30, 0x222223), true, 1) == OwnPick::Of(9, 0x000011));
+    CHECK(g.Update(OwnPick::Of(44, 0x222223), true, 1) == OwnPick::Of(44, 0x222223));  // a pick: it and its options
+    CHECK(g.Update(OwnPick::Of(44, 0x000005), true, 1) == OwnPick::Of(44, 0x000005));  // then each option change
     CHECK(g.Update(OwnPick::Of(30, 0x222222), true, 2) == OwnPick::Of(9, 0x000011));   // a new load: ours again
     CHECK(g.TakeOwnChange() == std::optional<std::uint64_t>(OwnPick::Of(9, 0x000011)));
 }

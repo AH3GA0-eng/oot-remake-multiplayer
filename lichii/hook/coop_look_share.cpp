@@ -66,8 +66,9 @@ std::uint64_t OwnPick::Update(std::uint64_t read, bool on_host_save, std::uint64
         loads_ = loads;
         at_load_ = read;
         repicked_ = false;
-    } else if (read != at_load_) {
-        repicked_ = true;
+    } else if (CharacterIn(read) != CharacterIn(at_load_)) {
+        repicked_ = true;   // (only a new pick: the options are unsaved Ints, 0 after any load, so a change of them
+                            // on the host's save is the guest's own for the character it sees, not a pick of its own)
     }
     return repicked_ ? read : own_;
 }
