@@ -919,6 +919,11 @@ public:
     // copy then counts as playing its own animation for kWakeLatchUs.
     // `name` is what the copy's own AI played (a guard is taken only for an
     // IsGuardReaction one).
+    // Row 167: an enemy copy's own play of the animation it rested in
+    // (rest_animation) is never a wake: its AI is dormant under an owner's
+    // enemy that moved on (an Armos 'Wait', a Deku Baba's buried 'Wait').
+    // Neither a put-back of it nor a walk that sees it starts a chase or an
+    // own wake (OwnWake held the owner's play back and gave 'Wait' back).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
     // Issue 101 on the enemies' brain path (CoopBossNative::Table::TakeOwnWants): a plain enemy copy whose own
     // brain asked for another phase than its owner's (skipped: the copy plays the owner's, so neither its
@@ -1271,6 +1276,7 @@ private:
     static void ChaseStep(Object& o, std::uint64_t now_us);
     // Report 109: a copy's own AI woke for our Link (`taken_away`: the Mover put its play back already).
     void OwnWake(Object& o, bool taken_away, std::uint64_t now_us);
+    static bool RestPlay(const Object& o, std::string_view name);  // row 167: see NoteTakeover
 
     // Takes `o` down to `life`: a hurt when hurt is on, else a write.
     // The hits the game's Life step dealt o that count now (SetLifeEvents);

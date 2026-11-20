@@ -1502,6 +1502,11 @@ void Sync::OwnWake(Object& o, bool taken_away, std::uint64_t now_us) {
     }
 }
 
+bool Sync::RestPlay(const Object& o, std::string_view name) {
+    return o.reacts && !name.empty() && !o.rest_animation.empty() &&
+           AnimationBase(name) == AnimationBase(o.rest_animation);
+}
+
 void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
     const auto it = objects_.find(address);
     if (it == objects_.end()) {
@@ -1509,6 +1514,12 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
     }
     Object& o = it->second;
     o.own_ai_at = now_us;  // row 97: any kind; read only while our event runs
+    // Row 167: a copy whose own AI went back to the animation it rested in
+    // (a dormant Armos' 'Wait' under its owner's newer one) has not woken for
+    // our Link: no wake, no chase, nothing given back (RestPlay).
+    if (RestPlay(o, name)) {
+        return;
+    }
     if (o.reacts || (o.guard && IsGuardReaction(name))) {
         o.took_over_at = now_us;
         o.took_over_name = std::string(name);
@@ -2795,10 +2806,13 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 // A copy near our Link whose own AI plays something else than
                 // the owner's enemy (issue 132): it wants to act on our Link.
                 const auto& wanted = o.received.back().animation;
+                // Row 167: never its own rest animation (RestPlay): a dormant copy under an owner's
+                // enemy that moved on, not one acting on our Link.
                 const bool differs = o.animation && !o.animation->name.empty() && wanted &&
                                      !wanted->name.empty() &&
                                      AnimationBase(o.animation->name) != AnimationBase(wanted->name) &&
-                                     (o.reacts || IsGuardReaction(o.animation->name));
+                                     (o.reacts || IsGuardReaction(o.animation->name)) &&
+                                     !RestPlay(o, o.animation->name);
                 // Or the Mover had to put the owner's one back lately (issue 157).
                 const bool put_back = o.took_over_at != 0 && now_us >= o.took_over_at &&
                                       now_us - o.took_over_at <= kWakeLatchUs;

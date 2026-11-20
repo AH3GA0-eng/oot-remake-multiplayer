@@ -3912,6 +3912,82 @@ TEST_CASE("objects: a copy's own wake for our Link runs, the owner's rest is not
     CHECK(run(5.0f, "GetUp", false, "Wait", 3500).plays == std::vector<std::string>{"Wait"});
 }
 
+TEST_CASE("objects: a copy back in its rest animation has not woken for our Link (row 167)") {
+    // Row 167 (player log hiddenblitz, Dodongo's Cavern): P3's Armos turned
+    // ("Turn") and went back to "Wait"; P2's dormant copy, 5 m from P2's Link,
+    // kept its rest "Wait" under the owner's newer play. That was read as its
+    // own wake: the owner's "Wait" held back 3 s, "Wait" given back, a chase
+    // flagged, again every 10 s (the endless shake). The rest is no wake.
+    // `taken`: the Mover put the copy's own "Wait" back (NoteTakeover);
+    // else the walk sees the copy in "Wait" while the owner plays `owners`.
+    struct Run {
+        std::vector<std::string> plays;
+        std::size_t given_back = 0;
+        bool targeting = false;
+        std::size_t wake_notes = 0;
+    };
+    auto run = [](bool taken, const std::string& owners, const std::string& rest = "Wait") {
+        Sync sync;
+        sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, rest, "Enemy_Amos")});
+        const proto::ObjectId id = *sync.IdOf(0x100);
+        Own(sync, id, 2);
+        Run r;
+        // The owner's enemy plays `owners` for 2 s, then rests; the Mover
+        // fights the dormant copy's "Wait" all that time and a moment after.
+        for (std::uint64_t t = 10; t <= 2600; t += 66) {
+            const std::string theirs = t < 2000 ? owners : "Wait";
+            if (taken && t >= 100 && t < 2300) {
+                sync.NoteTakeover(0x100, t * kMs, rest);
+            }
+            sync.Receive(OwnerSample(id, 2, t * kMs, 5.0f, 2, theirs));
+            const std::string shown = taken ? theirs : rest;
+            for (const auto& p : All<proto::ObjectPresent>(
+                     Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, shown, "Enemy_Amos")}))) {
+                r.targeting = r.targeting || (p.objects[0].flags & kTargeting) != 0;
+            }
+            r.given_back += sync.TakeOwnWakes().size();
+            for (const std::string& n : sync.TakeNotes()) {
+                r.wake_notes += n.find("its own wake") != std::string::npos ? 1 : 0;
+            }
+        }
+        std::vector<PlayWish> plays;
+        sync.Plays(2605 * kMs, plays);
+        for (const PlayWish& p : plays) {
+            r.plays.push_back(p.name);
+        }
+        return r;
+    };
+    for (const bool taken : {true, false}) {
+        CAPTURE(taken);
+        const Run r = run(taken, "Turn");
+        CHECK(r.wake_notes == 0);
+        CHECK(r.given_back == 0);
+        CHECK_FALSE(r.targeting);
+        CHECK(r.plays == std::vector<std::string>{"Wait"});  // the owner's rest is put on it, not held back
+    }
+    // Its LOD name is the same rest.
+    CHECK_FALSE(run(false, "Turn", "Wait_LOD").targeting);
+    // A real wake is still one: the copy's own "GetUp" put back by the Mover
+    // (report 109's Deku Baba) is flagged targeting.
+    Sync sync;
+    sync.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+    Tick(sync, 0, {Acting(0x100, 0x11, 2, 5.0f, "Wait")});
+    const proto::ObjectId id = *sync.IdOf(0x100);
+    Own(sync, id, 2);
+    bool targeting = false;
+    for (std::uint64_t t = 10; t <= 1500; t += 66) {
+        if (t >= 100 && t < 1300) {
+            sync.NoteTakeover(0x100, t * kMs, "GetUp");
+        }
+        sync.Receive(OwnerSample(id, 2, t * kMs, 5.0f, 2, "Wait"));
+        for (const auto& p : All<proto::ObjectPresent>(Tick(sync, t * kMs, {Acting(0x100, 0x11, 2, 5.0f, "Wait")}))) {
+            targeting = targeting || (p.objects[0].flags & kTargeting) != 0;
+        }
+    }
+    CHECK(targeting);
+}
+
 TEST_CASE("objects: a copy's own wake gives its rise back once, never over the owner's new animation (report 109)") {
     // The review's case: own wake starts over the owner's "Wait"; the owner's
     // Link then reaches its Baba, which rises ("GetUp"). Plays wishes that, the
