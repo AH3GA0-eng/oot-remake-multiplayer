@@ -96,9 +96,9 @@ index 893b188..426082d 100644
 +        /* (patch 0015) a pad chosen for this game is its own, in front or not; the keys too when asked */
 +        if (pads_in_background(env, rx_option(4, 0)) || hos_input_pad_pick() > 0) pads_read(buttons, stick);
 +        if (hos_input_keyboard_mode() == 1) keys_behind(buttons, stick);
-+        /* (patch 0015) no mouse in this game: the camera is the game's and its pad's, behind too (a mouse camera left
-+           on, with its last free look, would put its angles back every frame over the right stick's) */
-+        if (hos_input_keyboard_mode() == 2) hos_mouse_native_stick(1);
++        /* (patch 0015) behind other windows the mouse is never this game's, in any keyboard mode: the camera is the
++           game's and the pads' (a Mouse camera on Native, with its last free look, would put its angles back over them) */
++        hos_mouse_native_stick(1);
          walk_held(0, 0, rx_option(HOS_OPT_WALK_MODE, 0) == 1);   /* (behind: a toggled walk is kept) */
          return;
      }
