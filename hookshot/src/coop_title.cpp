@@ -172,11 +172,19 @@ bool g_any_save = true;            // the look's save list: a save or not (the c
 bool g_one_start = false;          // one Start row for Continue and New Game (a file select mod runs)
 std::uint64_t g_apply_until = 0, g_apply_next = 0;   // the look set again until then (kApplyForMs)
 int g_focus_to = -1;               // a button to give the focus at the next step
+bool g_click_remapped = false;     // ClickedButton took a click's A for the button under the mouse (g_mutex)
 int g_decide = -1;                 // a game button to decide at the next step
 std::atomic<std::uint64_t> g_title_view_ms{0};   // when the title's rows or a page's view last changed
 std::atomic<bool> g_close_native_asked{false};   // the auto-load closed co-op's page: CoopPause told outside the lock
 int g_native_seen = -1;                          // the page and view NativePad saw last
 constexpr std::uint64_t kTitleClickThroughMs = 450;
+// The A of the click that changed the rows or the page, or of a double click's second press: the button went down
+// before the change or within 300 ms after it, and the A comes within kTitleClickThroughMs. A new click made after
+// looking at the new rows is a press of its own (a quick one, half a second on, was lost, a test run 2026-11-20).
+bool ClickThrough() {
+    const std::uint64_t view = g_title_view_ms.load(), down = g_title_mouse_down_ms.load(), now = NowMs();
+    return now - view < kTitleClickThroughMs && now - down < 350 && (down < view || down - view < 300);
+}
 std::atomic<std::uint64_t> g_auto_load_until{0};   // LoadHostSaveOnTitle: Continue chosen once the host's save is in
 std::atomic<bool> g_auto_load_test{false};          // (a test's: no session to wait for)
 std::atomic<std::uint64_t> g_auto_press_ms{0};      // the presses that load it began (0: none)
@@ -499,6 +507,42 @@ std::uint64_t TitlePane(void* ctx, std::uint64_t layout, const char* name) {
 std::uint64_t TitleButton(std::uint64_t screen, int i) {
     if (i < 0 || i >= ButtonCount(screen)) return 0;
     return Read64(Read64(screen + kTitleButtons) + 8ull * static_cast<std::uint64_t>(i));
+}
+
+// The title's button under the mouse (its box as Longshot's mouse widens it: 1100 across, to halfway to the next row),
+// -1 none. For a click's A: the focus our calls gave a button (a page left, B) is not Longshot's own, which then took
+// a click on the button it last hovered as no move and left the focus where ours put it: the A went to that button (a
+// click on Back opened Join, a test run 2026-11-20).
+int ButtonUnderMouse() {
+    float x = 0, y = 0;
+    bool held = false;
+    if (!CoopPauseTab::LayoutCursor(&x, &y, &held)) return -1;
+    const auto read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+    const std::uint64_t screen = g_screen.load();
+    int best = -1;
+    float best_dy = 1e9f;
+    for (int i = 0; i < CoopTitleNative::kButtons; ++i) {
+        const std::uint64_t b = TitleButton(screen, i);
+        const auto box = b != 0 ? CoopModScreens::HitBox(read, b) : std::nullopt;
+        if (!box) continue;
+        const float cx = (box->x0 + box->x1) / 2, cy = (box->y0 + box->y1) / 2;
+        const float dy = std::abs(y - cy);
+        if (std::abs(x - cx) <= 550 && dy < best_dy) best = i, best_dy = dy;
+    }
+    return best_dy <= 70 ? best : -1;   // (rows about 120 apart: halfway, with a little room)
+}
+
+// The button an A is for: a click's, the one under the mouse (its focus given to it); else the focused one.
+int ClickedButton(bool a_down, int focused) {
+    if (!a_down || !MouseClicked()) return focused;
+    const int under = ButtonUnderMouse();
+    static int traced = 0;
+    if (++traced <= 40) LOG_INFO(Core, "coop: title: trace: a click's A: under the mouse {}, focused {}", under, focused);
+    if (under < 0 || under == focused) return focused;
+    g_focus_to = under;
+    g_click_remapped = true;
+    LOG_INFO(Core, "coop: title: a click on button {} with the focus on button {}: the click's button", under, focused);
+    return under;
 }
 
 // BtnNum stopped at `frame`: that many of the game's buttons shown (OpenTitle's own way, ArrangeTitle). nullptr when
@@ -926,19 +970,22 @@ std::uint64_t NativePad(std::uint64_t buttons, std::int32_t stick[4]) {
         const int opened = g_native_page.load();
         std::uint64_t down = in & ~g_native_last;
         g_native_last = in;
-        if (opened < 0) return 0;
+        if (opened < 0) {
+            g_native_seen = -1;   // (none open: the next one, the same page again too, is a page that came)
+            return 0;
+        }
         // (a page or another of its views came: a click's A just after is the click that brought it, not the row now
         // under the mouse: a tester's click on Join opened Room or address's keyboard)
         if (const int seen = static_cast<int>(page) * 16 + opened + (v.typing ? 256 : 0); seen != g_native_seen) {
             g_native_seen = seen, g_title_view_ms = NowMs();
         }
-        if ((down & kA) != 0 && NowMs() - g_title_view_ms.load() < kTitleClickThroughMs &&
-            NowMs() - g_title_mouse_down_ms.load() < kTitleClickThroughMs + 400) {
+        if ((down & kA) != 0 && ClickThrough()) {
             down &= ~kA;
             LOG_INFO(Core, "coop: title: page: a click's A {} ms after the page came: not its row's",
                      NowMs() - g_title_view_ms.load());
         }
-        const int focused = FocusedIndex(g_screen.load());
+        const int focused = ClickedButton((down & kA) != 0, FocusedIndex(g_screen.load()));
+        g_click_remapped = false;   // (the page's rows are all ours: the remapped A acts at once)
         const CoopTitleNative::Look look = CoopTitleNative::LookFor(v, g_native_top);
         if (v.typing) {
             // The mouse on the keyboard's keys, as on the pause page: a key pressed and let go on is pressed, and the
@@ -1213,7 +1260,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         const std::uint64_t down = buttons & ~g_pad_last;
         g_pad_last = buttons;
         g_swallow &= buttons;   // (let go: the game gets it again)
-        const int focused = title ? FocusedIndex(g_screen.load()) : -1;
+        const int focused = title ? ClickedButton((down & kA) != 0, FocusedIndex(g_screen.load())) : -1;
         const bool menu = g_menu.load();
         const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub.load(), g_one_start);
         const CoopTitleMenu::TitleMenuRow* menu_row =
@@ -1255,16 +1302,23 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
                 g_native_last = buttons;
                 // (the title's own buttons show the page: no overlay; StepNative falls back to it for an older pack)
                 g_native_page = static_cast<int>(p), g_native_top = 0, g_native_refocus = !clicked;
+                g_title_view_ms = NowMs(), g_native_seen = -1;   // (a click's next A is not the page's: NativePad)
                 g_native_keys.Reset();
                 open_native = true;
             };
             // (a click's A just after the rows changed under the mouse (Multiplayer's rows, the title's again): the
             // click that changed them, not the row now there; kept from the game too)
-            if ((down & kA) != 0 && NowMs() - g_title_view_ms.load() < kTitleClickThroughMs &&
-                NowMs() - g_title_mouse_down_ms.load() < kTitleClickThroughMs + 400) {
+            if ((down & kA) != 0 && ClickThrough()) {
                 g_swallow |= kA;
                 LOG_INFO(Core, "coop: title: menu: a click's A {} ms after the rows changed: not the row's",
                          NowMs() - g_title_view_ms.load());
+                return buttons & ~g_swallow;
+            }
+            // (a click remapped to a game's own row: the game's A would go to the button it focuses: kept, the focus
+            // moved there; the next click is that row's)
+            if ((down & kA) != 0 && std::exchange(g_click_remapped, false) && menu_row != nullptr &&
+                menu_row->action == TitleDo::kGame) {
+                g_swallow |= kA;
                 return buttons & ~g_swallow;
             }
             if ((down & kA) != 0 && menu_row != nullptr && menu_row->action != TitleDo::kGame) {

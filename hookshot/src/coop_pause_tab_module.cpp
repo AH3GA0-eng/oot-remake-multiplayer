@@ -658,6 +658,8 @@ std::uint64_t g_set_left_ms = 0;          // the left button last seen down on L
 std::uint64_t g_list_focus_fix_ms = 0;    // a Left last sent to bring the game's cursor back from the list. g_mutex.
 // (that Left lands on the category beside the list's row, not the one shown: the category kept, and the steps back to
 // it until then. A test run 2026-11-20: a click on the last setting's arrow turned the category to Debug. g_mutex)
+std::atomic<std::uint64_t> g_key_end_ms{0};
+std::uint64_t g_set_enter_ms = 0;   // when the settings list was entered (Right or A on a category). g_mutex   // when the PC's Enter or Esc last ended the page's typing
 bool g_typing_seen = false;          // (the page typed at the last pad read; when typing last ended. g_mutex)
 std::uint64_t g_typing_end_ms = 0;
 // Back to the title (ToTitle): 0 none; 1 the pause menu to System and its cursor to Title Screen; 2 Title Screen
@@ -2080,8 +2082,10 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             if (held && !g_click_held) g_click_down_ms = NowMs();
             g_click_held = held;
             const std::uint64_t now = NowMs();
-            if (now - g_view_ms.load() < kClickThroughMs && now - g_click_down_ms.load() < kClickThroughMs + 400 &&
-                (in & kPadA) != 0) {
+            // (the click that brought the view, or a double click's second press: down before the view came or
+            // within 300 ms after; a new click made after looking at the view is its own)
+            const std::uint64_t view = g_view_ms.load(), cd = g_click_down_ms.load();
+            if (now - view < kClickThroughMs && now - cd < 350 && (cd < view || cd - view < 300) && (in & kPadA) != 0) {
                 in &= ~kPadA;   // (the click that brought this view: not this view's)
                 static int logged = 0;
                 if (++logged <= 30) {
@@ -2124,8 +2128,18 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             {
                 const bool typing_now = g_page.Typing() >= 0;
                 if (g_typing_seen && !typing_now) g_typing_end_ms = NowMs();
+#ifdef _WIN32
+                // (the PC key that ended it still held: the moment lasts until it is let go)
+                if (!typing_now && NowMs() - g_key_end_ms.load() < 400 &&
+                    ((GetAsyncKeyState(VK_RETURN) | GetAsyncKeyState(VK_ESCAPE)) & 0x8000) != 0) {
+                    g_key_end_ms = NowMs();
+                }
+#endif
                 g_typing_seen = typing_now;
                 if (!typing_now && NowMs() - g_typing_end_ms < 300) in &= ~kPadA;
+                // (ended by the PC's Enter or Esc: the game reads them as + and B too, and they came after the keyboard
+                // shut: + shut the menu, a test run 2026-11-20. Not after the pad's B: its second B goes back a view)
+                if (!typing_now && NowMs() - g_key_end_ms.load() < 400) in &= ~(kPadA | kPadB | kPadPlus);
             }
             // (a click on a setting is ours, made at its release: Longshot's A for the same click, when its mouse took
             // the row for one of the game's buttons, would change it again. A test run: Auto to Off, then back to Auto)
@@ -2396,7 +2410,11 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                         LOG_INFO(Core, "coop: pause tab: settings: the category is {} (the rows' cursor on it)",
                                  kSettingTabs[static_cast<std::size_t>(focused)]);
                     }
-                    if (set_row >= 0) {
+                    if (set_row >= 0 && now - g_set_enter_ms < 400) {
+                        // (the cursor's step of a Down just before the Right that entered the list, read only now: the
+                        // new category's list, entered as asked; a fast pad's Right was lost, a test run 2026-11-20)
+                        set_row = 0, g_set_page = 0;
+                    } else if (set_row >= 0) {
                         set_row = -1;
                         LOG_INFO(Core, "coop: pause tab: settings: the rows have the pad again (their cursor moved)");
                     }
@@ -2427,7 +2445,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
                 if (set_row < 0) {
                     if ((right || decide) && count > 0) {
-                        set_row = 0, g_set_page = 0, decide = false;
+                        set_row = 0, g_set_page = 0, decide = false, g_set_enter_ms = now;
                         g_page.Sound("button_on");
                     }
                 } else {
@@ -2629,6 +2647,7 @@ bool Key(std::uint32_t vk, bool repeat) noexcept {
         std::lock_guard lock(g_mutex);
         const int was = g_page.Typing();
         const bool taken = g_page.Key(vk, repeat);
+        if (was >= 0 && g_page.Typing() < 0) g_key_end_ms = NowMs();   // (Enter or Esc ended it: OnPad's moment)
         if (taken) g_live_poke = true;
         if ((vk == 0x0d || vk == 0x1b) && was >= 0) {   // (trace: Enter and Esc while typing)
             LOG_INFO(Core, "coop: pause tab: keyboard: {}{} while typing field {}: {}", vk == 0x0d ? "Enter" : "Esc",
