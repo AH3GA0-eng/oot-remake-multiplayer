@@ -195,6 +195,7 @@ CoopWorld::GrassSync& TheGrass() {
 constexpr int kScrubsCallerOrder = CoopCallerOrders::kScrubs;
 constexpr int kLiftRideCallerOrder = CoopCallerOrders::kLiftRide;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
 constexpr int kSwitchShareCallerOrder = CoopCallerOrders::kSwitchShare;  // room-objects: another player's timed switch held on ours
+constexpr int kKeptShieldCallerOrder = CoopCallerOrders::kKeptShield;  // row 160 (b): kept kills' copies
 constexpr int kPvpShieldCallerOrder = CoopCallerOrders::kPvpShield;  // phase 4: the _Pvp copies' Life invincible
 constexpr int kDbnoBodyCallerOrder = CoopCallerOrders::kDbnoBody;  // down but not out: our downed Link's crawl, shield, unseen (coop_dbno_body.h)
 
@@ -1579,6 +1580,85 @@ PvpShieldCaller& ThePvpShield() {
     return caller;
 }
 
+// Row 160 (b): the kept kills' copies (CoopEventResult::KeptShield) hold our key in the game's own no-reaction
+// invincibility while their kill waits here, through the same call our downed Link's shield makes. The objects'
+// walk sets what it wants (Want); the calc thread, at the svc cave, makes one call a frame; the walk reads On before
+// a kept kill lands (the key is out first).
+class KeptShieldCaller {
+public:
+    void Want(std::set<u64> want, std::set<u64> live) {
+        std::lock_guard lock(mutex_);
+        want_ = std::move(want);
+        live_ = std::move(live);
+    }
+    bool On(u64 life) const {
+        std::lock_guard lock(mutex_);
+        return shield_.On(life);
+    }
+    std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                         std::uint64_t main_base) {
+        std::lock_guard lock(mutex_);
+        if (after_call) {
+            const Pending was = std::exchange(pending_, Pending::none);
+            if (was == Pending::malloc) {
+                block_ = result;
+            } else if (was == Pending::shield) {
+                shield_.Called(asked_, true);
+                LOG_INFO(Core, "coop: dungeon: trigger: a kept kill's copy (Life {:#x}): the game's invincibility {}",
+                         asked_.life, asked_.on ? "on (no hit lands while its kill waits)" : "off (its kill lands)");
+                return std::nullopt;  // one a frame
+            }
+        }
+        if (main_base == 0 || pending_ != Pending::none) {
+            return std::nullopt;
+        }
+        const auto next = shield_.Next(want_, live_);
+        if (!next) {
+            return std::nullopt;
+        }
+        CoopPuppet::Call c;
+        if (block_ == 0) {
+            if (after_call && result == 0) {
+                return std::nullopt;  // the game had no memory: next frame
+            }
+            c.function = main_base + CoopBossNative::addr::kMalloc;
+            c.x[0] = 16;
+            pending_ = Pending::malloc;
+            return c;
+        }
+        const std::uint32_t key = CoopEventResult::kKeptShieldKey;
+        if (!guest.Write(block_, &key, sizeof key)) {
+            shield_.Called(*next, false);
+            if (shield_.GivenUp(*next)) {
+                LOG_INFO(Core, "coop: dungeon: trigger: a kept kill's copy (Life {:#x}): could not turn the game's "
+                               "invincibility {}: given up", next->life, next->on ? "on" : "off");
+            }
+            return std::nullopt;
+        }
+        asked_ = *next;
+        c.function = main_base + CoopDbno::Body::addr::kInvincibleNoReaction;
+        c.x[0] = next->life;           // the Life component
+        c.x[1] = next->on ? 1 : 0;     // Bool: add our key / take it out
+        c.x[2] = block_;               // -> the key
+        pending_ = Pending::shield;
+        return c;
+    }
+
+private:
+    enum class Pending : std::uint8_t { none, malloc, shield };
+    mutable std::mutex mutex_;
+    std::set<u64> want_;
+    std::set<u64> live_;
+    Pending pending_ = Pending::none;
+    u64 block_ = 0;
+    CoopEventResult::KeptShield shield_;
+    CoopEventResult::KeptShield::Step asked_{};
+};
+KeptShieldCaller& TheKeptShield() {
+    static KeptShieldCaller caller;
+    return caller;
+}
+
 struct PvpAsk {
     s32 take = 0;
     std::array<float, 3> at{};
@@ -2319,7 +2399,12 @@ public:
             for (std::size_t i = 0; i < passed.released; ++i) {
                 sync_.Written(writes[i].address, writes[i].life, server_now_us);
             }
-            KeepTriggerKills(system, *scene, seen, writes, server_now_us);
+            std::map<u8, u8> statuses;  // row 160: each player's PLAYER_STATUS flags (dead, loading)
+            session->with_client([&](coop::net::Client& c) {
+                for (const auto& p : c.players()) statuses[p.number] = p.status.value_or(0);
+                return 0;
+            });
+            KeepTriggerKills(system, *scene, seen, writes, server_now_us, statuses);
             if (held_writes_.Size() != 0 && !guard_said_) {
                 guard_said_ = true;
                 LOG_INFO(Core, "coop: objects: our Link is in an event: changes to {} actors near it wait until it ends",
@@ -2575,6 +2660,12 @@ public:
     std::map<u64, u64> trigger_kept_since_;  // address -> when its kill was first kept (crossing last kills)
     std::set<u64> owned_seen_;               // placement hashes our game owned in this scene (crossing last kills)
     std::map<u64, u64> owned_died_at_;       // of those, when our walk first saw it dead or gone
+    // Row 160: kept kills whose actor went (a reload re-made the room): placement hash -> the kill, when first kept.
+    std::map<u64, std::pair<LifeWrite, u64>> trigger_kept_gone_;
+    std::map<u64, u8> trigger_kept_owner_;  // placement hash -> the player whose game's kill is kept here
+    std::map<u64, u64> trigger_dead_;       // kill actors seen dead in this visit: placement hash -> that actor
+    std::set<u64> trigger_redone_;          // re-made actors our game killed again (once each)
+    std::map<u64, u64> land_wait_since_;    // address -> since when its landing kill waits for our key to come out
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
     // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
@@ -2590,21 +2681,102 @@ public:
         });
     }
     void KeepTriggerKills(Core::System& system, const std::string& scene, const std::vector<Seen>& seen,
-                          std::vector<LifeWrite>& writes, u64 now_us) {
-        if (scene != keeper_scene_) {
+                          std::vector<LifeWrite>& writes, u64 now_us, const std::map<u8, u8>& statuses) {
+        static const bool kept_shield_caller = [] {
+            CoopSvc::AddCaller(kKeptShieldCallerOrder, [](CoopPuppet::Guest& guest, bool after_call,
+                                                          std::uint64_t result, std::uint64_t /*now_ms*/) {
+                return TheKeptShield().Next(guest, after_call, result, TheBossMain().load());
+            });
+            return true;
+        }();
+        (void)kept_shield_caller;
+        const u8 self = sync_.Self();
+        // Row 160: a scene visit ends with a scene change or our Game Over (DBNO out: nobody stood, every game
+        // reloads and the group fights the room again). A reload of the same scene inside the visit (a revive's
+        // respawn, a void-out) keeps the kept kills and the deaths seen here, by placement hash.
+        const bool our_out = self != 0 && CoopDbno::StateOfPlayer(self) == CoopDbno::State::out;
+        if (scene != keeper_scene_ || our_out) {
             keeper_scene_ = scene;
             trigger_kept_.clear();  // those actors are gone with the scene
             trigger_kept_since_.clear();
+            trigger_kept_gone_.clear();
+            trigger_kept_owner_.clear();
+            trigger_dead_.clear();
+            trigger_redone_.clear();
+            land_wait_since_.clear();
             owned_seen_.clear();
             owned_died_at_.clear();
         }
         std::unordered_map<u64, u64> hash_at;  // address -> placement hash
+        std::unordered_map<u64, u64> life_at;  // address -> its Life component
+        std::set<u64> lives;                   // every Life component in this walk
         std::set<u64> alive;
         for (const Seen& s : seen) {
             hash_at.emplace(s.address, s.hash);
+            if (s.life_component != 0) {
+                life_at.emplace(s.address, s.life_component);
+                lives.insert(s.life_component);
+            }
             if (!s.life || s.life->life > 0) {
                 alive.insert(s.hash);
+            } else if (s.hash != 0 && s.hash != ~u64{0} && CoopEventResult::KillEventOf(scene, s.hash)) {
+                trigger_dead_.insert_or_assign(s.hash, s.address);  // a kill actor seen dead here in this visit
             }
+        }
+        std::optional<CoopHook::EmulatorMemory> memory;
+        std::optional<coop::host::GameFlags> flags;
+        if (main_ != 0) {
+            memory.emplace(system.ApplicationMemory(), main_);
+            flags.emplace(*memory);
+        }
+        const auto played = [&flags](const std::string& e) {
+            return flags && flags->get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
+        };
+        // Row 160: a kept kill whose actor went (a reload re-made the room) waits by its placement hash; the re-made
+        // actor of that hash takes it over, with the time it was first kept.
+        for (auto it = trigger_kept_gone_.begin(); it != trigger_kept_gone_.end();) {
+            const u64 hash = it->first;
+            if (const auto e = CoopEventResult::KillEventOf(scene, hash); !e || played(std::string(*e))) {
+                it = trigger_kept_gone_.erase(it);  // its event played here (or no event): nothing waits
+                continue;
+            }
+            const auto s = std::find_if(seen.begin(), seen.end(), [&](const Seen& x) {
+                return x.hash == hash && (!x.life || x.life->life > 0) && !trigger_kept_.contains(x.address);
+            });
+            if (s == seen.end()) {
+                ++it;
+                continue;
+            }
+            LOG_INFO(Core, "coop: dungeon: trigger: {:#x} is made again (a reload): its kept kill waits on the new "
+                           "actor {:#x}", hash, s->address);
+            it->second.first.address = s->address;
+            trigger_kept_since_.insert_or_assign(s->address, it->second.second);
+            trigger_kept_.insert_or_assign(s->address, std::make_pair(std::move(it->second.first), hash));
+            it = trigger_kept_gone_.erase(it);
+        }
+        // Row 160: the group killed every kill actor of an event here (seen dead, or another game's kill kept), and a
+        // reload made them again: the ones seen dead die again (our game's own death), the kept ones keep waiting.
+        std::set<u64> dead;
+        for (const auto& [h, a] : trigger_dead_) dead.insert(h);
+        for (const auto& [a, k] : trigger_kept_) dead.insert(k.second);
+        for (const auto& [h, k] : trigger_kept_gone_) dead.insert(h);
+        const std::set<u64> redo = CoopEventResult::KillsToRedo(scene, dead, played);
+        std::vector<LifeWrite> redo_writes;
+        for (const Seen& s : seen) {
+            const auto d = trigger_dead_.find(s.hash);
+            if (!redo.contains(s.hash) || d == trigger_dead_.end() || d->second == s.address ||
+                (s.life && s.life->life <= 0) || trigger_kept_.contains(s.address) ||
+                trigger_redone_.contains(s.address)) {
+                continue;
+            }
+            LOG_INFO(Core, "coop: dungeon: trigger: {:#x} is made again (a reload) after the group killed its whole "
+                           "room: it dies again here", s.hash);
+            trigger_redone_.insert(s.address);
+            alive.erase(s.hash);
+            LifeWrite w;
+            w.address = s.address;
+            w.life = 0;
+            redo_writes.push_back(std::move(w));
         }
         // Rows 160/161: the enemies our game owns (their death is decided here, a remote hit's too).
         std::set<u64> owned;
@@ -2615,14 +2787,9 @@ public:
             }
         }
         std::set<std::uint64_t> keepers;
-        if (main_ != 0) {
-            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
-            coop::host::GameFlags flags(memory);
+        if (flags) {
             keepers = CoopEventResult::KillKeepers(
-                scene, [&alive](std::uint64_t h) { return alive.contains(h); },
-                [&flags](const std::string& e) {
-                    return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
-                },
+                scene, [&alive](std::uint64_t h) { return alive.contains(h); }, played,
                 [&owned](std::uint64_t h) { return owned.contains(h); });
         }
         keeper_addresses_.clear();
@@ -2631,6 +2798,18 @@ public:
                 keeper_addresses_.insert(a);
             }
         }
+        // Row 160 (a): a game can play the event when its player is in our scene, its Link up (DBNO) and its game
+        // neither dead nor in a load (CoopEventResult::AbleToPlay). Ours by our own state.
+        const auto status_of = [&statuses](u8 p) -> u8 {
+            const auto it = statuses.find(p);
+            return it == statuses.end() ? 0 : it->second;
+        };
+        const auto able = [&](u8 p) {
+            return CoopEventResult::AbleToPlay(p == self || sync_.InOurScene(p, now_us),
+                                               CoopDbno::StateOfPlayer(p) == CoopDbno::State::up, status_of(p));
+        };
+        const std::vector<u8> in_scene = sync_.PlayersInOurScene(self, now_us);
+        const bool we_decide = self != 0 && CoopEventResult::DeciderAmongAble(self, in_scene, able) == self;
         // Crossing last kills (review-dc-0118): two owners each killed their own last enemy of the event within one
         // round trip, so each game keeps the other's kill. After kCrossingUs the lowest-numbered of those owners lets
         // it land (CoopEventResult::CrossingKillLands): that one game plays the event, the others get its flags.
@@ -2649,21 +2828,26 @@ public:
             if (!keeper_addresses_.contains(address)) {
                 continue;
             }
-            const std::optional<u8> owner = sync_.OwnerOrDeathOwnerOf(address);
-            const bool owner_here = owner && sync_.InOurScene(*owner, now_us);
-            const bool we_decide = sync_.Self() != 0 && sync_.SceneDecider(sync_.Self(), now_us) == sync_.Self();
-            if (!CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, sync_.Self(), owner,
-                                                    ours_died, owner_here, we_decide)) {
+            std::optional<u8> owner = sync_.OwnerOrDeathOwnerOf(address);
+            if (owner && *owner != 0) {
+                trigger_kept_owner_.insert_or_assign(kept.second, *owner);
+            } else if (const auto o = trigger_kept_owner_.find(kept.second); o != trigger_kept_owner_.end()) {
+                owner = o->second;  // its actor was made again: the owner its kill came from
+            }
+            const bool owner_here = owner && able(*owner);
+            if (!CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, self, owner, ours_died,
+                                                    owner_here, we_decide)) {
                 continue;
             }
             LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept {} ms lands: {} (player {}), our game plays "
                            "the event", kept.second, (now_us - kept_at) / 1000,
                      owner_here ? "crossing last kills, ours is the lowest owner's number"
-                                : "its owner is gone from our scene, we decide here",
+                                : "its owner cannot play it (gone from our scene, down, out or loading), we decide here",
                      owner.value_or(0));
             keeper_addresses_.erase(address);
         }
-        // A kept kill whose actor is no keeper any more lands now, on the same actor (else it is dropped).
+        // A kept kill whose actor is no keeper any more lands now, on the same actor, once our key is out of its Life
+        // (row 160 (b)); one whose actor went waits by its placement hash for this visit.
         for (auto it = trigger_kept_.begin(); it != trigger_kept_.end();) {
             if (keeper_addresses_.contains(it->first)) {
                 ++it;
@@ -2671,16 +2855,29 @@ public:
             }
             const auto at = hash_at.find(it->first);
             if (at != hash_at.end() && at->second == it->second.second) {
+                const auto life = life_at.find(it->first);
+                if (life != life_at.end() && TheKeptShield().On(life->second)) {
+                    const u64 since = land_wait_since_.try_emplace(it->first, now_us).first->second;
+                    if (now_us - since < CoopEventResult::kKeptShieldWaitUs) {
+                        ++it;  // the key comes out first (the shield's next call)
+                        continue;
+                    }
+                }
                 LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
             } else {
-                // Row 160 (hiddenblitz 20261119-201953, room 1): a kept kill was dropped with no line. Harmless when
-                // the event was played elsewhere (its clear flag comes), but a stuck room must show it in the log.
-                LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event is dropped: {}",
+                // Row 160 (run 20261120-132403): the kept kill was dropped here and the reload made the enemy alive.
+                LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event waits by its placement: {}",
                          it->second.second,
                          at == hash_at.end() ? "its actor is gone from our walk" : "another actor is at its address");
+                const auto since = trigger_kept_since_.find(it->first);
+                trigger_kept_gone_.insert_or_assign(
+                    it->second.second,
+                    std::make_pair(std::move(it->second.first),
+                                   since != trigger_kept_since_.end() ? since->second : now_us));
             }
+            land_wait_since_.erase(it->first);
             trigger_kept_since_.erase(it->first);
             it = trigger_kept_.erase(it);
         }
@@ -2693,10 +2890,26 @@ public:
                 LOG_INFO(Core, "coop: dungeon: trigger: another game's kill of {:#x} waits: the last enemy of a room "
                                "event our game has not played (its asker would ask the event here)", hash);
             }
+            if (const auto o = sync_.OwnerOrDeathOwnerOf(w.address); o && *o != 0) {
+                trigger_kept_owner_.insert_or_assign(hash, *o);
+            }
             trigger_kept_since_.try_emplace(w.address, now_us);
             trigger_kept_.insert_or_assign(w.address, std::make_pair(std::move(w), hash));
             return true;
         });
+        for (LifeWrite& w : redo_writes) {
+            sync_.Written(w.address, w.life, now_us);
+            writes.push_back(std::move(w));
+        }
+        // Row 160 (b): every kept kill's copy that is still a keeper holds our key (no hit lands on it).
+        std::set<u64> want;
+        for (const auto& [address, kept] : trigger_kept_) {
+            if (!keeper_addresses_.contains(address)) continue;
+            if (const auto life = life_at.find(address); life != life_at.end() && life->second != 0) {
+                want.insert(life->second);
+            }
+        }
+        TheKeptShield().Want(std::move(want), std::move(lives));
     }
     // Row 97: the event's partners wait wherever they are (Sync::EventPartner).
     CoopGuard::Local GuardLocal(u64 now_us) const {

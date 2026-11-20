@@ -634,3 +634,118 @@ TEST_CASE("event result: the follow keepers: blocks on press switches wait, the 
     for (const auto& t : CoopEventResult::Triggers()) follows += t.kind == CoopEventResult::Trigger::follow;
     CHECK(follows == 22);
 }
+
+TEST_CASE("event result: row 160: an owner downed, out, spectating, dead or loading cannot play the event") {
+    namespace st = coop::protocol::status;
+    CHECK(CoopEventResult::AbleToPlay(true, true, 0));
+    CHECK(CoopEventResult::AbleToPlay(true, true, st::in_cutscene));  // the room event itself
+    CHECK(CoopEventResult::AbleToPlay(true, true, st::paused | st::in_menu));
+    CHECK_FALSE(CoopEventResult::AbleToPlay(false, true, 0));          // gone from our scene, as before
+    CHECK_FALSE(CoopEventResult::AbleToPlay(true, false, 0));          // DBNO downed / spectating / out
+    CHECK_FALSE(CoopEventResult::AbleToPlay(true, true, st::dead));
+    CHECK_FALSE(CoopEventResult::AbleToPlay(true, true, st::loading)); // a void-out's respawn, a Try Again
+    // Run 20261120-132403: B (2) owned and killed the last Lizalfos, then went down; A (1) kept its kill. With B
+    // not able, A (the lowest able game) decides: the kept kill lands there after kCrossingUs.
+    constexpr std::uint64_t kA = 0x23456e4b5b005315ULL;
+    constexpr std::uint64_t kB = 0x155ce1b2ba5028cfULL;
+    const auto none = [](std::uint64_t) { return false; };
+    const std::array<std::uint8_t, 1> two{2};
+    const auto able_but = [](std::uint8_t down) { return [down](std::uint8_t p) { return p != down; }; };
+    CHECK(CoopEventResult::DeciderAmongAble(1, two, able_but(2)) == 1);
+    CHECK(CoopEventResult::CrossingKillLands("DodongoCavern", kB, CoopEventResult::kCrossingUs, 1, 2, none,
+                                             CoopEventResult::AbleToPlay(true, false, 0), true));
+    // Player 1 is the one down: player 2 decides for the scene, though 1 is lower.
+    CHECK(CoopEventResult::DeciderAmongAble(2, std::array<std::uint8_t, 1>{1}, able_but(1)) == 2);
+    CHECK(CoopEventResult::DeciderAmongAble(1, two, able_but(1)) == 2);
+    // Nobody able: nobody decides (the first game up again does).
+    CHECK(CoopEventResult::DeciderAmongAble(1, two, [](std::uint8_t) { return false; }) == 0);
+    // Everyone up: the lowest number, as Sync::DeciderOf.
+    CHECK(CoopEventResult::DeciderAmongAble(3, std::array<std::uint8_t, 2>{2, 5}, [](std::uint8_t) { return true; }) == 2);
+    CHECK(CoopEventResult::DeciderAmongAble(0, two, [](std::uint8_t) { return true; }) == 2);
+    // An owner that is up and here still plays it: the other games only wait (no landing before its flags).
+    CHECK_FALSE(CoopEventResult::CrossingKillLands("DodongoCavern", kB, CoopEventResult::kCrossingUs * 4, 1, 2, none,
+                                                   CoopEventResult::AbleToPlay(true, true, 0), true));
+    (void)kA;
+}
+
+TEST_CASE("event result: row 160: a whole room killed in this visit is killed again when a reload makes it") {
+    constexpr std::uint64_t kA = 0x23456e4b5b005315ULL;
+    constexpr std::uint64_t kB = 0x155ce1b2ba5028cfULL;
+    const auto never = [](const std::string&) { return false; };
+    CHECK(CoopEventResult::KillEventOf("DodongoCavern", kA) == "DodongoCavern_Gimmick_DefeatLizalfos02");
+    CHECK_FALSE(CoopEventResult::KillEventOf("FireTemple", kA));
+    CHECK_FALSE(CoopEventResult::KillEventOf("DodongoCavern", 0x1234ULL));
+    // A's game: its own A seen dead, B's kill kept: both of the event are dead for the group.
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA, kB}, never) == std::set<std::uint64_t>{kA, kB});
+    // Only one killed: the re-made room is a native refight.
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA}, never).empty());
+    // The event played here: nothing to redo.
+    CHECK(CoopEventResult::KillsToRedo("DodongoCavern", {kA, kB},
+                                       [](const std::string& e) { return e == "DodongoCavern_Gimmick_DefeatLizalfos02"; })
+              .empty());
+    // Another scene's hashes do not count.
+    CHECK(CoopEventResult::KillsToRedo("FireTemple", {kA, kB}, never).empty());
+    // Every 'last enemy -> event' line (kind kill) of every room: all its actors dead -> all of them; one missing ->
+    // none of that event's.
+    std::map<std::pair<std::string_view, std::string_view>, std::set<std::uint64_t>> events;
+    for (const auto& t : CoopEventResult::Triggers()) {
+        if (t.kind == CoopEventResult::Trigger::kill) events[{t.scene, t.event}].insert(t.id);
+    }
+    CHECK(events.size() >= 45);
+    for (const auto& [key, ids] : events) {
+        CAPTURE(key.second);
+        const auto redo = CoopEventResult::KillsToRedo(key.first, ids, never);
+        for (const auto id : ids) CHECK(redo.contains(id));
+        if (ids.size() > 1) {
+            std::set<std::uint64_t> one_short = ids;
+            const std::uint64_t missing = *one_short.begin();
+            one_short.erase(one_short.begin());
+            const auto partial = CoopEventResult::KillsToRedo(key.first, one_short, never);
+            for (const auto id : ids) {
+                // an id shared with another event of the scene may still come from that one
+                bool shared = false;
+                for (const auto& [k2, ids2] : events) {
+                    if (k2 != key && k2.first == key.first && ids2.contains(id)) shared = true;
+                }
+                if (!shared) CHECK_FALSE(partial.contains(id));
+            }
+            (void)missing;
+        }
+    }
+}
+
+TEST_CASE("event result: row 160 (b): a kept kill's copy holds our key while kept, the key comes out before it lands") {
+    CoopEventResult::KeptShield shield;
+    using Step = CoopEventResult::KeptShield::Step;
+    const std::set<std::uint64_t> live{0x100, 0x200};
+    // Kept: our key goes in, one component at a time.
+    auto next = shield.Next({0x100}, live);
+    REQUIRE(next);
+    CHECK(*next == Step{0x100, true});
+    shield.Called(*next, true);
+    CHECK(shield.On(0x100));
+    CHECK_FALSE(shield.Next({0x100}, live));
+    // Its kill is to land (no longer wanted): the key comes out first.
+    next = shield.Next({}, live);
+    REQUIRE(next);
+    CHECK(*next == Step{0x100, false});
+    shield.Called(*next, true);
+    CHECK_FALSE(shield.On(0x100));
+    // An actor that went (a reload): never called on, forgotten.
+    shield.Called(Step{0x200, true}, true);
+    CHECK(shield.On(0x200));
+    CHECK_FALSE(shield.Next({}, {0x100}));
+    CHECK_FALSE(shield.On(0x200));
+    // Not in the walk: never asked.
+    CHECK_FALSE(shield.Next({0x300}, live));
+    // Failed calls are given up after kKeptShieldTries.
+    for (unsigned i = 0; i < CoopEventResult::kKeptShieldTries; ++i) {
+        next = shield.Next({0x100}, live);
+        REQUIRE(next);
+        shield.Called(*next, false);
+    }
+    CHECK(shield.GivenUp(Step{0x100, true}));
+    CHECK_FALSE(shield.Next({0x100}, live));
+    CHECK(CoopEventResult::kKeptShieldKey != 0xC0DB0D01u);  // not dbno's
+    CHECK(CoopEventResult::kKeptShieldKey != 0xC0DB0D02u);  // not the PvP copies'
+}
