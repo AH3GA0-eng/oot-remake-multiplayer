@@ -105,6 +105,14 @@ bool has_magic(std::span<const std::uint8_t> bytes) {
 }
 
 std::vector<std::uint8_t> encode(const Message& m) {
+  if (m.kind == Kind::kListRooms) {
+    // Fixed-size request (zero padded), so the reply is never bigger than it: built at full size, fields by index.
+    std::vector<std::uint8_t> req(kListRequestBytes, std::uint8_t{0});
+    std::copy(kMagic.begin(), kMagic.end(), req.begin());
+    req[kMagic.size()] = static_cast<std::uint8_t>(m.kind);
+    req[kMagic.size() + 1] = m.start;
+    return req;
+  }
   std::vector<std::uint8_t> out(kMagic.begin(), kMagic.end());
   out.push_back(static_cast<std::uint8_t>(m.kind));
   switch (m.kind) {
@@ -168,9 +176,7 @@ std::vector<std::uint8_t> encode(const Message& m) {
       put_text(out, m.entry.host, kMaxHostNameBytes);
       break;
     case Kind::kListRooms:
-      out.push_back(m.start);
-      out.resize(std::max(out.size(), kListRequestBytes), std::uint8_t{0});
-      break;
+      break;  // (built above)
     case Kind::kRoomList: {
       const std::size_t n = std::min<std::size_t>(m.rooms.size(), 255);
       out.push_back(m.total);
