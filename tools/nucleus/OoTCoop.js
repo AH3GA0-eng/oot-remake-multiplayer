@@ -3,12 +3,12 @@
 // How to install it and what it does: tools/nucleus/README.md and docs/play-lan.md, "Split-screen with Nucleus Co-op".
 //
 // Each player's game runs from its own Nucleus instance folder (links to the game's big files, its own small ones).
-// Player 1 starts the kit's co-op server and plays on it; players 2 to 4 join it on this PC. The option "Who can join"
-// picks the server: "This PC only" (the default: 127.0.0.1, port 27590, a new join password each session) or "Allow
-// online players" (the kit's own start-server.cmd, as Host.bat starts it: every address of this PC, the kit's port
-// and join password, a join code (or the kit's room name) on the Squadala relay, built in, and an invite code in the
-// server's window, one copied to the clipboard, that friends on other PCs type under Join). Every game reads its own controller itself (LICHII_COOP_PAD, patch 0015), also behind the other
-// windows, so no Nucleus input hooks are used (Nucleus only lists the pads).
+// Player 1 starts the kit's co-op server and plays on it; players 2 to 4 join it on this PC. The server is the kit's
+// own start-server.cmd, as Host.bat starts it: every address of this PC, the kit's port and join password, a join code
+// (or the kit's room name) on the Squadala relay, built in, and an invite code in the server's window, one copied to
+// the clipboard, that friends on other PCs type under Join. Every game reads its own controller itself
+// (LICHII_COOP_PAD, patch 0015), also behind the other windows, so no Nucleus input hooks are used (Nucleus only
+// lists the pads).
 // Written for Nucleus's script engine (Jint) in plain ES3 style, so tools/nucleus/test_handler.js runs it under
 // Windows' own cscript too.
 
@@ -19,19 +19,8 @@ Game.MaxPlayers = 4;
 Game.MaxPlayersOneMonitor = 4;
 Game.Description = "Split-screen OoT Co-op on Longshot. Add the longshot.exe of a kit's co-op game (the kit's " +
     "hookshot\\game folder). Player 1 hosts on this PC, the others join. Each game needs about 10 GB of RAM. " +
-    "Who can join: This PC only, or Allow online players (friends on other PCs join with the room name or join " +
-    "code on the Squadala relay, or the invite code, that the server window shows and copies).";
-
-// The option on Nucleus's setup screen. Anything but COOP_ONLINE (no choice made yet, an older Nucleus) is this PC
-// only.
-var COOP_LOCAL = "This PC only";
-var COOP_ONLINE = "Allow online players";
-Game.AddOption("Who can join",
-               "This PC only: the players on this PC. Allow online players: also friends on other PCs, as with " +
-               "Host.bat: no router setup, the server window shows a join code on the Squadala relay (your room " +
-               "name instead, with relay_room in coop-options.ini) and an invite code, and copies one; players on " +
-               "your network need no password. Windows may ask once to let coop_server through its firewall.",
-               "Online", [COOP_LOCAL, COOP_ONLINE], COOP_LOCAL);
+    "Friends on other PCs can join too, with the room name or join code on the Squadala relay, or the invite " +
+    "code, that the server window shows and copies.";
 
 // The files: the game's big read-only files are linked, its folders too; what a game writes is its own.
 Game.SymlinkGame = true;
@@ -72,8 +61,7 @@ Game.PauseBetweenProcessGrab = 5;     // seconds
 Game.KillProcessesOnClose = ["coop_server"];   // the session's server (and any other coop_server.exe on this PC)
 
 // The session's settings (also in nucleus-players\session.txt, for a start that runs the script anew per player).
-var COOP_PORT = 27590;       // this PC only: not the kit's 27510, nor the test lanes' 27520/27530
-var COOP_KIT_PORT = 27510;   // online: the kit's coop.ini port, else this one (Host.bat's)
+var COOP_KIT_PORT = 27510;   // the kit's coop.ini port, else this one (Host.bat's)
 var coopSession = null;
 
 function coopPath(a, b) {
@@ -124,19 +112,9 @@ function coopGetKey(text, key) {
     return value;
 }
 
-// True when Nucleus's setup screen has "Allow online players" chosen.
-function coopWantsOnline() {
-    try {
-        var o = Context.Options;
-        return !!o && String(o["Online"]) === COOP_ONLINE;
-    } catch (e) {
-        return false;   // no such option (an older Nucleus): this PC only
-    }
-}
-
-// Player 1's server for "Allow online players": the kit's start-server.cmd in a window of its own, as Host.bat starts
-// it (scripts\start-server.ps1: coop_server on every address of this PC, the router forward, the invite code shown and
-// copied, a log in the kit's logs folder). Returns the session { password, server, port } the players on this PC use.
+// Player 1's server: the kit's start-server.cmd in a window of its own, as Host.bat starts it (scripts\start-server.ps1:
+// coop_server on every address of this PC, the router forward, the invite code shown and copied, a log in the kit's
+// logs folder). Returns the session { password, server, port } the players on this PC use.
 function coopStartOnline(kit) {
     var options = coopRead(coopPath(kit, "coop-options.ini"));
     var port = parseInt(coopGetKey(coopRead(coopPath(kit, "coop.ini")), "port"), 10);
@@ -290,22 +268,18 @@ Game.Play = function () {
             // Another server (Host.bat, start-server.cmd, an earlier session not ended) holds the port or has
             // another join password: this session's games could not join. Nothing is started; it is not closed here
             // (a friend may be playing on it).
-            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_PORT, pads: 0 };
+            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_KIT_PORT, pads: 0 };
             coopTell("A co-op server (coop_server.exe) is already running on this PC, so this session starts none " +
                      "and its games cannot join. Close that server's window, end this " +
                      "session in Nucleus and press Play again.");
-        } else if (kit !== "" && coopWantsOnline()) {
+        } else if (kit !== "" && System.IO.File.Exists(coopPath(kit, "start-server.cmd"))) {
             coopSession = coopStartOnline(kit);
-            Context.Log("OoT Co-op: online players allowed: the server window shows the relay's join code or room, and the invite code (one copied)");
+            Context.Log("OoT Co-op: the server window shows the relay's join code or room, and the invite code (one copied)");
         } else {
-            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_PORT, pads: 0 };
-            if (kit !== "") {
-                var server = coopPath(coopPath(kit, "server"), "coop_server.exe");
-                Context.StartProcess(server, "--port " + COOP_PORT + " --bind 127.0.0.1 --max-players 4 --password " +
-                    coopSession.password, false);
-            } else {
-                Context.Log("OoT Co-op: no kit above " + game + " (server\\coop_server.exe): no server started");
-            }
+            // No kit (or one without start-server.cmd): no server; the games look for one at 127.0.0.1.
+            coopSession = { password: coopNewKey(), server: "127.0.0.1", port: COOP_KIT_PORT, pads: 0 };
+            Context.Log("OoT Co-op: " + (kit === "" ? "no kit above " + game + " (server\\coop_server.exe)"
+                                                   : "no start-server.cmd in " + kit) + ": no server started");
         }
         coopWrite(sessionFile, coopSession.password + "\r\n" + coopSession.server + "\r\n" + coopSession.port + "\r\n");
     } else if (coopSession === null) {
@@ -313,7 +287,7 @@ Game.Play = function () {
         var savedServer = coopTrim(saved.length > 1 ? saved[1] : ""), savedPort = parseInt(saved[2], 10);
         coopSession = { password: coopTrim(saved[0]),
                         server: /^\d{1,3}(\.\d{1,3}){3}$/.test(savedServer) ? savedServer : "127.0.0.1",
-                        port: savedPort >= 1 && savedPort <= 65535 ? savedPort : COOP_PORT, pads: 0 };
+                        port: savedPort >= 1 && savedPort <= 65535 ? savedPort : COOP_KIT_PORT, pads: 0 };
     }
 
     // The saves: player 1's own (the game's user folder), the others' their own folder beside the game. A guest

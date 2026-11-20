@@ -96,11 +96,13 @@ var System = {
     }
 };
 
-// A made-up kit: <root>\kit\server\coop_server.exe, the game in <root>\kit\hookshot\game, three instance folders.
+// A made-up kit: <root>\kit\server\coop_server.exe and start-server.cmd, the game in <root>\kit\hookshot\game, three
+// instance folders.
 var root = fso.BuildPath(shell.ExpandEnvironmentStrings("%TEMP%"), "oot-nucleus-test-" + new Date().getTime());
 var kit = fso.BuildPath(root, "kit"), game = fso.BuildPath(kit, "hookshot\\game");
 mkdirs(fso.BuildPath(kit, "server"));
 writeFile(fso.BuildPath(kit, "server\\coop_server.exe"), "");
+writeFile(fso.BuildPath(kit, "start-server.cmd"), "");
 writeFile(fso.BuildPath(kit, "coop-options.ini"),
           "name = Saria\r\ncolor = red\r\nLICHII_COOP_PUPPET=1\r\nLICHII_COOP_PAD=2\r\n# LICHII_COOP_KEYBOARD=off\r\n");
 mkdirs(fso.BuildPath(game, "user\\save"));
@@ -171,13 +173,18 @@ for (var p = 0; p < players.length; p++) {
     Game.Play();
 }
 
-check(startedServers.length === 1, "one server started: " + startedServers.join(" | "));
-check(/coop_server\.exe --port 27590 --bind 127\.0\.0\.1 --max-players 4 --password 0123456789abcdef0123456789abcd01$/
-          .test(startedServers[0]), "server command line: " + startedServers[0]);
+// The server: the kit's start-server.cmd in its own window, once (player 1), never coop_server.exe directly. No kit
+// coop.ini: Host.bat's port 27510.
+var comspec = shell.ExpandEnvironmentStrings("%ComSpec%");
+check(startedServers.length === 0, "coop_server not started directly: " + startedServers.join(" | "));
+check(startedWindows.length === 1 && startedWindows[0].args === "/c start \"Squadala server\" /d \"" + kit + "\" \"" +
+      comspec + "\" /c \"\"" + fso.BuildPath(kit, "start-server.cmd") + "\" 27510\"",
+      "one server window, start-server.cmd on port 27510: " + (startedWindows.length ? startedWindows[0].args : ""));
 var pw = "0123456789abcdef0123456789abcd01";
+check(startedWindows.length === 1 && startedWindows[0].password === pw, "the session password handed over");
 for (var q = 0; q < 3; q++) {
     var ini = readFile(fso.BuildPath(instances[q], "coop.ini"));
-    check(ini.indexOf("server = 127.0.0.1\r\n") >= 0 && ini.indexOf("port = 27590\r\n") >= 0, "coop.ini " + q + " server");
+    check(ini.indexOf("server = 127.0.0.1\r\nport = 27510\r\n") >= 0, "coop.ini " + q + " joins the server: " + ini);
     check(ini.indexOf("password = " + pw + "\r\n") >= 0, "coop.ini " + q + " password: " + ini);
     var link = fso.BuildPath(instances[q], "user");
     check(fso.FolderExists(link) && (fso.GetFolder(link).Attributes & 1024) !== 0, "user " + q + " is a link");
@@ -259,15 +266,12 @@ for (var m = 0; m < modes.length; m++) {
 }
 attrMode = "number";
 
-// "Who can join": the option on Nucleus's setup screen, this PC only by default.
-check(Game.Options.length === 1 && Game.Options[0].key === "Online" && Game.Options[0].values.length === 2 &&
-      Game.Options[0].values[0] === "This PC only" && Game.Options[0].values[1] === "Allow online players" &&
-      Game.Options[0].def === "This PC only", "the option Who can join, default This PC only");
-check(startedWindows.length === 0, "no Options (an older Nucleus): no server window");
+// No choice on Nucleus's setup screen: the handler adds no option and reads none.
+check(Game.Options.length === 0, "no option on Nucleus's setup screen");
+check(readFile(fso.BuildPath(here, "OoTCoop.js")).indexOf("Context.Options") < 0, "the handler reads no option");
 
-// A run as player p (0-based) with the given option value; returns its coop.ini.
-function playAs(p, online) {
-    Context.Options = online === undefined ? undefined : { Online: online };
+// A run as player p (0-based); returns its coop.ini.
+function playAs(p) {
     Context.PlayerID = p;
     Context.ExePath = fso.BuildPath(instances[p], "longshot.exe");
     Context.Nickname = players[p].nick;
@@ -284,89 +288,96 @@ function newSession() {
 var kitOptions = fso.BuildPath(kit, "coop-options.ini"), kitOptionsText = readFile(kitOptions);
 var sessionTxt = fso.BuildPath(game, "nucleus-players\\session.txt");
 writeFile(fso.BuildPath(kit, "coop.ini"), "server = 192.168.1.20\r\nport = 27515\r\nname = Saria\r\n");
-writeFile(fso.BuildPath(kit, "start-server.cmd"), "");
 
-// Allow online players: player 1 starts the kit's start-server.cmd (Host.bat's server) in its own window, on the
-// kit's port, with a new session password handed over in OOT_COOP_SESSION_PASSWORD only while it starts.
+// Player 1 starts the kit's start-server.cmd (Host.bat's server) in its own window, on the kit's port, with a new
+// session password handed over in OOT_COOP_SESSION_PASSWORD only while it starts. A choice left from an older
+// handler (Context.Options) changes nothing.
 writeFile(kitOptions, kitOptionsText + "# server_password = not-this-one\r\n");
 newSession();
-var on1 = playAs(0, "Allow online players"), on2 = playAs(1, "Allow online players");
-check(startedServers.length === 0, "online: coop_server not started directly: " + startedServers.join(" | "));
-check(startedWindows.length === 1, "online: one server window");
+Context.Options = { Online: "This PC only" };
+var on1 = playAs(0), on2 = playAs(1);
+Context.Options = undefined;
+check(startedServers.length === 0, "coop_server not started directly: " + startedServers.join(" | "));
+check(startedWindows.length === 1, "one server window, an old choice ignored");
 var win = startedWindows.length ? startedWindows[0] : { args: "" };
-var comspec = shell.ExpandEnvironmentStrings("%ComSpec%");
 check(win.args === "/c start \"Squadala server\" /d \"" + kit + "\" \"" + comspec + "\" /c \"\"" +
       fso.BuildPath(kit, "start-server.cmd") + "\" 27515\"",
-      "online: start-server.cmd through cmd /c (the window closes with the server), the kit's port: " + win.args);
+      "start-server.cmd through cmd /c (the window closes with the server), the kit's port: " + win.args);
 var onPw = coopSession.password;
-check(/^[0-9a-f]{32}$/.test(onPw) && win.password === onPw, "online: a new session password, handed over: " + onPw);
-check(System.Environment.vars.OOT_COOP_SESSION_PASSWORD === undefined, "online: the password not left in the env");
+check(/^[0-9a-f]{32}$/.test(onPw) && win.password === onPw, "a new session password, handed over: " + onPw);
+check(System.Environment.vars.OOT_COOP_SESSION_PASSWORD === undefined, "the password not left in the env");
 check(on1.indexOf("server = 127.0.0.1\r\nport = 27515\r\n") >= 0 && on1.indexOf("password = " + onPw + "\r\n") >= 0,
-      "online: player 1 joins its server on this PC: " + on1);
+      "player 1 joins its server on this PC: " + on1);
 check(on2.indexOf("server = 127.0.0.1\r\nport = 27515\r\n") >= 0 && on2.indexOf("password = " + onPw + "\r\n") >= 0,
-      "online: player 2 joins at 127.0.0.1: " + on2);
-check(readFile(sessionTxt) === onPw + "\r\n127.0.0.1\r\n27515\r\n", "online: session.txt: " + readFile(sessionTxt));
+      "player 2 joins at 127.0.0.1: " + on2);
+check(readFile(sessionTxt) === onPw + "\r\n127.0.0.1\r\n27515\r\n", "session.txt: " + readFile(sessionTxt));
 coopSession = null;
-var on2b = playAs(1, "Allow online players");
+var on2b = playAs(1);
 check(on2b.indexOf("server = 127.0.0.1\r\nport = 27515\r\n") >= 0 && on2b.indexOf("password = " + onPw) >= 0 &&
-      startedWindows.length === 1, "online: a later player from session.txt starts nothing: " + on2b);
+      startedWindows.length === 1, "a later player from session.txt starts nothing: " + on2b);
 
 // The kit's server_password, server_bind and server_allow (coop-options.ini), as Host.bat passes them: this PC's
 // players go to the bound address, and 127.0.0.1 is added to the allowed ones.
 writeFile(kitOptions, kitOptionsText + "server_password = hunter2x\r\nserver_bind = 25.1.2.3\r\n" +
           "server_allow = 25.0.0.0/8, 26.1.2.3\r\n");
 newSession();
-var b1 = playAs(0, "Allow online players"), b2 = playAs(2, "Allow online players");
+var b1 = playAs(0), b2 = playAs(2);
 win = startedWindows.length ? startedWindows[0] : { args: "" };
 check(/\.cmd" 27515 -Bind 25\.1\.2\.3 -Allow 25\.0\.0\.0\/8,26\.1\.2\.3,127\.0\.0\.1,25\.1\.2\.3"$/.test(win.args),
-      "online: -Bind and -Allow (+127.0.0.1 and the bound address the local players come from): " + win.args);
-check(win.password === undefined, "online: the kit's own password is not handed over (start-server reads it)");
+      "-Bind and -Allow (+127.0.0.1 and the bound address the local players come from): " + win.args);
+check(win.password === undefined, "the kit's own password is not handed over (start-server reads it)");
 check(b1.indexOf("server = 25.1.2.3\r\n") >= 0 && b1.indexOf("password = hunter2x\r\n") >= 0 &&
       b2.indexOf("server = 25.1.2.3\r\n") >= 0 && b2.indexOf("password = hunter2x\r\n") >= 0,
-      "online: the bound address and the kit's password: " + b2);
+      "the bound address and the kit's password: " + b2);
 coopSession = null;
-check(playAs(1, "Allow online players").indexOf("server = 25.1.2.3\r\nport = 27515\r\n") >= 0,
-      "online: the bound address from session.txt");
+check(playAs(1).indexOf("server = 25.1.2.3\r\nport = 27515\r\n") >= 0, "the bound address from session.txt");
 writeFile(kitOptions, kitOptionsText);
 
-// This PC only (chosen, or no choice yet): as before, even with a kit port; a bad kit port online: 27510.
-var locals = ["This PC only", ""];
-for (var lc = 0; lc < locals.length; lc++) {
-    newSession();
-    var l1 = playAs(0, locals[lc]);
-    check(startedWindows.length === 0 && startedServers.length === 1 &&
-          /coop_server\.exe --port 27590 --bind 127\.0\.0\.1 /.test(startedServers[0]) &&
-          l1.indexOf("server = 127.0.0.1\r\nport = 27590\r\n") >= 0, "'" + locals[lc] + "': this PC only: " + l1);
-}
+// A bad kit port: 27510.
 writeFile(fso.BuildPath(kit, "coop.ini"), "port = lots\r\n");
 newSession();
-playAs(0, "Allow online players");
-check(startedWindows.length === 1 && /\.cmd" 27510"$/.test(startedWindows[0].args), "online: no kit port: 27510");
+var bad = playAs(0);
+check(startedWindows.length === 1 && /\.cmd" 27510"$/.test(startedWindows[0].args) &&
+      bad.indexOf("server = 127.0.0.1\r\nport = 27510\r\n") >= 0, "no kit port: 27510: " + bad);
 
 // The start fails (Nucleus's Process.Start throws): the password is still taken out of the environment.
 newSession();
 failStart = true;
 var threw = false;
-try { playAs(0, "Allow online players"); } catch (e) { threw = true; }
+try { playAs(0); } catch (e) { threw = true; }
 check(threw && startedWindows.length === 1 && /^[0-9a-f]{32}$/.test(startedWindows[0].password) &&
-      System.Environment.vars.OOT_COOP_SESSION_PASSWORD === undefined, "online: a failed start clears the env too");
+      System.Environment.vars.OOT_COOP_SESSION_PASSWORD === undefined, "a failed start clears the env too");
 
 // A coop_server already running (Host.bat, start-server.cmd, a session not ended): nothing started, the player told.
-var modesRun = ["Allow online players", "This PC only"];
-for (var mr = 0; mr < modesRun.length; mr++) {
+newSession();
+logged = [];
+System.Diagnostics.Process.running = 1;
+playAs(0);
+System.Diagnostics.Process.running = 0;
+check(startedWindows.length === 0 && startedServers.length === 0, "a running server: none started");
+check(logged.join("\n").indexOf("already running") >= 0, "a running server: the player is told: " + logged.join(" | "));
+
+// A kit without start-server.cmd, and no kit at all (no server\coop_server.exe above the game): no server, said in
+// Nucleus's log; the games look for one at 127.0.0.1, port 27510.
+var noKit = [[fso.BuildPath(kit, "start-server.cmd"), "no start-server.cmd in"],
+             [fso.BuildPath(kit, "server\\coop_server.exe"), "no kit above"]];
+for (var nk = 0; nk < noKit.length; nk++) {
+    fso.DeleteFile(noKit[nk][0]);
     newSession();
     logged = [];
-    System.Diagnostics.Process.running = 1;
-    playAs(0, modesRun[mr]);
-    System.Diagnostics.Process.running = 0;
-    check(startedWindows.length === 0 && startedServers.length === 0, modesRun[mr] + ": a running server: none started");
-    check(logged.join("\n").indexOf("already running") >= 0, modesRun[mr] + ": the player is told: " + logged.join(" | "));
+    var n1 = playAs(0);
+    writeFile(noKit[nk][0], "");
+    check(startedWindows.length === 0 && startedServers.length === 0, noKit[nk][1] + ": no server started");
+    check(logged.join("\n").indexOf(noKit[nk][1]) >= 0 && logged.join("\n").indexOf("no server started") >= 0,
+          noKit[nk][1] + ": logged: " + logged.join(" | "));
+    check(n1.indexOf("server = 127.0.0.1\r\nport = 27510\r\n") >= 0, noKit[nk][1] + ": coop.ini: " + n1);
 }
-// A session.txt of an older handler (the password only): 127.0.0.1, port 27590.
+
+// A session.txt of an older handler (the password only): 127.0.0.1, port 27510.
 writeFile(sessionTxt, "oldpassword\r\n");
 coopSession = null;
-var old = playAs(1, undefined);
-check(old.indexOf("server = 127.0.0.1\r\nport = 27590\r\n") >= 0 && old.indexOf("password = oldpassword\r\n") >= 0,
+var old = playAs(1);
+check(old.indexOf("server = 127.0.0.1\r\nport = 27510\r\n") >= 0 && old.indexOf("password = oldpassword\r\n") >= 0,
       "an old session.txt: " + old);
 
 // Clean up: the links first (rmdir removes a link, not what it names), then the rest.
