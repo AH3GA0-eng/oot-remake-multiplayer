@@ -270,6 +270,16 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
     // reader took a switch's cases right (8 bytes each; the old 0x10 never reached it): the player's own.
     CHECK_FALSE(Askable("Dm_FairyFountain_Din"));
     CHECK(CoopSharedScenes::NotShared("Dm_FairyFountain_Din") == "it changes the player's own things");
+    // The Forest Temple's twisted corridor (row 173): its flows toggle the corridor's flags and turn it round the
+    // player; a game in the same room that joined turned its own corridor again, under its player. Neither sent nor
+    // joined; the corridor's state comes by its held flags. Every other Forest Temple story scene stays shared.
+    for (const std::string_view n : {"Dm_ForestTemple_0005", "Dm_ForestTemple_0007"}) {
+        CHECK_MESSAGE(CoopSharedScenes::IsShared(n), std::string(n));
+        CHECK_MESSAGE(!Askable(n), std::string(n));
+        CHECK(CoopSharedScenes::NotShared(n) == "it turns a room of each game's own (the held flags bring it)");
+    }
+    CHECK(Askable("Dm_ForestTemple_0010"));
+    CHECK(Askable("Dm_ForestTemple_0000"));
     CHECK(IsStory(kEntry));
     CHECK(IsStory("Dm_Kokiri_0070"));
     CHECK_FALSE(IsStory("Npc_Kokiri_Mido_Child"));
@@ -352,6 +362,12 @@ TEST_CASE("a joined story setting reads its own played flag, and a story name wi
     cucco.Started(1, "Dm_HrlCastle_0020", "LonLonRanch", kBridge, 100);
     CHECK(cucco.Waiting() == 0);
     CHECK(cucco.TakeNotes()[0].find("the player's own things") != std::string::npos);
+    // Nor the twisted corridor's turn (row 173): a friend in the corridor's room is not turned with it.
+    Joiner twist;
+    twist.Started(1, "Dm_ForestTemple_0005", "ForestTemple", kBridge, 100);
+    CHECK(twist.Waiting() == 0);
+    CHECK_FALSE(twist.Next(here, kNotPlayed).has_value());
+    CHECK(twist.TakeNotes()[0].find("turns a room") != std::string::npos);
 }
 
 TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game's data gives a reason") {
@@ -370,6 +386,8 @@ TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game
         "Dm_LonLon_0040",        // Ingo beaten: moves the player's own Get_Epona to AfterWonGambleRace (row 150)
         "Dm_LostWood_0015",      // Biggoron's sword trade challenge removed (not the Pocket Egg: the old
                                  // reader's misread case reached an egg taken that its real cases never do)
+        // a room's own state turned (kRoomStory): the twisted corridor (row 173)
+        "Dm_ForestTemple_0005", "Dm_ForestTemple_0007",
         // the Great Fairies' paid heal (Dm_FairyFountain_Din:Pay, 500 rupees)
         "Dm_FairyFountain_Courage", "Dm_FairyFountain_Din", "Dm_FairyFountain_Frore", "Dm_FairyFountain_Nayru",
         "Dm_FairyFountain_Power", "Dm_FairyFountain_Wisdom",
