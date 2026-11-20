@@ -1047,6 +1047,7 @@ std::string FitTo(std::string t, std::size_t n) {
     while (k > 0 && (static_cast<unsigned char>(t[k]) & 0xc0) == 0x80) --k;
     return t.substr(0, k) + "...";
 }
+
 }  // namespace
 
 std::string ListValue(int players, int max, bool same_version) {
