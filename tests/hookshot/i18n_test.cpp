@@ -266,6 +266,68 @@ TEST_CASE("coop i18n: 0.11.7's rows and help bodies") {
     CHECK(saves.find("联机：一套单独用于一起游玩的存档") != std::string::npos);
 }
 
+TEST_CASE("coop i18n: the pause menu's Multiplayer tab (the game's own page)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The rows (coop_pause_tab.cpp's RowTexts, translated as they are handed to the game): the words
+    // are the tab's own, one line each, and the rows with a value are the table's shapes.
+    CHECK(CoopI18n::Tr(hans, "Hosting") == "房间已开");
+    CHECK(CoopI18n::Tr(hant, "Hosting") == "房間已開");
+    CHECK(CoopI18n::Tr(hans, "Copy invite code") == "复制邀请码");
+    CHECK(CoopI18n::Tr(hans, "Players: just you") == "人数：只有你");
+    CHECK(CoopI18n::Tr(hans, "Let in: nobody asks") == "放人：没人申请");
+    CHECK(CoopI18n::Tr(hans, "Stop hosting") == "停止房间");
+    CHECK(CoopI18n::Tr(hans, "Host a game") == "创建房间");
+    CHECK(CoopI18n::Tr(hans, "Join a game") == "加入房间");
+    CHECK(CoopI18n::Tr(hans, "Find a game") == "找房间");
+    CHECK(CoopI18n::Tr(hans, "Auto-rejoin: Off") == "自动重连：关");
+    CHECK(CoopI18n::Tr(hans, "Auto-rejoin: trying...") == "自动重连：重试中…");
+    // The rows with a value: the whole row is the shape's line.
+    CHECK(CoopI18n::Tr(hans, "Room: 7QK-2") == "房间：7QK-2");
+    CHECK(CoopI18n::Tr(hans, "Copy room: 7QK-2") == "复制房间：7QK-2");
+    CHECK(CoopI18n::Tr(hans, "Players: 3") == "人数：3");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria") == "允许 Saria");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria (+2)") == "允许 Saria（+2）");
+    CHECK(CoopI18n::Tr(hant, "Let in Saria (+2)") == "允許 Saria（+2）");
+    CHECK(CoopI18n::Tr(hans, "More players (2/3)") == "更多玩家（2/3）");
+    CHECK(CoopI18n::Tr(hans, "Local games (2)") == "本机房间（2）");
+    CHECK(CoopI18n::Tr(hans, "Next page (2/3)") == "下一页（2/3）");
+    CHECK(CoopI18n::Tr(hans, "Kick Saria") == "踢出 Saria");
+    CHECK(CoopI18n::Tr(hans, "A again: ban Saria") == "再按A：封禁 Saria");
+    CHECK(CoopI18n::Tr(hans, "Refuse Saria") == "拒绝 Saria");
+    CHECK(CoopI18n::Tr(hans, "+2 more ask") == "还有 2 人申请");
+    CHECK(CoopI18n::Tr(hans, "Join Saria again") == "再次加入 Saria");
+    CHECK(CoopI18n::Tr(hans, "Joined Saria") == "已加入 Saria");
+    CHECK(CoopI18n::Tr(hans, "With 3 players") == "与 3 人");
+    CHECK(CoopI18n::Tr(hans, "With 1 player") == "与 1 人");
+    CHECK(CoopI18n::Tr(hans, "Teleport to Saria") == "传送到 Saria");
+    CHECK(CoopI18n::Tr(hans, "Saria (you)") == "Saria（你）");
+}
+
+TEST_CASE("coop i18n: the commands' help, the save notices and the teleport refusals") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // The Longshot menu's Commands page (coop_pause_menu.cpp's Commands): the two new in 0.11.7.
+    CHECK(CoopI18n::Tr(hans, "The host only: turns away the player who asks to join. Add always to keep them out "
+                              "until you stop hosting.") .rfind("仅房主：", 0) == 0);
+    CHECK(CoopI18n::Tr(hant, "The host only, when a player asks to join (approve_joins = on in coop-options.ini): "
+                              "lets them in (the one who asked first, or by name). Add always to let them in "
+                              "without asking until you stop hosting.").rfind("僅房主：", 0) == 0);
+    // The guest's save lines (coop/host/src/save_transfer.cpp's GuestNotices; the chat draws them).
+    CHECK(CoopI18n::Tr(hans, "The host's save is coming: load a save once the chat says Success.") ==
+          "房主的存档马上到：等聊天显示 Success 再载入存档。");
+    CHECK(CoopI18n::Tr(hant, "The host's save did not come: play on, or join again to get it.") ==
+          "房主的存檔沒有送到：繼續玩，或重新加入來取得。");
+    // The teleport's refusals (lichii/hook/coop_teleport.cpp's RefusedLine) had no lines at all.
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 is busy (loading, a cutscene, a talk or in the air); try again soon") ==
+          "传送：4090 正忙（读盘、过场、对话或空中）；稍后再试");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 said no") == "传送：4090 拒绝了");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 is in a boss fight; no teleport there") ==
+          "传送：4090 正在打 BOSS；那里不能传送");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 is not in the game") == "传送：4090 不在游戏里");
+    CHECK(CoopI18n::Tr(hans, "teleport: 4090 refused (reason 3)") == "传送：4090 拒绝了（原因 3）");
+}
+
 TEST_CASE("coop i18n: the difficulty line fits the chat's room") {
     const CoopI18n::Lang* hans = ByCode("zh-Hans");
     const char* en =

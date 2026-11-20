@@ -5,6 +5,7 @@
 // pack's labels), the pad filtered, the log. Only in hookshot_coop.dll (the
 // tests drive Page and Probe themselves).
 #include "coop_pause_tab.h"
+#include "coop_i18n.h"
 
 #include <algorithm>
 #include <array>
@@ -535,7 +536,10 @@ void LiveRows(void* ctx, std::uint64_t layout, std::uint64_t gen, const SessionV
     for (int i = 0; i < kRows && i < kLiveSlots; ++i) {
         char path[64];
         std::snprintf(path, sizeof path, "Pa_Coop_00/Pa_Button_%02d/T_Btn_00", i);
-        LiveText(ctx, layout, gen, path, i, rows[static_cast<std::size_t>(i)]);
+        // The row's words in the player's language (coop_i18n.h). The rows are built in English in
+        // coop_pause_tab.cpp (its tests read them so), and each whole row is looked up here, as it is
+        // handed to the game: the rows with a value ("Room: 3", "Kick Saria") are the table's shapes.
+        LiveText(ctx, layout, gen, path, i, CoopI18n::Tr(rows[static_cast<std::size_t>(i)]));
     }
     LiveCells(ctx, layout, gen, v);
 }
