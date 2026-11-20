@@ -1317,6 +1317,12 @@ public:
             boss_beaten_.HostReset(CoopQuests::On());  // row 138 (4): a boss alive in that save, its own Bools back
             lent_keys_.forget();              // the host's save has its own key counts
         }
+        if (report.hosting && (report.host_reset || report.save_load) && !report.save_load_retry) {
+            // Row 159: our own save load (not Game Over's Try Again): which bosses it holds alive goes to the
+            // guests once our game reads the quests again (BOSS_ALIVE, after the FLAG_RESET). Also with no flag
+            // changed: a boss whose quest is each game's own changes no shared flag.
+            boss_alive_due_ = true;
+        }
         // Issue 167: the host's save for the guests (coop_save.h): a guest asks
         // once, the host sends its newest save a part a frame, and again to
         // everyone after its own save load.
@@ -1437,6 +1443,27 @@ public:
             // record is empty.
             // In the boss's own dungeon scene: live, once our Link is out of the boss's area (rows 136/137), or in it
             // once no death of ours can run there (row 136: came in after the death, joined, a refused ask).
+            const auto read_flag = [&](std::uint32_t hash) {
+                const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
+                return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
+            };
+            // Row 159: the host's BOSS_ALIVE (guests), and ours to send after our own save load (host).
+            if (const auto alive = CoopBossBeaten::TheHostAlive().Take()) {
+                boss_beaten_.HostAlive(alive->known, alive->alive, CoopQuests::On());
+            }
+            if (boss_alive_due_ && view.scene && at) {
+                const CoopBossBeaten::AliveBits bits = CoopBossBeaten::AliveInSave(read_flag);
+                if (bits.known != 0) {
+                    boss_alive_due_ = false;
+                    const bool sent = session_->with_client([&](coop::net::Client& c) {
+                        return c.send(coop::protocol::Message{coop::protocol::BossAlive{0, bits.known, bits.alive}}) ? 1
+                                                                                                                  : 0;
+                    }) == 1;
+                    LOG_INFO(Core, "coop: boss: our save holds bosses {:#05x} alive (of {:#05x} read): told the "
+                                   "guests{}",
+                             bits.alive, bits.known, sent ? "" : " (not sent)");
+                }
+            }
             const CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
             const std::vector<std::uint8_t> beaten = record.Rooms();
             const auto near_boss = [&](std::uint8_t room) {
@@ -1447,12 +1474,7 @@ public:
                 return CoopBossScenes::InArea(bosses[room], *view.scene, std::nullopt, *view.scene, *at);
             };
             for (const CoopBossBeaten::Write& w : boss_beaten_.Check(
-                     view.scene, at.has_value(), beaten,
-                     [&](std::uint32_t hash) {
-                         const auto v = game_store->read(coop::protocol::FlagKey{hash, 0});
-                         return v ? std::optional<std::uint32_t>(v->value) : std::nullopt;
-                     },
-                     near_boss, [&](std::uint8_t room) {
+                     view.scene, at.has_value(), beaten, read_flag, near_boss, [&](std::uint8_t room) {
                          // an event runs (or is unread): it may be the death; else what the Director knows
                          return !reading || reading->event_running.value_or(true) || CoopBoss::DeathMayRun(room);
                      })) {
@@ -1461,8 +1483,9 @@ public:
                     w.is_enum ? coop::protocol::FlagKind::uint32 : coop::protocol::FlagKind::boolean, w.value});
                 const CoopBossBeaten::BeatenSet* set = CoopBossBeaten::ForRoom(w.room);
                 if (w.revert) {
-                    LOG_INFO(Core, "coop: boss: {} is alive in the host's save: {} = {} {}", set->boss, w.name,
-                             w.value, ok ? "(written)" : "(could not write)");
+                    LOG_INFO(Core, "coop: boss: {} is alive in the host's save: {} {} {}", set->boss, w.name,
+                             w.is_enum ? std::string("-> the step before its death") : "= " + std::to_string(w.value),
+                             ok ? "(written)" : "(could not write)");
                     continue;
                 }
                 LOG_INFO(Core, "coop: boss: {} was beaten by the group, not in this game: {} {} {}", set->boss, w.name,
@@ -2433,6 +2456,7 @@ private:
     coop::host::PlayerReader::DrawnState drawn_state_{};
     bool sharing_ = false;  // a flag list is shared; set by Begin
     CoopBoss::StaleBossFlags stale_boss_;  // issue 148: shut boss doors from older builds
+    bool boss_alive_due_ = false;          // row 159: BOSS_ALIVE to send after our own save load (host)
     CoopBossBeaten::Apply boss_beaten_;    // G2: a boss the group beat, given to a game that did not see it die
     std::string_view boss_shut_in_name_;  // issue 148: CoopBoss::ShutInFlag, and its hash
     std::uint32_t boss_shut_in_hash_ = 0;

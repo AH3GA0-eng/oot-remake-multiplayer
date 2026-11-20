@@ -100,6 +100,7 @@ struct FrameReport {
   int save_load_flags = 0;
   int save_load_frames = 0;
   bool save_load_native = false;  // said by the game's own load nodes (patch 0024), not the old signs
+  bool save_load_retry = false;   // Game Over's Try Again (row 159: the host sends no BOSS_ALIVE for it)
 };
 
 class Session {

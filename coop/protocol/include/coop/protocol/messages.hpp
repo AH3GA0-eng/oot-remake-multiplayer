@@ -163,6 +163,7 @@ enum class MessageType : std::uint16_t {
   link_sound = 500,  // 500 to 509: the other Links' sounds (docs/protocol.md, "Link sounds")
   boss_scene = 520,  // 520 to 524: boss intro and death cutscenes (docs/protocol.md, "Boss cutscenes")
   boss_heart = 521,
+  boss_alive = 522,
   join_knock = 525,  // 525 to 529: the host lets joiners in (docs/protocol.md, "Host approval")
   join_allow = 526,
   bomb_take = 530,  // 530 to 534: a bomb changes hands (docs/protocol.md, "Bomb hand-over")
@@ -1667,6 +1668,21 @@ struct BossHeart {
   bool operator==(const BossHeart&) const = default;
 };
 
+// BOSS_ALIVE (row 159): the host's save load said which bosses it holds alive. The host sends it once after
+// its FLAG_RESET, on the same channel (so it comes after it), when its game reads the bosses' quests again. Bit
+// N of `known` is boss index N (CoopBossBeaten::Sets(): 0 to 7 the dungeon bosses, 8 Ganondorf, 9 Ganon) whose
+// quest the host read; bit N of `alive` (a subset of `known`): that quest is before the boss's death in the
+// host's save. A guest rewinds a boss whose quest the host does not set for it (each game's own) and that its
+// own game holds just beaten. The server takes it from the host only. Older games drop the unknown type.
+inline constexpr std::uint16_t kBossAliveMask = 0x03ff;  // ten bosses
+
+struct BossAlive {
+  std::uint8_t player_number = kPlayerSelf;  // the host
+  std::uint16_t known = 0;                   // within kBossAliveMask
+  std::uint16_t alive = 0;                   // within known
+  bool operator==(const BossAlive&) const = default;
+};
+
 // VOICE_FRAME (protocol 11, branch proximity-voip): 20 ms of the sender's
 // microphone as one Opus packet (48 kHz mono), or an empty packet with
 // voice::end that closes a talk spurt (the gate closed). Channel 5,
@@ -2053,7 +2069,7 @@ using Message = std::variant<Hello, Welcome, Refused, PlayerJoined, PlayerLeft,
                              LocalJoin, LocalJoined, LocalLeave, LocalSample, LocalMessage, LinkSound,
                              BossScene, BossHeart, PlayerLook, SwitchState, JoinKnock, JoinAllow,
                              BombTake, BombAnswer, BombShare, LiftAsk, LiftAnswer, LiftPlace,
-                             LiftShare, PvpStrike, PvpResult, PvpNative>;
+                             LiftShare, PvpStrike, PvpResult, PvpNative, BossAlive>;
 
 MessageType type_of(const Message& message);
 

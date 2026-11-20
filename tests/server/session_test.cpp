@@ -5474,6 +5474,34 @@ TEST_CASE("lobby: a muted player who restarts the game and comes back renamed wh
   CHECK(all_to<Chat>(h, 1).size() == 1);
 }
 
+TEST_CASE("boss alive: the host's only, relayed to everyone else after its FLAG_RESET, never kept (row 159)") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.clear();
+  h.receive(2, BossAlive{0, 0x0020, 0x0020}, kChannelProgress);  // not the host
+  CHECK(h.sent.empty());
+  CHECK(h.session.stats().boss_alive_refused == 1);
+  h.receive(1, FlagReset{0, {flag(5, 1)}}, kChannelProgress);
+  h.receive(1, BossAlive{0, 0x03e0, 0x0020}, kChannelProgress);
+  for (ConnectionId id : {2u, 3u}) {
+    const auto& got = h.to(id);
+    REQUIRE(got.size() == 2);
+    CHECK(std::holds_alternative<FlagReset>(got[0].message));
+    const auto* m = std::get_if<BossAlive>(&got[1].message);
+    REQUIRE(m != nullptr);
+    CHECK(*m == BossAlive{1, 0x03e0, 0x0020});
+    CHECK(got[1].channel == kChannelProgress);
+  }
+  CHECK(h.to(1).empty());
+  CHECK(h.session.stats().boss_alive_relayed == 1);
+  // A later joiner is not told (it takes the host's save).
+  h.clear();
+  h.join(4, "Impa");
+  for (const auto& sent : h.to(4)) CHECK_FALSE(std::holds_alternative<BossAlive>(sent.message));
+}
+
 TEST_CASE("boss heart: two claims at once give one heart container, the first one's, to everyone") {
   Harness h;
   h.join(1, "Link");

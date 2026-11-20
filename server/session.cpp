@@ -674,6 +674,19 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
     on_boss_heart(id, c, *heart);
     return;
   }
+  // Row 159: the host's save load, its bosses alive. The host's only (as FLAG_RESET), to everyone else on the
+  // progress channel, after the FLAG_RESET it sent first. Never kept: a later joiner takes the host's save.
+  if (std::holds_alternative<BossAlive>(message)) {
+    if (id != host_) {
+      ++stats_.boss_alive_refused;
+      return;
+    }
+    set_sender(message, c.number);
+    send_to_others(id, kChannelProgress, message);
+    ++stats_.boss_alive_relayed;
+    ++stats_.relayed;
+    return;
+  }
   if (const auto* st = std::get_if<DbnoStatus>(&message)) {
     c.dbno = st->state;  // then relayed to everyone, below
   }

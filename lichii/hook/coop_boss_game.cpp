@@ -250,7 +250,8 @@ struct Glue {
         if (step == CoopSessionGate::Step::forget) {
             sync.Reset();
             scenes.Reset();
-            CoopBossBeaten::TheRecord().Clear();  // out of the session: the server tells us again on a join
+            CoopBossBeaten::TheRecord().ForgetSession();  // out of the session: the server tells us again on a join
+            CoopBossBeaten::TheHostAlive().Clear();
             CoopBossScenes::RefusedDeaths().store(0, std::memory_order_release);
             readiness.Reset();
             max_life_cap.reset();
@@ -525,6 +526,18 @@ void OnEvent(const coop::net::Event& event) {
     if (event.kind == coop::net::EventKind::message) {
         TheGlue().sync.Receive(event.message);
         TheGlue().scenes.Receive(event.message);
+        // Row 159: the host's save load, its bosses alive. Taken off the record here, on the thread that adds to
+        // it, so a death proven before it never outlives it; the hook's frame rewinds our game (Apply::HostAlive).
+        // Only a boss that died this session is rewound: one a guest's own save beat before stays its own.
+        if (const auto* alive = std::get_if<coop::protocol::BossAlive>(&event.message)) {
+            CoopBossBeaten::Record& record = CoopBossBeaten::TheRecord();
+            const auto here = static_cast<std::uint16_t>(alive->alive & record.SeenMask());
+            record.Remove(here);
+            CoopBossBeaten::TheHostAlive().Put(coop::protocol::BossAlive{alive->player_number, alive->known, here});
+            LOG_INFO(Core, "coop: boss: the host's save holds bosses {:#05x} alive (of {:#05x} read; died this "
+                           "session: {:#05x})",
+                     alive->alive, alive->known, here);
+        }
         const auto* m = std::get_if<coop::protocol::BossRoom>(&event.message);
         if (m != nullptr && m->state != coop::protocol::BossState::in_room) {
             LOG_INFO(Core, "coop: boss: player {} says {} for {}", m->player_number, static_cast<int>(m->state),

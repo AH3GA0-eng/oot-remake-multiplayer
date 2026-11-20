@@ -430,11 +430,12 @@ class FlagWatcher {
     int flags = 0;
     int frames = 0;
     bool native = false;  // the game's own load nodes said it (set_native_loads), not the old signs
+    bool retry = false;   // Game Over's Try Again (the game's own load nodes said so): not a save chosen
   };
   std::optional<SaveLoadSeen> take_save_load() {
     if (!seen_) return std::nullopt;
     seen_ = false;
-    SaveLoadSeen s{seen_flags_, seen_frames_, native_loads_};
+    SaveLoadSeen s{seen_flags_, seen_frames_, native_loads_, window_retry_};
     seen_flags_ = 0;
     seen_frames_ = 0;
     return s;
