@@ -685,6 +685,14 @@ bool LifelessKillHere(std::string_view name, bool reacts, bool life_read, bool o
     return !IsDeathAnimation(owner_animation);
 }
 
+bool PictureDeathHere(std::string_view name, bool life_read, bool owned_by_other, std::string_view own_animation,
+                      std::string_view owner_animation) {
+    if (!name.starts_with("Enemy_GhostPicturePerformer_Poe_") || life_read || !owned_by_other) {
+        return false;
+    }
+    return IsDeathAnimation(own_animation) && !IsDeathAnimation(owner_animation);
+}
+
 bool IsHideAnimation(std::string_view name) {
     constexpr std::string_view word = "Visible_Off";
     for (std::size_t at = name.find(word); at != std::string_view::npos; at = name.find(word, at + 1)) {
@@ -1049,6 +1057,7 @@ void Sync::Reset() {
     eggs_.clear();
     copy_eggs_.clear();
     away_.clear();
+    still_ours_.clear();
     left_.clear();
     game_deletes_.clear();
     bound_.clear();
@@ -1278,6 +1287,7 @@ void Sync::GameDeleted(std::uint64_t address, std::uint64_t now_us, bool by_coop
     // an actor off the list is not run by its game (no fall, no burn), and
     // its address may be another actor's by now (review r1).
     std::erase_if(away_, [address](const Away& a) { return a.address == address; });
+    std::erase_if(still_ours_, [address](const Away& a) { return a.address == address; });
 }
 
 namespace {
@@ -1998,6 +2008,18 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (s.animation && IsDeathAnimation(s.animation->name)) {
             o.own_death_at = now_us;  // issue 133: its own death here (LifelessKillHere)
         }
+        if (o.picture_die_at == 0 && s.animation) {
+            const auto owner = owners_.find(o.id);
+            const std::string owners = !o.received.empty() && o.received.back().animation
+                                           ? o.received.back().animation->name
+                                           : std::string{};
+            const bool other = owner != owners_.end() && owner->second.player != 0 && owner->second.player != self;
+            if (PictureDeathHere(o.name, o.life.has_value(), other, s.animation->name, owners)) {
+                o.picture_die_at = now_us;  // row 175: its own death runs here; the owner's animation waits
+                o.picture_kill_due = true;
+                o.picture_die = s.animation->name;
+            }
+        }
         if (s.hit_ours && *s.hit_ours) {
             o.ours_hit_at = now_us;  // issue 133: its newest hit was ours (its game's own hit record)
         }
@@ -2654,6 +2676,21 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             o.hit_place.reset();
             o.hit_record.reset();
         }
+        // Row 175: our copy of a Poe sister's painting died here (our arrow): the kill goes to its owner now (it
+        // never leaves our walk, so issue 133's kill on leaving would never come).
+        if (o.picture_kill_due) {
+            o.picture_kill_due = false;
+            if (known && owner->second.player != self) {
+                proto::Damage d;
+                d.id = o.id;
+                d.epoch = owner->second.epoch;
+                d.amount = 1;
+                d.cause = static_cast<std::uint8_t>(proto::DamageCause::killed);
+                d.position = o.position;
+                send.emplace_back(d);
+                notes_.emplace_back("its copy died here (a painting, our hit): the kill goes to its owner: " + o.name);
+            }
+        }
         // Issue 150: our boss copy's own stun, as a DAMAGE of 0.
         if (o.stun_due) {
             o.stun_due = false;
@@ -2763,7 +2800,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         owners_.erase(a.id);
         notes_.emplace_back("gone " + a.name + ": off our walk " + std::to_string(kAwayKeepUs / 1'000'000) +
                             " s with no delete request: left");
+        still_ours_.push_back(a);  // (our game still has it: no encounter copy of it meanwhile)
         return true;
+    });
+    std::erase_if(still_ours_, [this, now_us](const Away& a) {
+        return now_us - a.since >= kStillOursUs ||
+               std::any_of(objects_.begin(), objects_.end(), [&a](const auto& e) { return e.second.id == a.id; });
     });
     // enemy-left-0116: enemies of ours our game deleted itself with no death
     // read. Back on the walk (the address reused by the same id): goes on.
@@ -3119,7 +3161,7 @@ void Sync::Flush(std::uint8_t self, std::uint64_t now_us, std::vector<Object>& g
         const std::string_view owner_animation = !o.received.empty() && o.received.back().animation
                                                      ? std::string_view(o.received.back().animation->name)
                                                      : std::string_view{};
-        const bool died_here = owner->second.player != self &&
+        const bool died_here = owner->second.player != self && o.picture_die_at == 0 &&  // (row 175: sent)
                                LifelessKillHere(o.name, o.reacts, o.life.has_value(), own_death_recent, owner_animation,
                                                 o.dead_at != 0 || o.owner_life_zero || o.dead_now);
         {
@@ -3215,6 +3257,12 @@ void Sync::HoldEncounters(std::uint64_t now_us) {
                                       [&](const auto& e) { return e.second.id == it->first && e.second.dead_at == 0; });
         if (ours || now_us - h.heard_us > kEncounterStaleUs) {
             it = held_.erase(it);  // ours came, or its owner left or unloaded it
+            continue;
+        }
+        if (std::any_of(still_ours_.begin(), still_ours_.end(), [&](const Away& a) { return a.id == it->first; })) {
+            // Row 175/176: our own one is only off the walk (no delete request): it takes the id when it is back.
+            h.near_us = 0;
+            ++it;
             continue;
         }
         const bool near = !player_ || Distance(*player_, h.position) <= kEncounterNearM;
@@ -3421,6 +3469,10 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     o->dead_now = true;
                     o->dead_at = now_us;
                     notes_.emplace_back("caught in its owner's game: " + o->name);
+                } else if (o != nullptr && o->picture_die_at != 0) {
+                    // Row 175: it died here first (our hit, sent to its owner): its own death runs here and ends
+                    // it (the room logic goes on from it); no write and no delete.
+                    notes_.emplace_back("dead in its owner's game after our kill: ours runs its own death: " + o->name);
                 } else if (o != nullptr && o->reacts && o->dead_at == 0) {
                     // Our game kills it itself (life 0 through the game), so
                     // its own kill counts: a room's enemy counter and shutter,
@@ -4077,6 +4129,13 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
                                                                              : show.idle_over});
     }
     for (const auto& [address, o] : objects_) {
+        // Row 175: our painting's own death, cut off by an owner's play already on its way: played again (from
+        // frame 0, once a sample) over whatever else it shows, so its room logic goes on.
+        if (o.picture_die_at != 0 && now_us >= o.picture_die_at && now_us - o.picture_die_at < kPictureReplayUs &&
+            !o.picture_die.empty() && o.animation && !IsDeathAnimation(o.animation->name)) {
+            out.push_back({address, o.picture_die, 1.0f, 0.0f, o.picture_die_at, 0, o.animation->name});
+            continue;
+        }
         if (o.received.empty() || now_us < o.received.back().time ||
             now_us - o.received.back().time > kPoseStaleUs) {
             continue;
@@ -4101,6 +4160,10 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
         // reaction to our DAMAGE) is played as usual.
         if (o.react_at != 0 && now_us < o.react_at + AnswerHoldUs(kReactHoldUs, owner->second.player) &&
             wanted->name == o.react_over) {
+            continue;
+        }
+        // Row 175: a painting that died here plays its own death; the owner's animation is not put on it.
+        if (o.picture_die_at != 0) {
             continue;
         }
         // Report 109: the copy's own wake for our Link (OwnWake) runs; the

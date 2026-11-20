@@ -402,6 +402,16 @@ bool IsDeathAnimation(std::string_view name);
 bool LifelessKillHere(std::string_view name, bool reacts, bool life_read, bool own_death_recent,
                       std::string_view owner_animation, bool owner_said_dead);
 
+// Row 175 (run 20261119-230405): a Poe sister in her painting (Enemy_GhostPicturePerformer_Poe_*, no life, it never
+// leaves the walk as it dies) that our arrow hit while ours is a copy: its own 'Pct_Die' was put back to the owner's
+// 'Pct_Wait' at once, so the room logic never went on (no scramble, no sister). True when our copy (owned by another
+// player) now plays its own death and the owner's newest animation is no death: the kill goes to the owner at once
+// (DAMAGE cause killed, as issue 133's lifeless kill), the owner's animation no longer goes on ours, and the owner's
+// "dead" leaves ours to its own game (its death runs the room logic here). Phantom Ganon's performers are his fight's
+// (the boss sync): never.
+bool PictureDeathHere(std::string_view name, bool life_read, bool owned_by_other, std::string_view own_animation,
+                      std::string_view owner_animation);
+
 // Issue 35 (4): an animation that hides the model (the withered Deku Baba's
 // "Upside_Visible_Off_Spine4", the stem's "DownSide_Visible_Off_Withered_Spine6"):
 // "Visible_Off" at the start or after '_'. A plain enemy's copy never
@@ -632,6 +642,9 @@ public:
     static constexpr std::uint64_t kOurHitKeepUs = 500'000;
     // Issue 133: a copy's own death animation counts for its leaving our walk this long (LifelessKillHere).
     static constexpr std::uint64_t kOwnDeathKeepUs = 5'000'000;
+    // Row 175 (run 20261119-232719): the owner's play handed over before our painting's death was read cut it off
+    // ('Pct_Wait' at once, the room logic stalled). Its own death is played again over it this long after.
+    static constexpr std::uint64_t kPictureReplayUs = 3'000'000;
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr std::uint64_t kSceneStaleUs = 5'000'000;  // a player's scene, from its samples
     static constexpr float kClaimDistance = 4.0f;  // a fresh roll this near a copy being made is it
@@ -719,6 +732,8 @@ public:
     // ends it. Without delete events (the emulator) two missed walks still end it.
     void SetDeleteEvents(bool on) { delete_events_ = on; }
     static constexpr std::uint64_t kAwayKeepUs = 2'000'000;
+    static constexpr std::uint64_t kStillOursUs = 120'000'000;  // still_ours_
+    std::size_t StillOursCount() const { return still_ours_.size(); }
     // enemy-left-0116 (row 138(3), Revirie's log at DC's second Lizalfos
     // pair): an event playing here takes its performers off the list for
     // longer (the Lizalfos' jump-in during FocusOnEnemy_02 went > 2 s, so
@@ -1163,6 +1178,9 @@ private:
         std::uint64_t record_seen_at = 0;
         std::uint64_t ours_hit_at = 0;   // issue 133: our Link's or projectile's newest hit on it (Seen::hit_ours)
         std::uint64_t own_death_at = 0;  // issue 133: its own death animation last read here (LifelessKillHere)
+        std::uint64_t picture_die_at = 0;  // row 175: our copy's own death here went to its owner (PictureDeathHere)
+        bool picture_kill_due = false;     // row 175: that kill is still to send
+        std::string picture_die;           // row 175: its own death animation then (played again if cut off)
         std::optional<coop::protocol::Vec3> hit_place;  // where our own hit summed now landed (a boss; cleared with the sum)
         std::optional<coop::protocol::HitRecord> hit_record;  // protocol 14: our newest own hit summed now (cleared with it)
         std::uint32_t hit_seq_in = 0;  // protocol 14: the owner's newest sample hit seq replayed here
@@ -1380,6 +1398,11 @@ private:
         bool split = false;               // row 172: a split enemy that left at life 0 (dead when its brood is)
     };
     std::vector<Away> away_;
+    // Row 175/176 (run 20261119-233327): an away object still off the walk after kAwayKeepUs with no delete request
+    // is told gone (left), but our game still has it (a Poe sister vanishes for longer in her fight). Its id is kept
+    // here until it comes back, our game deletes it (GameDeleted), the scene changes or kStillOursUs: meanwhile
+    // its new owner's OBJECT_SPAWN makes no encounter copy here (HoldEncounters), which made a second Amy.
+    std::vector<Away> still_ours_;
     bool delete_events_ = false;
     // enemy-left-0116: enemies of ours the game deleted with no death read,
     // listed until their OBJECT_REMOVE `gone` goes out (kLeftWaitUs).
