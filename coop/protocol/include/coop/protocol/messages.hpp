@@ -1579,7 +1579,7 @@ struct DbnoMode {
   std::uint8_t set_by = 0;         // 0 the server, 1 to kMaxPlayers a player
   bool on = true;
   std::uint8_t bleed_s = 45;       // kDbnoMinBleedS to kDbnoMaxBleedS
-  std::uint8_t revive_tenths = 30; // kDbnoMinReviveTenths to kDbnoMaxReviveTenths
+  std::uint8_t revive_tenths = 50; // kDbnoMinReviveTenths to kDbnoMaxReviveTenths
   std::uint8_t revive_life = 12;   // kDbnoMinReviveLife to kDbnoMaxReviveLife
   bool operator==(const DbnoMode&) const = default;
 };

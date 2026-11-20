@@ -392,18 +392,18 @@ TEST_CASE("dbno: a held revive fills the ring, stops the bleed-out, and brings h
     const std::uint64_t left = g.Step().left_us;
     g.sent.clear();
 
-    Output o = g.RunHeld(1500'000);
+    Output o = g.RunHeld(2500'000);
     CHECK(o.state == State::downed);
     CHECK(o.reviver == 1);
     CHECK(o.progress == doctest::Approx(0.5f).epsilon(0.05));
     CHECK(o.left_us == left);  // stands still
     // The ring is told ten times a second, with the reviver.
-    CHECK(g.sent.size() >= 14);
-    CHECK(g.sent.size() <= 16);
+    CHECK(g.sent.size() >= 24);
+    CHECK(g.sent.size() <= 26);
     CHECK(g.sent.front().reviver == 1);
     CHECK(g.sent.back().progress == doctest::Approx(127).epsilon(0.1));
 
-    o = g.RunHeld(1500'000 + kFrame);
+    o = g.RunHeld(2500'000 + kFrame);
     CHECK(o.state == State::up);
     CHECK(g.Saw(Event::revived));
     CHECK(g.life == 12);
@@ -421,7 +421,7 @@ TEST_CASE("dbno: the revive names who did it, and a Link with few hearts gets no
     g.rules.revive_life = 40;
     g.Down();
     Output o;
-    for (int i = 0; i < 70 && g.machine.Now() == State::downed; ++i) {
+    for (int i = 0; i < 120 && g.machine.Now() == State::downed; ++i) {
         g.machine.Hold(3, true, g.now);
         o = g.Step();
     }
@@ -433,7 +433,7 @@ TEST_CASE("dbno: the revive names who did it, and a Link with few hearts gets no
 TEST_CASE("dbno: letting go empties the ring and the bleed-out goes on") {
     Game g;
     g.Down();
-    Output o = g.RunHeld(2 * kS);
+    Output o = g.RunHeld(4 * kS);
     CHECK(o.progress > 0.6f);
     const std::uint64_t left = o.left_us;
     g.machine.Hold(1, false, g.now);
@@ -446,7 +446,7 @@ TEST_CASE("dbno: letting go empties the ring and the bleed-out goes on") {
     CHECK(o.left_us < left);
     // Starting over starts from nothing.
     o = g.RunHeld(kS);
-    CHECK(o.progress == doctest::Approx(1.0f / 3.0f).epsilon(0.1));
+    CHECK(o.progress == doctest::Approx(1.0f / 5.0f).epsilon(0.1));
 }
 
 TEST_CASE("dbno: a hold whose messages stop counts for a moment only") {
@@ -631,7 +631,7 @@ TEST_CASE("dbno: every status the machine sends is one the codec takes") {
     g.Down();
     g.RunHeld(2 * kS);
     g.Run(kS);
-    g.RunHeld(4 * kS);
+    g.RunHeld(6 * kS);
     REQUIRE(g.sent.size() > 20);
     for (const auto& s : g.sent) {
         std::vector<std::uint8_t> bytes;
@@ -837,8 +837,8 @@ TEST_CASE("dbno chat command: /dbno shows, on and off and the three numbers chan
     // A change keeps the rest as the session has it, within the limits.
     Rules now = On();
     now.bleed_s = 90;
-    CHECK(CoopDbno::Applied(now, *Parse("/dbno hearts 5")) == proto::DbnoMode{0, true, 90, 30, 20});
-    CHECK(CoopDbno::Applied(now, *Parse("/dbno off")) == proto::DbnoMode{0, false, 90, 30, 12});
+    CHECK(CoopDbno::Applied(now, *Parse("/dbno hearts 5")) == proto::DbnoMode{0, true, 90, 50, 20});
+    CHECK(CoopDbno::Applied(now, *Parse("/dbno off")) == proto::DbnoMode{0, false, 90, 50, 12});
     CHECK(CoopDbno::Applied(now, *Parse("/dbno time 5")).bleed_s == proto::kDbnoMinBleedS);
 }
 
@@ -850,7 +850,7 @@ TEST_CASE("dbno texts: the clock, the rules, our own notices and the others'") {
 
     CHECK(CoopDbno::RulesLine(Rules{}, 1, "") == "Down but not out is off: at no hearts you die");
     CHECK(CoopDbno::RulesLine(On(), 1, "") ==
-          "Down but not out is on: 0:45 to be revived, hold A 3 s, back with 3 hearts");
+          "Down but not out is on: 0:45 to be revived, hold A 5 s, back with 3 hearts");
     Rules r = On();
     r.revive_tenths = 25;
     r.revive_life = 2;

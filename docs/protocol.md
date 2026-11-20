@@ -603,7 +603,7 @@ A player at no hearts is downed instead of dead and a teammate can revive them (
 
 | Type | Name | Channel | Sent by | Body |
 |---|---|---|---|---|
-| 470 | `DBNO_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 16 the host who changed it), `u8` mode (0 off, 1 on; others refused), `u8` bleed-out seconds (10 to 240), `u8` revive hold in tenths of a second (5 to 100), `u8` life a revived player gets, quarter hearts (1 to 80); outside refused. No player field |
+| 470 | `DBNO_MODE` | 0 | both | `u8` set by (0 the server's start, 1 to 16 the host who changed it), `u8` mode (0 off, 1 on; others refused), `u8` bleed-out seconds (10 to 240), `u8` revive hold in tenths of a second (5 to 100; the server starts with 50, 5 s, since row 174, 0.11.8: an older guest takes the host server's value), `u8` life a revived player gets, quarter hearts (1 to 80); outside refused. No player field |
 | 471 | `DBNO_STATE` | 0 | both | `u8` player field, `u8` state (0 up, 1 downed, 2 out, 3 spectating; others refused), `u16` bleed-out left in tenths (0 to 2400), `u8` reviver (0 nobody, 1 to 16, not the player), `u8` revive progress (0 to 255). Not downed: left, reviver and progress are 0; no reviver: progress 0 (else refused) |
 | 472 | `DBNO_REVIVE` | 2 | both | `u8` player field (the reviver), `u8` target (1 to 16, not the reviver), `u8` holding (0 let go, 1 held; others refused) |
 | 473 | `DBNO_THREAT` | 0 | both | `u8` player field, `u8` near (0 no enemy near the sender's Link, 1 one is; others refused) |

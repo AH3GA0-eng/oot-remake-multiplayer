@@ -1987,9 +1987,9 @@ TEST_CASE("down but not out: types 470 to 472, mode and state on the session cha
     CHECK(may_send(Sender::server, t));
   }
 
-  // The defaults are the ones a server starts with: on, 45 s, 3 s, three hearts.
+  // The defaults are the ones a server starts with: on, 45 s, 5 s (row 174), three hearts.
   Message mode = DbnoMode{};
-  CHECK(std::get<DbnoMode>(mode) == DbnoMode{0, true, 45, 30, 12});
+  CHECK(std::get<DbnoMode>(mode) == DbnoMode{0, true, 45, 50, 12});
   CHECK_FALSE(sender_of(mode));  // no player field: the server says who set it
   Bytes b = must_encode(mode);
   REQUIRE(b.size() == kHeaderSize + 5);
