@@ -89,6 +89,23 @@ bool SharesPlacedPickup(std::string_view name) {
     return IsDrop(name) && name != "Obj_Rupee_Silver";
 }
 
+bool IsSupply(std::string_view name) {
+    // The kinds DropGlobalParam's lottery picks from the player's own stock (its DekuStickActor,
+    // DekuNutActor, DekuSeedActor, ArrowActor, BombActor, BombchuActor and the heart and magic
+    // refills it weighs by what the player is missing). Rupees and fairies are the same roll for all.
+    constexpr std::string_view kPrefixes[] = {"Obj_Heart", "Obj_MagicJar_", "Obj_ArrowBundle_", "Obj_Arrow_Fire",
+                                              "Obj_Bomb",  "Obj_DekuNut",   "Obj_DekuSeed",     "Obj_DekuStick"};
+    if (!IsDrop(name)) {
+        return false;
+    }
+    for (const std::string_view p : kPrefixes) {
+        if (name.starts_with(p)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- Sync
 
 void Sync::Receive(const proto::Message& message) {
@@ -106,6 +123,7 @@ void Sync::Reset() {
     scene_.clear();
     first_walk_ = true;
     old_.clear();
+    own_.clear();
     drops_.clear();
     bound_.clear();
     deleting_.clear();
@@ -180,16 +198,28 @@ void Sync::Delete(std::uint64_t address, const std::string& name, std::uint64_t 
     }
 }
 
+bool Sync::KeepsOwn(const Drop& d, const Drop* winner) const {
+    return winner != nullptr && self_ != 0 && d.id.maker == self_ && d.key == 0 && winner->name != d.name &&
+           IsSupply(d.name);
+}
+
 void Sync::Lose(Drop& d, Drop* winner, State state, std::uint64_t now_us,
                 std::vector<Remove>& removes) {
     const std::uint64_t address = d.address;
+    const bool keep_own = address != 0 && KeepsOwn(d, winner);
     d.state = state;
     d.done_us = now_us;
     if (address != 0) {
         bound_.erase(address);
         d.address = 0;
     }
-    if (address != 0 && winner != nullptr && winner->state == State::live &&
+    if (keep_own) {
+        // Row 168: the game rolled it for our player's own stock; the winner's roll is made beside it.
+        own_.insert(address);
+        ++kept_own_;
+        Note(Tag(d.id) + " " + d.name + " lost to " + Tag(winner->id) + " " + winner->name +
+             ": our player's own supply roll, kept here only");
+    } else if (address != 0 && winner != nullptr && winner->state == State::live &&
         winner->address == 0 && winner->name == d.name && (d.key == 0 || winner->key == 0)) {
         // The same kind of drop for the same thing: our actor is the winner's.
         Bind(*winner, address);
@@ -490,6 +520,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         return true;
     });
     std::erase_if(old_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
+    std::erase_if(own_, [&](std::uint64_t a) { return on_list.count(a) == 0; });
     // A delete that never came true (the director had let go of the copy
     // the moment we left it to it): the remover is asked. The actor stays
     // here so it is never taken for a roll of ours.
@@ -508,7 +539,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
 
     // Actors that are new on the list.
     for (const Seen& s : seen) {
-        if (old_.count(s.address) != 0 || bound_.count(s.address) != 0 ||
+        if (old_.count(s.address) != 0 || own_.count(s.address) != 0 || bound_.count(s.address) != 0 ||
             deleting_.count(s.address) != 0 || !Finite(s.position)) {
             continue;
         }
@@ -585,6 +616,17 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
             continue;
         }
         if (self == 0) {
+            continue;
+        }
+        if (Beaten(mine) && IsSupply(mine.name) &&
+            std::none_of(drops_.begin(), drops_.end(), [&](const auto& kv) {
+                return kv.second.name == mine.name && Matches(kv.second, mine) && Beats(kv.second, mine);
+            })) {
+            // Row 168: another game's roll of another kind stays for everyone, and ours, made from
+            // our player's own stock, stays too (here only: never told, matched or taken).
+            own_.insert(s.address);
+            ++kept_own_;
+            Note("own " + s.name + " kept: our player's own supply roll (another game rolled another kind)");
             continue;
         }
         if (Beaten(mine)) {

@@ -66,6 +66,15 @@ bool IsDrop(std::string_view name);
 // placed silver rupee: the dungeon key path removes that one (docs/items.md).
 bool SharesPlacedPickup(std::string_view name);
 
+// Row 168: a drop the game rolls from its OWN player's stock (the game's
+// GameParameter/DropGlobalParam: DepletedInfoData raises an item's chance
+// while that player runs low, with a bad-luck count per player): recovery
+// hearts, magic jars, arrows, bombs, bombchus, nuts, seeds and sticks. Two
+// games' rolls for the same pot differ by what each player has, so a roll of
+// ours of such a kind is never deleted for another game's roll of another
+// kind: it was made for our player (a stick for the torches when we have none).
+bool IsSupply(std::string_view name);
+
 // One drop actor of one walk.
 struct Seen {
     std::uint64_t address = 0;
@@ -142,6 +151,7 @@ public:
     std::size_t Live() const;       // drops this game shows or is making
     std::size_t Known() const { return drops_.size(); }
     std::size_t Refused() const { return refused_; }  // own rolls deleted
+    std::size_t KeptOwn() const { return kept_own_; }  // own supply rolls kept (row 168)
     std::size_t Adopted() const { return adopted_; }  // own rolls kept as another's
     std::optional<coop::protocol::ObjectId> IdOf(std::uint64_t address) const;
     std::vector<std::string> TakeNotes() { return std::exchange(notes_, {}); }
@@ -221,6 +231,11 @@ private:
     std::uint64_t last_now_ = 0;  // `now` never goes back inside Tick
     bool first_walk_ = true;
     std::set<std::uint64_t> old_;  // on the list at the first walk of a scene
+    // Row 168: our own supply rolls that lost to another kind (IsSupply): our
+    // player's own, left alone while listed, never told or matched again.
+    std::set<std::uint64_t> own_;
+    // `d` (ours) lost to `winner` of another kind and is a supply roll: kept as our own.
+    bool KeepsOwn(const Drop& d, const Drop* winner) const;
     std::map<coop::protocol::ObjectId, Drop> drops_;
     std::map<std::uint64_t, coop::protocol::ObjectId> bound_;  // actor to drop
     std::map<std::uint64_t, std::pair<std::string, std::uint64_t>> deleting_;  // actor: name, since
@@ -244,6 +259,7 @@ private:
     double tokens_ = 0.0;
     std::uint64_t tokens_at_ = 0;
     std::size_t refused_ = 0;
+    std::size_t kept_own_ = 0;
     std::size_t adopted_ = 0;
     std::vector<std::string> notes_;
 

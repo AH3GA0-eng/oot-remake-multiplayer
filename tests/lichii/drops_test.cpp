@@ -28,6 +28,8 @@ constexpr std::uint64_t kMs = 1000;
 const std::string kScene = "Spot_GraveYard";
 const std::string kGreen = "Obj_Rupee_Green";
 const std::string kHeart = "Obj_Heart";
+const std::string kBlue = "Obj_Rupee_Blue";  // not a supply kind: one roll for all (row 168)
+const std::string kStick = "Obj_DekuStick";
 
 Seen Lying(std::uint64_t address, float x, std::string name = kGreen) {
     return Seen{address, std::move(name), {x, 0.0f, 0.0f}};
@@ -142,6 +144,18 @@ TEST_CASE("drops: which actors are drops") {
     CHECK(CoopDrops::SharesPlacedPickup("Obj_Rupee_Green"));
     CHECK_FALSE(CoopDrops::SharesPlacedPickup("Obj_Rupee_Silver"));
     CHECK_FALSE(CoopDrops::SharesPlacedPickup("Enemy_ReDead"));
+}
+
+TEST_CASE("drops: the supply kinds are rolled from each player's own stock (row 168)") {
+    for (const char* n : {"Obj_DekuStick", "Obj_DekuNut", "Obj_DekuSeed", "Obj_ArrowBundle_Small",
+                          "Obj_ArrowBundle_Large", "Obj_Arrow_Fire", "Obj_Bomb", "Obj_Bombchu", "Obj_MagicJar_Small",
+                          "Obj_MagicJar_Large", "Obj_Heart", "Obj_Heart_InWater", "Obj_Heart_Shootable"}) {
+        CHECK(CoopDrops::IsSupply(n));
+    }
+    for (const char* n : {"Obj_Rupee_Green", "Obj_Rupee_Blue", "Obj_Rupee_Silver", "Obj_Fairy", "Obj_Heart_Piece",
+                          "Obj_Heart_Container", "Item_Bomb", "Enemy_ReDead"}) {
+        CHECK_FALSE(CoopDrops::IsSupply(n));
+    }
 }
 
 TEST_CASE("drops: a new scene asks, our game's drop is told once") {
@@ -285,13 +299,13 @@ TEST_CASE("drops: both games rolled: the lower number's stays, the same kind is 
 TEST_CASE("drops: both games rolled another kind: the loser's is deleted and the winner's made") {
     Game b(2);
     b.Tick();
-    b.seen = {Lying(0x2000, 5.5f, kHeart)};
+    b.seen = {Lying(0x2000, 5.5f, kBlue)};
     b.Tick();
     REQUIRE(Of<proto::DropSpawn>(b.send).size() == 1);
     b.sync.Receive(Told(1, 7, 5.0f, b.now));
     b.Tick();
     REQUIRE(b.removes.size() == 1);
-    CHECK(b.removes[0] == Remove{0x2000, kHeart});
+    CHECK(b.removes[0] == Remove{0x2000, kBlue});
     REQUIRE(b.creates.size() == 1);  // at once: our own roll was already there
     CHECK(b.creates[0].name == kGreen);
     // Still on the list until the game deletes it: not a new roll.
@@ -299,6 +313,86 @@ TEST_CASE("drops: both games rolled another kind: the loser's is deleted and the
     CHECK(Of<proto::DropSpawn>(b.send).empty());
     CHECK(b.removes.empty());
     CHECK(b.sync.Live() == 1);
+}
+
+TEST_CASE("drops: our stick that loses to another kind stays ours, the winner's is made beside it (row 168)") {
+    // Dodongo's Cavern, the stair room's pot: our game (P3, out of sticks) rolled a stick, P1's a rupee, both
+    // flagged owned; P1's stays for everyone. Our stick was deleted at once (player log 2026-11-20).
+    Game c(3);
+    c.Tick();
+    c.owned = {Vec3{5.0f, 0.0f, 0.0f}};
+    c.Tick();
+    c.seen = {Lying(0x3000, 5.2f, kStick)};
+    c.Tick();
+    REQUIRE(Of<proto::DropSpawn>(c.send).size() == 1);
+    c.sync.Receive(Told(1, 7, 5.0f, c.now, kGreen, proto::drop_spawn::owned));
+    c.Tick();
+    CHECK(c.removes.empty());  // our stick is not deleted
+    CHECK_FALSE(c.sync.IdOf(0x3000));  // and no longer shared
+    CHECK(c.sync.KeptOwn() == 1);
+    REQUIRE(c.creates.size() == 1);  // P1's rupee is made here too
+    CHECK(c.creates[0].name == kGreen);
+    // Still listed: never told again as a new roll, never deleted.
+    c.Tick();
+    c.Tick(1000);
+    CHECK(Of<proto::DropSpawn>(c.send).empty());
+    CHECK(c.removes.empty());
+    // Picked up here: nothing is told (only our player had it).
+    c.player = Vec3{5.2f, 0.0f, 0.0f};
+    c.Gone(0x3000);
+    c.Tick();
+    c.Tick();
+    c.Tick(600);
+    CHECK(Of<proto::DropTake>(c.send).empty());
+}
+
+TEST_CASE("drops: our stick rolled after another kind's winner is known stays ours (row 168)") {
+    Game b(2);
+    b.Tick();
+    b.sync.Receive(Told(1, 7, 5.0f, b.now));
+    b.Tick(100);
+    b.seen = {Lying(0x2000, 5.5f, kStick)};
+    b.Tick(100);
+    CHECK(Of<proto::DropSpawn>(b.send).empty());
+    CHECK(b.removes.empty());
+    CHECK_FALSE(b.sync.IdOf(0x2000));
+    CHECK(b.sync.KeptOwn() == 1);
+    CHECK(b.sync.Refused() == 0);
+    b.Tick(1000);
+    REQUIRE(b.creates.size() == 1);  // the rupee is still made
+    CHECK(b.creates[0].name == kGreen);
+    CHECK(b.removes.empty());
+}
+
+TEST_CASE("drops: a stick against a stick is still one drop for all (row 168)") {
+    Game b(2);
+    b.Tick();
+    b.seen = {Lying(0x2000, 5.5f, kStick)};
+    b.Tick();
+    REQUIRE(Of<proto::DropSpawn>(b.send).size() == 1);
+    b.sync.Receive(Told(1, 7, 5.0f, b.now, kStick));
+    b.Tick();
+    CHECK(b.sync.IdOf(0x2000) == Id(1, 7));  // kept as the winner's
+    CHECK(b.removes.empty());
+    CHECK(b.sync.KeptOwn() == 0);
+    b.Tick(1000);
+    CHECK(b.creates.empty());
+}
+
+TEST_CASE("drops: another game's stick that loses to our rupee is not made here (row 168)") {
+    // The other side of the first case: P1 (us) rolled a rupee, P3 a stick for its own player.
+    Game a(1);
+    a.Tick();
+    a.owned = {Vec3{5.0f, 0.0f, 0.0f}};
+    a.Tick();
+    a.seen = {Lying(0x1000, 5.0f)};
+    a.Tick();
+    a.sync.Receive(Told(3, 9, 5.2f, a.now, kStick, proto::drop_spawn::owned));
+    a.Tick();
+    a.Tick(1000);
+    CHECK(a.creates.empty());
+    CHECK(a.removes.empty());
+    CHECK(a.sync.Live() == 1);
 }
 
 TEST_CASE("drops: the owner's roll beats a lower player number") {
@@ -344,11 +438,11 @@ TEST_CASE("drops: our roll that comes after the winner's copy was made is delete
     b.Tick();
     b.made.clear();
     // Now our own game rolls for the same thing.
-    b.seen.push_back(Lying(0x2000, 5.5f, kHeart));
+    b.seen.push_back(Lying(0x2000, 5.5f, kBlue));
     b.Tick();
     CHECK(Of<proto::DropSpawn>(b.send).empty());
     REQUIRE(b.removes.size() == 1);
-    CHECK(b.removes[0] == Remove{0x2000, kHeart});
+    CHECK(b.removes[0] == Remove{0x2000, kBlue});
     CHECK(b.sync.Refused() == 1);
 }
 
