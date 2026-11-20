@@ -2850,6 +2850,7 @@ public:
         }
         // A kept kill whose actor is no keeper any more lands now, on the same actor, once our key is out of its Life
         // (row 160 (b)); one whose actor went waits by its placement hash for this visit.
+        std::set<u64> landing;  // kept kills whose landing waits for our key to come out: still held as keepers
         for (auto it = trigger_kept_.begin(); it != trigger_kept_.end();) {
             if (keeper_addresses_.contains(it->first)) {
                 ++it;
@@ -2861,7 +2862,11 @@ public:
                 if (life != life_at.end() && TheKeptShield().On(life->second)) {
                     const u64 since = land_wait_since_.try_emplace(it->first, now_us).first->second;
                     if (now_us - since < CoopEventResult::kKeptShieldWaitUs) {
-                        ++it;  // the key comes out first (the shield's next call)
+                        // The key comes out first (the shield's next call). Run 20261120-144321: meanwhile the
+                        // owner's dead ObjectRemove took the actor (no keeper skips it), so the kill never landed
+                        // and our room never asked its event: the address stays a keeper until the kill lands.
+                        landing.insert(it->first);
+                        ++it;
                         continue;
                     }
                 }
@@ -2883,6 +2888,7 @@ public:
             trigger_kept_since_.erase(it->first);
             it = trigger_kept_.erase(it);
         }
+        keeper_addresses_.insert(landing.begin(), landing.end());
         std::erase_if(writes, [&](LifeWrite& w) {
             if (w.life > 0 || w.heal || w.test_kill || !keeper_addresses_.contains(w.address)) {
                 return false;
@@ -2906,7 +2912,7 @@ public:
         // Row 160 (b): every kept kill's copy that is still a keeper holds our key (no hit lands on it).
         std::set<u64> want;
         for (const auto& [address, kept] : trigger_kept_) {
-            if (!keeper_addresses_.contains(address)) continue;
+            if (!keeper_addresses_.contains(address) || landing.contains(address)) continue;  // landing: key out
             if (const auto life = life_at.find(address); life != life_at.end() && life->second != 0) {
                 want.insert(life->second);
             }
