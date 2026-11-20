@@ -22,7 +22,8 @@ For each player, Nucleus makes an instance folder (`C:\Nucleus\content\OoTCoopLo
 | `coop-options.ini` | The kit's `coop-options.ini` (or the game's own copy), plus this game's controller: `LICHII_COOP_PAD=<Nucleus's pad number>` and `LICHII_COOP_KEYBOARD=off`. The keyboard player gets `LICHII_COOP_PAD=none` and `LICHII_COOP_KEYBOARD=focus`. Players 2 to 4 have no `color` line, so each gets its slot's colour |
 | `user` | A junction (no admin needed). Player 1's points to the game's own `user` folder, so player 1 plays their own saves. Player N's (N from 2 to 4) points to `nucleus-players\playerN\user` beside the game. A guest plays from its co-op save folder, which is filled with the host's save when it joins |
 | `player-key.txt` | Player 1's own key, or a key kept for player N in `nucleus-players\playerN` (the Lobby's mutes and bans follow it) |
-| `longshot_options.ini` | A copy of the game's own, with `fullscreen=0` (Nucleus places the windows) and `discord_status=0` |
+| `longshot_options.ini` | A copy of the game's own, with `fullscreen=0` (Nucleus places the windows) and `discord_status=0`. A controller player's also gets `mouse_camera=0` (Mouse camera **As the stick**, not **Native**): the native mouse camera puts its last angles back on the camera each frame, over the right stick's. The keyboard player keeps their own choice |
+| `logs` | Not linked (`Game.DirExclusions`): each game makes its own at its start, so two games never write the same `longshot_log.txt` and co-op logs. An instance folder made by an older handler kept a link to the game's `logs` folder: the handler removes that link (the logs it pointed to stay) |
 
 Player 1's start also opens the kit's `server\coop_server.exe --port 27590 --bind 127.0.0.1 --max-players 4 --password <session password>`. The server listens on this PC only, so Windows shows no firewall prompt and nobody else can join.
 
@@ -37,6 +38,8 @@ Each game reads its own controller and keeps reading it while another window is 
 What stays linked: the game's big files (`longshot.exe`, `romfs`, `mods` and the shader and pipeline caches). The game saves a cache by writing a `.tmp` file and moving it over the old one. That puts a file of the instance's own in its folder and leaves the original as it was, so two games never write the same file.
 
 ## Troubleshooting
+
+- **A controller player's right stick barely turns the camera, and the camera does not follow Link** (the handler of 0.11.7 or older, with **Mouse camera: Native** in Longshot's options): after Nucleus's Ctrl+H, every game is behind another window. A game behind skips the input read that tells the native mouse camera a pad is turning it, so the game that last had the focus keeps putting its last mouse angles back. Take the newer `OoTCoop.js`, or set **Mouse camera** to **As the stick** in each controller player's game (Insert menu). A co-op game built with the newer patch 0015 leaves the camera to the pad in a game with `LICHII_COOP_KEYBOARD=off`, in front or not.
 
 - **No controllers on Nucleus's setup screen** (the handler of 0.11.1 or older): that handler had XInput off, and Nucleus then lists no pads at all. In your copy (`C:\Nucleus\handlers\OoTCoop.js`) change `Game.Hook.XInputEnabled = false;` to `Game.Hook.XInputEnabled = true;` (or take the newer `OoTCoop.js` from the next release), then restart Nucleus. Nucleus lists Xbox-style (XInput) controllers; a PlayStation or Switch controller needs a tool such as DS4Windows that makes it look like an Xbox controller.
 
