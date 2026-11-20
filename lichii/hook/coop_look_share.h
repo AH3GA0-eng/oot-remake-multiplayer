@@ -126,6 +126,30 @@ private:
     std::array<Ready, kSlots> ready_{};
 };
 
+// Which pick goes out (coop_hook reads the saved Int twice a second). A guest plays the host's save (CoopSave), whose
+// Int is the HOST's pick, not the guest's: until the guest picks again in the mod on that save, the pick it had on its
+// own save this run goes out (none read yet: Link), so the others never see the guest as the host's character. A
+// new save load is a new start (CoopSave::SaveLoadStarts). The guest's own screen still shows the save's pick (the
+// mod's code reads that Int; we leave the game's data alone). Not thread-safe (the game's thread only).
+class OwnPick {
+public:
+    // `read`: the saved Int now (0: Link, or no mod); `on_host_save`: this game plays the host's save;
+    // `loads`: CoopSave::SaveLoadStarts(). The pick to send.
+    std::uint16_t Update(std::uint16_t read, bool on_host_save, std::uint64_t loads);
+    // The pick kept from an earlier start (coop-character.txt beside coop.ini), before the first Update: a guest that
+    // joins before it plays its own save still sends its own.
+    void Seed(std::uint16_t own) { own_ = own; kept_ = own; }
+    // Our own pick changed (read on our own save) since the last call: the number to keep for the next start.
+    std::optional<std::uint16_t> TakeOwnChange();
+
+private:
+    std::uint16_t own_ = 0;                 // the last pick read on our own save
+    std::optional<std::uint64_t> loads_;    // the host's save load the baseline is of
+    std::uint16_t at_load_ = 0;             // the host's pick, as that load brought it
+    bool repicked_ = false;                 // the guest picked on the host's save since that load
+    std::optional<std::uint16_t> kept_;     // what TakeOwnChange last gave (or Seed)
+};
+
 // The hook's one Share. Set: any thread. OnEvent: the network thread, with
 // its client (sends at once). Frame: the game's thread, each frame. Of: any.
 void Set(Parts parts);

@@ -347,14 +347,57 @@ TEST_CASE("look share: a player's character is kept apart from the colours of th
     CHECK(s.CharacterOf(2) == 0);                             // and with the session
 }
 
+TEST_CASE("look share: a new pick of character alone paints no copy again") {
+    // Review of #299 (7): only the character changed, the colours did not: the slot's copy stays painted.
+    CoopLookShare::Share s;
+    s.EnableSlots(true);
+    const LookPart nine{CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 9u};
+    const LookPart ten{CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 10u};
+    s.OnEvent(Look(2, {{11, 0xFF0000}, nine}));
+    auto jobs = s.Jobs(0);
+    REQUIRE(jobs.size() == 1);
+    CHECK(jobs[0].parts == CoopLookShare::Parts{{11, 0xFF0000}});
+    s.Done(jobs[0], 0);
+    CHECK(s.OnEvent(Look(2, {{11, 0xFF0000}, ten})));   // a change (the puppet's actor)...
+    CHECK(s.Jobs(CoopLookShare::kCopyDwellMs * 2).empty());   // ...but no repaint
+    s.OnEvent(Look(3, {nine}));                          // a character and no colours: its copy once, as any look
+    jobs = s.Jobs(CoopLookShare::kCopyDwellMs * 2);
+    REQUIRE(jobs.size() == 1);
+    CHECK(jobs[0].parts.empty());
+    s.Done(jobs[0], 0);
+    s.OnEvent(Look(3, {ten}));
+    CHECK(s.Jobs(CoopLookShare::kCopyDwellMs * 4).empty());
+}
+
+TEST_CASE("look share: a guest on the host's save sends its own pick, not the host's") {
+    // Review of #299 (5): the host's save carries the host's pick.
+    CoopLookShare::OwnPick p;
+    CHECK(p.Update(0, false, 0) == 0);
+    CHECK(p.Update(12, false, 0) == 12);       // our own save: what we picked
+    CHECK(p.TakeOwnChange() == std::optional<std::uint16_t>(12));
+    CHECK_FALSE(p.TakeOwnChange());            // once
+    CHECK(p.Update(30, true, 1) == 12);        // the host's save loads with the host's 30: ours goes out
+    CHECK(p.Update(30, true, 1) == 12);
+    CHECK_FALSE(p.TakeOwnChange());            // the host's pick is never kept as ours
+    CHECK(p.Update(44, true, 1) == 44);        // the guest picks on the host's save: that one
+    CHECK(p.Update(30, true, 1) == 30);        // even back to the host's number: it is the guest's pick now
+    CHECK(p.Update(30, true, 2) == 12);        // a new load of the host's save: its number is the host's again
+    CHECK(p.Update(0, true, 3) == 12);         // a host as Link: still ours
+    CHECK(p.Update(0, false, 3) == 0);         // back on our own save (as Link): that
+    CoopLookShare::OwnPick seeded;
+    seeded.Seed(7);                            // kept from the last start (coop-character.txt)
+    CHECK_FALSE(seeded.TakeOwnChange());
+    CHECK(seeded.Update(30, true, 0) == 7);    // a guest that joined before playing its own save
+    CoopLookShare::OwnPick fresh;
+    CHECK(fresh.Update(30, true, 0) == 0);     // nothing known: Link, never the host's
+}
+
 TEST_CASE("character puppets: the pack's are read from its manifest, and a player who picked one is shown as it") {
     using namespace CoopPuppet;
-    CHECK(CharacterActor(true, 9) == "CoopPuppet_Adult_C007");
-    CHECK(CharacterActor(false, 2) == "CoopPuppet_Child_C000");
-    CHECK(CharacterActor(false, 115) == "CoopPuppet_Child_C113");
-    CHECK(CharacterActor(true, 0).empty());    // Link
-    CHECK(CharacterActor(true, 1).empty());    // no file
-    CHECK(CharacterActor(true, 2000).empty());
+    CHECK(CharacterActor(true, 7) == "CoopPuppet_Adult_C007");
+    CHECK(CharacterActor(false, 0) == "CoopPuppet_Child_C000");
+    CHECK(CharacterActor(false, 113) == "CoopPuppet_Child_C113");
+    CHECK(CharacterActor(true, 1000).empty());
     CHECK(IsCharacterActor("CoopPuppet_Adult_C007"));
     CHECK(IsCharacterActor("CoopPuppet_ChildQuiet_C113"));
     CHECK(IsCharacterActor("CoopPuppet_Adult_C007_Pvp"));
@@ -363,24 +406,39 @@ TEST_CASE("character puppets: the pack's are read from its manifest, and a playe
     CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_C07"));
     CHECK_FALSE(IsCharacterActor("CoopPuppet_Adult_C0077"));
     CHECK_FALSE(IsCharacterActor("CoopTunic_Adult_C007"));
+    // As build.py writes it: the mod's stored number 9 is file 5 (a gap: not 9 - 2), 4 is file 2.
     const std::string manifest =
-        R"({"actors": [{"actor": "CoopPuppet_Child"}, {"actor": "CoopPuppet_Adult_Cyan", "tunic": "cyan"},)"
-        R"( {"actor": "CoopPuppet_Adult_C007", "character": 7, "model": "Player_Adult_C007"},)"
-        R"( {"actor": "CoopPuppet_Child_C007", "character": 7}, {"actor": "CoopPuppet_Adult_C007"}]})";
+        R"({"actors": [{"actor": "CoopPuppet_Child", "character": null}, {"actor": "CoopPuppet_Adult_Cyan", "tunic": "cyan"},)"
+        R"( {"actor": "CoopPuppet_Adult_C005", "character": 5, "model": "Player_Adult_C005"},)"
+        R"( {"actor": "CoopPuppet_Child_C005", "character": 5}, {"actor": "CoopPuppet_Adult_C002", "character": 2},)"
+        R"( {"actor": "CoopPuppet_Adult_C005"}], "characters": {"mod": "OoT Character Select",)"
+        R"( "numbers": {"2": 4, "5": 9}, "variants": {"2": ["Adult"], "5": ["Child", "Adult"]}}, "test_tunic": null})";
     const auto actors = PackCharacterActors(manifest);
-    CHECK(actors == std::vector<std::string>{"CoopPuppet_Adult_C007", "CoopPuppet_Child_C007"});
+    CHECK(actors == std::vector<std::string>{"CoopPuppet_Adult_C002", "CoopPuppet_Adult_C005", "CoopPuppet_Child_C005"});
     CHECK(PackCharacterActors(R"({"actors": [{"actor": "CoopPuppet_Adult_Cyan"}]})").empty());
+    const auto files = PackCharacterNumbers(manifest);
+    CHECK(files == std::map<std::uint16_t, std::uint16_t>{{4, 2}, {9, 5}});
+    CHECK(PackCharacterNumbers(R"({"actors": [], "characters": null, "numbers": {"1": 3}})").empty());
+    CHECK(PackCharacterNumbers(R"({"actors": []})").empty());
+    CHECK(PackCharacterNumbers(R"({"characters": {"mod": "x", "numbers": {}}})").empty());
 
     PlannerSettings settings;
     settings.character_actors = actors;
+    settings.character_files = files;
     Planner p(settings);
-    CHECK(p.ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_C007");    // the character, before the colour
-    CHECK(p.ActorFor(false, std::nullopt, 9) == "CoopPuppet_Child_C007");
+    CHECK(p.ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_C005");    // the pack's file, before the colour
+    CHECK(p.ActorFor(false, std::nullopt, 9) == "CoopPuppet_Child_C005");
+    CHECK(p.ActorFor(true, 0xFF3030u, 4) == "CoopPuppet_Adult_C002");
+    CHECK(p.ActorFor(false, 0xFF3030u, 4) == "CoopPuppet_Child_Red");    // no child model of it
     CHECK(p.ActorFor(true, 0xFF3030u, 0) == "CoopPuppet_Adult_Red");     // Link: the colour, as before
-    CHECK(p.ActorFor(true, 0xFF3030u, 10) == "CoopPuppet_Adult_Red");    // a character this pack has no puppet of
+    CHECK(p.ActorFor(true, 0xFF3030u, 7) == "CoopPuppet_Adult_Red");     // 7 - 2 = 5 is no rule: 7 is not listed
+    CHECK(p.ActorFor(true, 0xFF3030u, 12) == "CoopPuppet_Adult_Red");    // a number this viewer's mod has not
     CHECK(p.ActorFor(true, 0xFF3030u) == "CoopPuppet_Adult_Red");
-    p.SetFailedTunics({"CoopPuppet_Adult_C007"});
+    p.SetFailedTunics({"CoopPuppet_Adult_C005"});
     CHECK(p.ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");     // one the game refused: the colour
     PlannerSettings none;
     CHECK(Planner(none).ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");   // a pack without them
+    PlannerSettings no_map;
+    no_map.character_actors = actors;
+    CHECK(Planner(no_map).ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");   // puppets but no map: none
 }

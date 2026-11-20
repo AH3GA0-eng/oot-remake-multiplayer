@@ -2835,6 +2835,14 @@ class FullBuildTest(unittest.TestCase):
         self.assertEqual(m["characters"]["numbers"], {"5": 7})
         # The puppet is the game's player pack under its own name: nothing of the mod's is copied.
         self.assertFalse(os.path.exists(os.path.join(mod, "romfs", "Model", "Player_Adult_C005.Player_Adult.bfres.zs")))
+        # Nothing of the mod's tables without copies of them in its romfs: the game's rows, its Player rows raised.
+        d = zs.Dicts.from_romfs(self.romfs)
+        out_ai = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(mod, "romfs", "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(build._num(out_ai["Player_Adult"]["InstanceHeapSize"]), 0x7000000)
+        self.assertEqual(build._num(out_ai["Player_Child"]["PreActorRenderInfoHeapSize"]), 0x60000)
+        self.assertEqual(out_ai["Player_Adult"]["FmdbName"], "Player_Adult")   # the rest of the row as the game's
+        self.assertEqual(out_ai["Animal"], {"__RowId": "Animal", "CalcRadius": 1.0})
         # Another mod's list, or another format, is not ours.
         doc["mod"] = "Something Else"
         with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
@@ -2842,6 +2850,84 @@ class FullBuildTest(unittest.TestCase):
         self.assertIsNone(build.find_characters(mod, log=lambda *_: None))
         m = build.build(self.romfs, os.path.join(mods, "pack2"), log=lambda *_: None, look_slots=0)
         self.assertIsNone(m["characters"])
+
+    def test_build_characters_keeps_the_mods_tables(self):
+        # Review of #299 (2, 3): the pack's ActorInfo, GameActorInfo and size table replace the mod's own copies, so
+        # the mod's rows and entries go into the pack's (solo too: the player's own Link keeps the mod's heaps).
+        plain = zstandard.ZstdCompressor()
+        mods = os.path.join(self.dir, "mods_cs2")
+        cs = os.path.join(mods, "OoT Character Select")
+        romfs = os.path.join(cs, "romfs")
+        os.makedirs(os.path.join(romfs, "Model"))
+        os.makedirs(os.path.join(romfs, "RSDB"))
+        os.makedirs(os.path.join(romfs, "System", "Resource"))
+        for name, data in (("Player_Adult_C005.Player_Adult.bfres", b"x" * 300),
+                           ("Player_Child_C009.Player_Child.bfres", b"y" * 5000)):
+            with open(os.path.join(romfs, "Model", name + ".zs"), "wb") as f:
+                f.write(plain.compress(data))
+        doc = {"format": 1, "mod": "OoT Character Select",
+               "actor_heaps": {"Adult": {"InstanceHeapSize": 0x1000000, "PreActorRenderInfoHeapSize": 0x60000},
+                               "Child": {"InstanceHeapSize": 0x100, "PreActorRenderInfoHeapSize": 0x60000}},
+               "characters": [{"number": 7, "file": 5}, {"number": 20, "file": 9}]}
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        d = zs.Dicts.from_romfs(self.romfs)
+        ai = byml.loads(d.decompress(build.read(os.path.join(self.romfs, "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))
+        mod_ai = [dict(r) for r in ai]
+        for r in mod_ai:
+            if r["__RowId"] == "Player_Adult":
+                r["InstanceHeapSize"] = 0x2000000      # larger than characters.json's: kept
+            if r["__RowId"] == "Player_Base":
+                r["InstanceHeapSize"] = 7000000        # any row the mod changed
+        mod_ai.append({"__RowId": "Cs_MadeUp", "InstanceHeapSize": 5})   # a row the mod adds
+        with open(os.path.join(romfs, "RSDB", "ActorInfo.Product.999.rstbl.byml.zs"), "wb") as f:
+            f.write(plain.compress(byml.dumps(mod_ai)))
+        t = rstb.Rstb()
+        t.set("Model/Player_Adult_C005.Player_Adult.bfres", 123456)   # the mod's own entry for its model
+        t.set("Layout/MadeUp.bflyt", 999)                             # and for any file of its own
+        t.set("Actor/Player_Base.engine__actor__ActorParam.bgyml", 5)  # smaller than the game's: the game's stays
+        with open(os.path.join(romfs, "System", "Resource", "ResourceSizeTable.Product.999.Test.rsizetable.zs"), "wb") as f:
+            f.write(plain.compress(t.dumps()))
+        mod = os.path.join(mods, "pack")
+        found = build.find_characters(mod, log=lambda *_: None)
+        self.assertEqual(found["numbers"], {5: 7, 9: 20})
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, look_slots=0, characters=found)
+        self.assertEqual(m["characters"]["numbers"], {"5": 7, "9": 20})
+        self.assertIn("CoopPuppet_Child_C009", {a["actor"] for a in m["actors"]})
+        out_ai = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(mod, "romfs", "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(build._num(out_ai["Player_Adult"]["InstanceHeapSize"]), 0x2000000)
+        self.assertEqual(build._num(out_ai["Player_Child"]["InstanceHeapSize"]), 5692448)   # the game's was larger
+        self.assertEqual(build._num(out_ai["Player_Child"]["PreActorRenderInfoHeapSize"]), 0x60000)
+        self.assertEqual(build._num(out_ai["Player_Base"]["InstanceHeapSize"]), 7000000)
+        self.assertEqual(out_ai["Cs_MadeUp"], {"__RowId": "Cs_MadeUp", "InstanceHeapSize": 5})
+        self.assertIn("CoopPuppet_Adult_C005", out_ai)                 # the pack's own rows too
+        self.assertIn("CoopPuppet_Adult", out_ai)
+        table = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            mod, "romfs", "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertEqual(table.get("Model/Player_Adult_C005.Player_Adult.bfres"), 123456)
+        self.assertEqual(table.get("Model/Player_Child_C009.Player_Child.bfres"), 5024 + build.PACK_SIZE_MARGIN)
+        self.assertEqual(table.get("Layout/MadeUp.bflyt"), 999)
+        self.assertEqual(table.get("Actor/Player_Base.engine__actor__ActorParam.bgyml"), 13336)
+        self.assertTrue(any("size-table entries from OoT Character Select" in line for line in said), said)
+        # A size table for another game version: only the model files are sized (from the files).
+        os.rename(os.path.join(romfs, "System", "Resource", "ResourceSizeTable.Product.999.Test.rsizetable.zs"),
+                  os.path.join(romfs, "System", "Resource", "ResourceSizeTable.Product.998.Test.rsizetable.zs"))
+        mod2 = os.path.join(mods, "pack2")
+        build.build(self.romfs, mod2, log=lambda *_: None, look_slots=0, characters=build.find_characters(mod2))
+        table = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            mod2, "romfs", "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        self.assertEqual(table.get("Model/Player_Adult_C005.Player_Adult.bfres"), 320 + build.PACK_SIZE_MARGIN)
+        self.assertIsNone(table.get("Layout/MadeUp.bflyt"))
+        # Without the mod (--no-characters, or none installed): the game's Player rows, as before.
+        mod3 = os.path.join(self.dir, "plain_pack")
+        build.build(self.romfs, mod3, log=lambda *_: None, look_slots=0)
+        out_ai = {r["__RowId"]: r for r in byml.loads(d.decompress(build.read(
+            os.path.join(mod3, "romfs", "RSDB/ActorInfo.Product.999.rstbl.byml.zs"))))}
+        self.assertEqual(build._num(out_ai["Player_Adult"]["InstanceHeapSize"]), 10245064)
+        self.assertNotIn("PreActorRenderInfoHeapSize", out_ai["Player_Child"])
+        self.assertNotIn("Cs_MadeUp", out_ai)
 
     def test_skin_refusals(self):
         cases = [

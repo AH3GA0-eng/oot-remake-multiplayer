@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1620,9 +1621,25 @@ public:
             static const std::uint32_t picked_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");
             EmulatorMemory flag_memory(system.ApplicationMemory(), base_);
             const auto picked = coop::host::GameFlags(flag_memory).get_int(picked_hash);
-            CoopLookShare::SetCharacter(picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax
-                                            ? static_cast<std::uint16_t>(*picked)
-                                            : std::uint16_t{0});
+            // A guest on the host's save sends its own pick, not the host's (CoopLookShare::OwnPick).
+            static CoopLookShare::OwnPick own_pick;
+            const auto kept = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop-character.txt";
+            static const bool seeded = [&] {
+                std::ifstream in(kept);
+                unsigned number = 0;
+                if (in >> number && number <= CoopLookShare::kCharacterMax) {
+                    own_pick.Seed(static_cast<std::uint16_t>(number));
+                }
+                return true;
+            }();
+            (void)seeded;
+            CoopLookShare::SetCharacter(own_pick.Update(
+                picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax ? static_cast<std::uint16_t>(*picked)
+                                                                                 : std::uint16_t{0},
+                CoopSave::UseCoopFolder() || CoopSave::HostSaveReady(), CoopSave::SaveLoadStarts()));
+            if (const auto own = own_pick.TakeOwnChange()) {
+                std::ofstream(kept, std::ios::trunc) << *own << '\n';   // the next start (a guest that joins at once)
+            }
         }
         // Our look of several parts, chosen in the Multiplayer tab (coop_look_share.h).
         CoopLookShare::Frame(report.connected ? session_.get() : nullptr);

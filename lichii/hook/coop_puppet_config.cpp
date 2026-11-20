@@ -91,6 +91,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 
 #include "common/fs/path_util.h"
 #include "common/logging.h"
@@ -179,6 +180,15 @@ std::vector<std::string> PackCharacters() {
     return out;
 }
 
+// The mod's stored character numbers -> the pack's model files, from every manifest (PackCharacterNumbers).
+std::map<std::uint16_t, std::uint16_t> PackCharacterFiles() {
+    std::map<std::uint16_t, std::uint16_t> out;
+    for (const auto& text : PackManifests()) {
+        out.merge(CoopPuppet::PackCharacterNumbers(text));
+    }
+    return out;
+}
+
 // A manifest of a pack built with perception.
 bool PackPerceived() {
     for (const auto& text : PackManifests()) {
@@ -246,6 +256,7 @@ void Configure(bool perceived_safe) {
     // Character Select: a player's picked character on their puppet. LICHII_COOP_CHARACTERS=0: off.
     if (const auto v = Env("LICHII_COOP_CHARACTERS"); v != "0" && v != "off") {
         settings.character_actors = PackCharacters();
+        settings.character_files = PackCharacterFiles();
         if (!settings.character_actors.empty()) {
             lines.push_back("coop: the puppet pack has " + std::to_string(settings.character_actors.size()) +
                             " puppets for the Character Select mod's characters: a player who picked one is shown "
