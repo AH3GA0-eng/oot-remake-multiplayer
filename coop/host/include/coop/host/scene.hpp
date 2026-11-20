@@ -134,4 +134,13 @@ inline Visibility visibility(const std::optional<std::string_view>& local_scene,
   return Visibility::show;
 }
 
+// Whether a remote player's voice is heard here (docs/voice.md, "Playback"; tracker row 155): only the place counts,
+// as for the server's relay. No event hides a voice, unlike the puppet: our own (a talk, a sign, a shop, an item get,
+// a cutscene: the puppet hides so it does not walk into the staged shot, but the player still stands there and talks),
+// theirs, a menu, a horse or being downed. Another place, or one not known (a scene loading), is not heard.
+inline bool voice_heard(const std::optional<std::string_view>& local_scene,
+                        const std::optional<std::string_view>& remote_scene) {
+  return same_place(local_scene, remote_scene);
+}
+
 }  // namespace coop::host
