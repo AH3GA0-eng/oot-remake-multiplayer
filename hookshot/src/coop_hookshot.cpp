@@ -1107,9 +1107,18 @@ void SetChatKey(const std::string& key) {
     }
 }
 
+// (a menu's typing ended by Enter or Esc: kept until that key is let go, as the chat box does. The pause page's
+// Enter went on to the game as its own key and shut the pause menu, a test run 2026-11-20)
+static std::atomic<bool> g_menu_keys_release{false};
+
 bool KeysTaken() {
     if (CoopPauseTab::KeysTaken() || CoopPause::KeysTaken()) {
+        g_menu_keys_release = true;
         return true;
+    }
+    if (g_menu_keys_release.load()) {
+        if (AsyncDown(0x0D) || AsyncDown(0x1B)) return true;
+        g_menu_keys_release = false;
     }
     if (!g_on) {
         return false;

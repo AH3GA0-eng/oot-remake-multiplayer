@@ -626,6 +626,8 @@ std::uint64_t g_set_left_ms = 0;          // the left button last seen down on L
 std::uint64_t g_list_focus_fix_ms = 0;    // a Left last sent to bring the game's cursor back from the list. g_mutex.
 // (that Left lands on the category beside the list's row, not the one shown: the category kept, and the steps back to
 // it until then. A test run 2026-11-20: a click on the last setting's arrow turned the category to Debug. g_mutex)
+bool g_typing_seen = false;          // (the page typed at the last pad read; when typing last ended. g_mutex)
+std::uint64_t g_typing_end_ms = 0;
 int g_set_keep = -1;
 float g_set_mouse_x = 0, g_set_mouse_y = 0;   // (the mouse's last place, when it last moved: settings)
 std::uint64_t g_set_mouse_ms = 0;
@@ -1666,6 +1668,7 @@ void Act(int row, int line = -1, bool clicked = false) {
     }
     case RowAction::kTypeSearch: {   // (the online list's search on the keyboard; the list follows it as typed)
         std::lock_guard lock(g_mutex);
+        if (g_page.Typing() == 5) break;   // (the click's and Longshot's A for the same heading: once)
         g_page.StartTyping(5);
         g_live_poke = true;
         break;
@@ -1917,6 +1920,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
                 if (g_kb_held || now - g_kb_click_ms < 400) in &= ~kPadA;
             }
+            // (typing just ended, by Enter, OK or +: an A a moment after is that same press again, as the game saw it
+            // (Enter is A to it), not a new one: it opened the keyboard again on the search, a test run 2026-11-20)
+            {
+                const bool typing_now = g_page.Typing() >= 0;
+                if (g_typing_seen && !typing_now) g_typing_end_ms = NowMs();
+                g_typing_seen = typing_now;
+                if (!typing_now && NowMs() - g_typing_end_ms < 300) in &= ~kPadA;
+            }
             // (a click on a setting is ours, made at its release: Longshot's A for the same click, when its mouse took
             // the row for one of the game's buttons, would change it again. A test run: Auto to Off, then back to Auto)
             if (g_page.Which() == 1 && g_page.Shown()) {
@@ -2048,6 +2059,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // moving onto it, and a click on one is its A (Longshot presses nothing there: the cells are no buttons).
             const bool settings = shown && !typing && g_page.Which() == 1;
             const bool browse = shown && !typing && !settings && ViewShown() == View::kLan;
+            // (while typing, the mouse's presses are the keyboard's: one begun on the list before it opened (Longshot's
+            // A opens it at the press) is forgotten, or its release after typing was a click again, a test run's search)
+            if (typing) g_cells_held = false, g_cells_press = -1, g_lines_held = false, g_lines_press = -1;
             const std::uint64_t bdown = in & ~g_browse_last;
             g_browse_last = in;
             int cell = browse ? g_cell.load() : -1;
@@ -2357,8 +2371,13 @@ int MousePage() noexcept {
 bool Key(std::uint32_t vk, bool repeat) noexcept {
     try {
         std::lock_guard lock(g_mutex);
+        const int was = g_page.Typing();
         const bool taken = g_page.Key(vk, repeat);
         if (taken) g_live_poke = true;
+        if ((vk == 0x0d || vk == 0x1b) && was >= 0) {   // (trace: Enter and Esc while typing)
+            LOG_INFO(Core, "coop: pause tab: keyboard: {}{} while typing field {}: {}", vk == 0x0d ? "Enter" : "Esc",
+                     repeat ? " (a repeat)" : "", was, g_page.Typing() < 0 ? "typing ended" : "still typing");
+        }
         PublishKeyboard();
         return taken;
     } catch (...) {
