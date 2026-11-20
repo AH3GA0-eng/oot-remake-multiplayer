@@ -359,9 +359,11 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     }
     std::uint32_t live = 0;  // LiveMask(): rebuilt each frame
     std::array<std::uint64_t, coop::protocol::kMaxPlayers + 1> pvp_actors{};  // LivePvpActor(): the same
+    std::array<std::uint64_t, coop::protocol::kMaxPlayers + 1> seen_actors{};  // LiveSeenActor(): the same
     if (input_.main_base == 0) {
         live_mask_.store(0, std::memory_order_relaxed);
         for (auto& a : live_pvp_actor_) a.store(0, std::memory_order_relaxed);
+        for (auto& a : live_seen_actor_) a.store(0, std::memory_order_relaxed);
         return;
     }
     for (auto& slot : slots_) {
@@ -475,6 +477,10 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
                 if (t->show != Show::hide && slot.number < 32) {
                     live |= 1u << slot.number;
                 }
+                if (t->show != Show::hide && slot.number < seen_actors.size() &&
+                    SeenPuppetActor(slot.actor_name, perceived_.load())) {
+                    seen_actors[slot.number] = slot.actor;  // row 177: LiveSeenActor
+                }
                 if (slot.number < pvp_actors.size() && CoopPvpNative::IsPvpActor(slot.actor_name)) {
                     pvp_actors[slot.number] = slot.actor;  // phase 4: LivePvpActor (shown or held, any show)
                 }
@@ -536,6 +542,7 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
     }
     live_mask_.store(live, std::memory_order_relaxed);
     for (std::size_t n = 0; n < pvp_actors.size(); ++n) live_pvp_actor_[n].store(pvp_actors[n], std::memory_order_relaxed);
+    for (std::size_t n = 0; n < seen_actors.size(); ++n) live_seen_actor_[n].store(seen_actors[n], std::memory_order_relaxed);
     Status(guest, now_ms);
 }
 
@@ -2352,6 +2359,10 @@ std::vector<std::string> PackQuietScenes(std::string_view manifest) {
     return out;
 }
 
+bool SeenPuppetActor(std::string_view actor, bool perceived) {
+    return perceived && actor.starts_with("CoopPuppet_") && actor.find("Quiet") == std::string_view::npos;
+}
+
 bool PackPerception(std::string_view manifest) {
     // "perception": true, as build.py writes it (json.dumps) at the top level, AFTER "actors": every actor entry
     // has its own "perception" too (null, or its emitter {"param", "size"}), so the first key is an actor's and never
@@ -2804,6 +2815,7 @@ void Configure(PlannerSettings settings, bool verbose, Director::Log log) {
         g_director->SetPoseCopy(true);
         g_director->SetCharacterApply(settings.character_apply, settings.character_apply_head);
         g_director->SetNullReadsZero(settings.null_reads_zero);
+        g_director->SetPerceived(settings.perceived && !settings.quiet_everywhere);
         // docs/puppet.md, "Colour". LICHII_COOP_PUPPET_TINT: 0 to 1, or off.
         // The model tint darkens the whole Link (reports puppet-colors-2): off
         // unless asked for; the colour is the tunic (PlannerSettings::tunics).

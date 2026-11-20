@@ -191,6 +191,8 @@ struct LifeWrite {
     // With a hurt: where the player who hit stands, when known (the enemy is
     // knocked away from there).
     std::optional<coop::protocol::Vec3> from;
+    // With a hurt: the player who hit (0: not known). Row 177: the replay names their puppet as the attacker.
+    std::uint8_t hitter = 0;
     // With a hurt: where the hitter's hit landed (DAMAGE's hit_at): the replay lands there (Gohma's eye).
     std::optional<coop::protocol::Vec3> hit_at{};
     // With a hurt (protocol 14): the hit that happened (DAMAGE's hit_record, or the owner's sample hit): the

@@ -278,6 +278,7 @@ void Configure(bool perceived_safe) {
             }
             lines.push_back("coop: puppets are seen by enemies; quiet puppets (no guard sees them) in " + names);
         }
+        settings.perceived = PackPerceived();  // row 177: a hit's attacker may be the hitter's puppet
         if (!perceived_safe && PackPerceived()) {
             settings.quiet_everywhere = true;
             lines.push_back("coop: null-pointer reads cannot give 0 here (HOS_COOP_NULL_READS=0, or the guest's first "

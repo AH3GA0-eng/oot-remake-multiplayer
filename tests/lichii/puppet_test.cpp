@@ -2991,3 +2991,12 @@ TEST_CASE("puppet characters: no routine call for another build of the mod, a no
         CHECK(Dresses(Frame(d, g, 20 + 2 * kAgainMs)) == 0);
     }
 }
+
+TEST_CASE("puppet (row 177): only a plain puppet of a pack with perception is seen by enemies") {
+    CHECK(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", true));
+    CHECK(CoopPuppet::SeenPuppetActor("CoopPuppet_Adult_Red", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_ChildQuiet", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_AdultQuiet_Red", true));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", false));
+    CHECK_FALSE(CoopPuppet::SeenPuppetActor("Player_Child", true));
+}

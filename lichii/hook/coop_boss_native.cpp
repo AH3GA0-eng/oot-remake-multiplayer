@@ -155,6 +155,11 @@ const Table::Entry* Table::FindActor(std::uint64_t actor) const {
     return nullptr;
 }
 
+void Table::ForgetOwnAsks(Entry& e) {
+    e.own_asks.clear();
+    e.own_slot_asks.clear();
+}
+
 void Table::Note(std::string line) {
     if (notes_.size() < 64) {
         notes_.push_back(std::move(line));
@@ -202,13 +207,29 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                     Note(b.name + ": made a copy during its own start (appear): it runs on, then the owner's state");
                 }
                 if (e.role == Role::copy && b.role == Role::owner && e.wanted && !b.plain && !OwnTime(e)) {
-                    e.rechoose = true;
-                    Note(b.name + ": its AI did not run its body as a copy: it chooses again");
+                    if (actions_on_ && e.put_action && e.own_node != 0) {
+                        // Row 178: made ours in the middle of the owner's move (Phantom Ganon handed over mid
+                        // RushAttack when his owner went down): that move starts over as ours through the game's
+                        // own request, named by the node its own AI names for it (before ForgetOwnAsks below).
+                        BossAction again = *e.put_action;
+                        again.flags = static_cast<std::uint16_t>(again.flags | addr::kReqStartOver);
+                        again.changed = true;
+                        e.restart_ask =
+                            AskFor(e.own_asks, e.own_slot_asks, e.own_node, again).value_or(OwnAsk{e.own_node});
+                        e.restart_action = again;
+                        Note(b.name + ": made ours mid-move: its move (slot " + std::to_string(again.slot) +
+                             " verb " + std::to_string(again.verb) + ") starts over as ours (row 178)");
+                    } else {
+                        e.rechoose = true;
+                        Note(b.name + ": its AI did not run its body as a copy: it chooses again");
+                    }
                 }
                 e.hold_since = steps_;
                 e.hold_asks = 0;
                 e.hold_rechoices = 0;
+                ForgetOwnAsks(e);  // (row 177 review: learnt again as a copy from its own asks)
                 if (b.role == Role::copy) {
+                    e.restart_action.reset();
                     // (put_action stays: our copy's body still runs that move; a new owner whose state names
                     // the same one, its old owner's, is not asked it again)
                     e.rechoose = false;
@@ -277,6 +298,10 @@ void Table::Publish(const std::vector<Boss>& bosses) {
             if (b.role == Role::owner) {
                 Hold(e, b);
             }
+            if (e.dying) {
+                e.restart_action.reset();
+            }
+            Fall(e, b);
         }
         next.emplace(b.bsa, std::move(e));
     }
@@ -737,6 +762,66 @@ void Table::NoteOwnWake(std::uint64_t actor) {
     e->react_until = std::max(e->react_until, steps_ + kWakeSteps);
 }
 
+bool Table::RunsOwnMoveWhenOurs(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    if (!brain_on_) {
+        return false;
+    }
+    const Entry* e = FindActor(actor);
+    return e != nullptr && !e->plain;
+}
+
+bool Table::KeepsLinkAsAttacker(std::uint64_t actor) const {
+    std::lock_guard lock(mutex_);
+    const Entry* e = FindActor(actor);
+    return e != nullptr && !e->plain;
+}
+
+bool Table::FightsPlayerOnly(std::string_view name) {
+    // Their brains run ExecutePhantomGanonMetaAI / ExecuteDungeonBossGanondorfMetaAI (Phantom Ganon runs both;
+    // Ganondorf's fly module and moves are his too). Checked against every boss's AI files: the other bosses
+    // pick their moves in their AI files only.
+    return name == "Enemy_DungeonBoss_PhantomGanon" || name == "Enemy_DungeonBoss_Ganondorf";
+}
+
+std::optional<std::string> Table::PlayerOnlyBoss() const {
+    std::lock_guard lock(mutex_);
+    for (const auto& [bsa, e] : by_bsa_) {
+        if (!e.plain && !e.dying && FightsPlayerOnly(e.name)) {
+            return e.name;
+        }
+    }
+    return std::nullopt;
+}
+
+void Table::Fall(Entry& e, const Boss& b) {
+    if (!b.position) {
+        return;
+    }
+    const float y = (*b.position)[1];
+    if (!e.start_y) {
+        e.start_y = y;  // (its first sighting: the fight's start)
+        return;
+    }
+    const float below = *e.start_y - y;
+    if (below <= kFallBelowStart) {
+        e.fallen = false;  // (back in its room: a later fall counts again)
+        return;
+    }
+    if (b.role != Role::owner || e.dying || event_ || std::exchange(e.fallen, true)) {
+        return;
+    }
+    ++counts_.owner_fell;
+    if (e.fall_rechoices >= kMaxFallRechoices) {
+        Note(b.name + ": fell " + std::to_string(static_cast<int>(below)) + " m below its fight start again: left");
+        return;
+    }
+    ++e.fall_rechoices;
+    e.rechoose = true;
+    Note(b.name + ": fell " + std::to_string(static_cast<int>(below)) +
+         " m below its fight start (row 178): its AI chooses again");
+}
+
 bool Table::WakesOwnBrain(std::uint64_t actor) const {
     std::lock_guard lock(mutex_);
     if (!brain_on_) {
@@ -884,6 +969,37 @@ bool Table::StepOne(CoopPuppet::Guest& guest, std::uint64_t bsa, Entry& e, std::
             if (std::exchange(e.record_after_event, false)) {
                 Record(e, BossBrain{own, true});
                 ++counts_.owner_brain;
+            }
+            if (e.restart_action && !e.dying && !e.plain) {
+                // Row 178: the move it was in as a copy, started over as ours (Publish). Our caller's call: the
+                // wrap keeps it as any ask of ours (kReqStartOver with it), so every copy starts it over too.
+                if (block_ == 0) {
+                    if (allocating_) {
+                        call.reset();
+                        return true;
+                    }
+                    CoopPuppet::Call c;
+                    c.function = main_base + addr::kMalloc;
+                    c.x[0] = addr::kRequestSize;
+                    allocating_ = true;
+                    pending_ = Pending::malloc;
+                    call = std::move(c);
+                    return true;
+                }
+                const Request r = RequestFromAction(*e.restart_action, e.restart_ask);
+                if (guest.Write(block_, r.data(), r.size())) {
+                    CoopPuppet::Call c;
+                    c.function = main_base + addr::kRequestActionVerb;
+                    c.x[0] = bsa;
+                    c.x[1] = block_;
+                    c.x[2] = 1;
+                    pending_ = Pending::restart;
+                    pending_bsa_ = bsa;
+                    call = std::move(c);
+                    return true;
+                }
+                e.restart_action.reset();  // (a block it cannot write: its AI chooses again instead)
+                e.rechoose = true;
             }
             if (e.rechoose && !e.dying && !e.plain) {
                 // Row 149: the brain verb it is in, set again (force) through the game's own function. Our
@@ -1036,7 +1152,7 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         // frame's calls ran out): its change stays queued and is asked again.
         if (pending_ == Pending::malloc) {
             allocating_ = false;
-        } else if (pending_ == Pending::rechoose) {
+        } else if (pending_ == Pending::rechoose || pending_ == Pending::restart) {
             pending_bsa_ = 0;  // (still asked: the next frame calls it again)
         } else {
             Made(false);
@@ -1068,6 +1184,12 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             if (Entry* e = Find(std::exchange(pending_bsa_, 0)); e != nullptr && e->role == Role::owner) {
                 e->rechoose = false;
                 ++counts_.owner_rechosen;
+            }
+            break;
+        case Pending::restart:
+            if (Entry* e = Find(std::exchange(pending_bsa_, 0)); e != nullptr && e->role == Role::owner) {
+                e->restart_action.reset();
+                ++counts_.owner_restarted;
             }
             break;
         case Pending::none:
@@ -1113,6 +1235,15 @@ void Table::Made(bool made) {
     const Entry::Asking asking = std::exchange(e->asking, Entry::Asking::none);
     if (!made) {
         return;  // the change is still at the front of its queue
+    }
+    const bool brain = (asking == Entry::Asking::due && !e->due.empty() &&
+                        std::holds_alternative<BossBrain>(e->due.front().change.what)) ||
+                       (asking == Entry::Asking::late && !e->own_late.empty() &&
+                        std::holds_alternative<BossBrain>(e->own_late.front()));
+    if (brain) {
+        // Row 177 review: a new brain verb may change the copy's action sequence, whose AI nodes go with it; the
+        // nodes kept for its moves are learnt again from its next own asks (the game reads a named node's name).
+        ForgetOwnAsks(*e);
     }
     if (asking == Entry::Asking::due && !e->due.empty()) {
         if (const auto* action = std::get_if<BossAction>(&e->due.front().change.what)) {

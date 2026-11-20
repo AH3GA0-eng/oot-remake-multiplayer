@@ -488,6 +488,14 @@ public:
     std::uint64_t LivePvpActor(std::uint8_t number) const {
         return number < live_pvp_actor_.size() ? live_pvp_actor_[number].load(std::memory_order_relaxed) : 0;
     }
+    // Any thread (row 177): player `number`'s puppet actor while it is live, shown and seen by enemies here (a
+    // pack with perception, not its quiet copy), as of the last calc frame; 0 otherwise. A hit that player made
+    // on an enemy of ours names it as the attacker (CoopHitReplay::ReplayAttacker).
+    std::uint64_t LiveSeenActor(std::uint8_t number) const {
+        return number < live_seen_actor_.size() ? live_seen_actor_[number].load(std::memory_order_relaxed) : 0;
+    }
+    // The pack's puppets carry a PerceptionEmitter (PlannerSettings::perceived).
+    void SetPerceived(bool on) { perceived_.store(on); }
     static_assert(coop::protocol::kMaxPlayers < 32, "LiveMask has one bit per player number");
     std::uint64_t Frames() const { return frames_; }
     void Note(const std::string& text) const { Say(text); }  // any thread
@@ -750,6 +758,8 @@ private:
     std::uint64_t frames_ = 0;
     std::atomic<std::uint32_t> live_mask_{0};  // LiveMask(); written by the calc thread
     std::array<std::atomic<std::uint64_t>, coop::protocol::kMaxPlayers + 1> live_pvp_actor_{};  // LivePvpActor()
+    std::array<std::atomic<std::uint64_t>, coop::protocol::kMaxPlayers + 1> live_seen_actor_{};  // LiveSeenActor()
+    std::atomic<bool> perceived_{false};  // SetPerceived
     std::uint64_t frames_at_status_ = 0;
     std::uint64_t status_ms_ = 0;
     std::string scene_;               // input_.scene as last seen
@@ -853,6 +863,8 @@ struct PlannerSettings {
     // 16 bytes it begins with.
     std::uint64_t character_apply = 0;
     std::array<std::uint8_t, 16> character_apply_head{};
+    // The pack was built with perception (PackPerception): its plain (not quiet) puppets are seen by enemies.
+    bool perceived = false;
 };
 
 // Character Select (github.com/snaildev99/OoT-Character-Select): a player there
@@ -894,6 +906,8 @@ std::vector<std::string> PackQuietScenes(std::string_view manifest);
 // The pack was built with perception (coop_puppet.json "perception": true):
 // its puppets are seen by enemies and each has a quiet copy.
 bool PackPerception(std::string_view manifest);
+// Row 177: a puppet actor enemies see (a pack with perception): a CoopPuppet_ actor that is not a quiet copy.
+bool SeenPuppetActor(std::string_view actor, bool perceived);
 // A puppet's quiet copy: CoopPuppet_Child -> CoopPuppet_ChildQuiet,
 // CoopPuppet_Adult_Red -> CoopPuppet_AdultQuiet_Red; any other name as it is.
 std::string QuietActor(std::string_view actor);

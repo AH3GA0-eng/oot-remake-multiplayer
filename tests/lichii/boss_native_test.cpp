@@ -1786,3 +1786,249 @@ TEST_CASE("native boss: row 177, the action stream log says each change of kind 
     CHECK(has("action stream: ours asks slot 0 verb 4 (changed 0) after 1 x ours asks slot 0 verb 4 (changed 1)"));
     CHECK(has("action stream: ours asks slot 0 verb 9 (changed 1) after 4 x ours asks slot 0 verb 4 (changed 0)"));
 }
+
+TEST_CASE("native boss: row 177 review, a brain change forgets the copy's kept nodes (its action sequence's go)") {
+    constexpr std::uint64_t kAppearNode = 0x4000100;  // its own AI's node that asked Appear (verb 4), then gone
+    constexpr std::uint64_t kRunNode = 0x4000200;     // its last ask
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Boss{kActor, kBsa, Role::copy, "Enemy_DungeonBoss_PhantomGanon", 2}});
+    t.OnActionVerb(kBsa, GameRequest(4, kAppearNode), true, false);  // (no owner's state yet: its own runs)
+    t.OnActionVerb(kBsa, GameRequest(8, kRunNode), true, false);
+    BossAction a = *ActionFromRequest(GameRequest(4, 0));
+    a.changed = true;
+    t.Receive(kActor, BossBsa{1, 3, a, {}});  // the owner's new brain verb 3 (ours is 2), then Appear
+    FakeGuest g;
+    const std::int32_t verb = 2;
+    g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+    bool brain = false;
+    std::optional<CoopPuppet::Call> action;
+    std::optional<CoopPuppet::Call> c = t.Step(g, false, 0, kMain);
+    for (int i = 0; i < 8 && c && !action; ++i) {
+        if (c->function == kMain + addr::kSetBrainVerb) {
+            brain = true;
+        } else if (c->function == kMain + addr::kRequestActionVerb) {
+            action = c;
+            break;
+        }
+        c = t.Step(g, true, c->function == kMain + addr::kSetBrainVerb ? 0 : kBlock, kMain);
+        if (!c) {
+            c = t.Step(g, false, 0, kMain);
+        }
+    }
+    CHECK(brain);
+    REQUIRE(action);
+    // Appear's node was its old sequence's: not named any more; its last ask stands in until it asks again.
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kRunNode);
+}
+
+namespace {
+
+Boss Phantom(Role role, std::optional<float> y = std::nullopt, std::uint8_t owner = 2) {
+    Boss b{kActor, kBsa, role, "Enemy_DungeonBoss_PhantomGanon", owner};
+    b.animation = "SpearAttack_Turn";
+    b.life = 7;
+    if (y) {
+        b.position = coop::protocol::Vec3{1.0f, *y, 2.0f};
+    }
+    return b;
+}
+
+} // namespace
+
+TEST_CASE("native boss: row 178: a copy made ours mid-move starts that move over as ours, not a brain re-choice") {
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    auto rush = ActionFromRequest(GameRequest(9, 0));
+    REQUIRE(rush);
+    rush->flags = 0;  // (the owner's ask as it went on: the start-over bit is ours to add)
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::copy)});
+    // Its own AI asks the rush itself (skipped, its node kept), then the owner's rush is put in.
+    CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(9, kNode), true, false));
+    t.Receive(kActor, BossBsa{3, 6, rush, {}});
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kMalloc);
+    c = t.Step(g, true, kBlock, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    // Its owner goes down: the server hands him to us mid-rush.
+    t.Publish({Phantom(Role::owner)});
+    g.bytes.erase(kBlock + addr::kReqVerb);  // (the block is written again)
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);  // never kSetBrainVerb: the module starts over
+    CHECK(c->x[0] == kBsa);
+    CHECK(c->x[1] == kBlock);
+    CHECK(c->x[2] == 1);
+    CHECK(g.Get<std::int32_t>(kBlock + addr::kReqVerb) == 9);
+    CHECK((g.Get<std::uint16_t>(kBlock + addr::kReqFlags) & addr::kReqStartOver) != 0);
+    CHECK(g.Get<std::uint64_t>(kBlock + addr::kReqNode) == kNode);  // the node its own AI names for the rush
+    // Not made that frame: asked again, not lost.
+    c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kRequestActionVerb);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().owner_restarted == 1);
+    CHECK(t.Totals().owner_rechosen == 0);
+    CHECK_FALSE(t.Step(g, false, 0, kMain));  // once
+    // Our ask goes through the wrap as any of ours: every copy starts the move over too.
+    CHECK_FALSE(t.OnActionVerb(kBsa, g.Get<Request>(kBlock), true, true));
+    CHECK(t.Totals().owner_action == 1);
+}
+
+TEST_CASE("native boss: row 178: a hand-over during our hit or back to a copy restarts nothing") {
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    const auto rush = ActionFromRequest(GameRequest(9, 0));
+    REQUIRE(rush);
+    const auto copy_in_rush = [&](Table& t) {
+        t.Publish({Phantom(Role::copy)});
+        CHECK_FALSE(t.OnActionVerb(kBsa, GameRequest(9, kNode), true, false));
+        t.Receive(kActor, BossBsa{3, 6, rush, {}});
+        REQUIRE(t.Step(g, false, 0, kMain));
+        REQUIRE(t.Step(g, true, kBlock, kMain));
+        CHECK_FALSE(t.Step(g, true, 0, kMain));
+    };
+    {
+        // Our own hit: its own reaction ran its body: left as it is (row 149's rule).
+        Table t;
+        t.SetOn(true, true);
+        copy_in_rush(t);
+        t.NoteOwnHit(kActor);
+        t.Publish({Phantom(Role::owner)});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+        CHECK(t.Totals().owner_restarted == 0);
+    }
+    {
+        // Made ours, then a copy again before the call was made: nothing asked as a copy's.
+        Table t;
+        t.SetOn(true, true);
+        copy_in_rush(t);
+        t.Publish({Phantom(Role::owner)});
+        t.Publish({Phantom(Role::copy, std::nullopt, 3)});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+        CHECK(t.Totals().owner_restarted == 0);
+    }
+    {
+        // Actions off (brain only): no move to start over, its AI chooses again as before.
+        Table t;
+        t.SetOn(true, false);
+        t.Publish({Phantom(Role::copy)});
+        t.Receive(kActor, BossBsa{3, 6, rush, {}});
+        CHECK_FALSE(t.Step(g, false, 0, kMain));
+        t.Publish({Phantom(Role::owner)});
+        const auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        CHECK(c->function == kMain + addr::kSetBrainVerb);
+    }
+}
+
+TEST_CASE("native boss: row 178: a boss on the brain path gets no issue-157 animation replay, a plain enemy does") {
+    Table t;
+    t.Publish({Phantom(Role::copy)});
+    CHECK_FALSE(t.RunsOwnMoveWhenOurs(kActor));  // (brain path off: the Mover's old way)
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::copy)});
+    CHECK(t.RunsOwnMoveWhenOurs(kActor));
+    CHECK_FALSE(t.RunsOwnMoveWhenOurs(kActor + 8));  // (not on the path)
+    Boss baba{kActor, kBsa, Role::copy, "Enemy_DekuBaba", 2};
+    baba.plain = true;
+    t.Publish({baba});
+    CHECK_FALSE(t.RunsOwnMoveWhenOurs(kActor));
+}
+
+TEST_CASE("native boss: row 178: every boss keeps our Link as a replayed hit's attacker, a plain enemy does not") {
+    Table t;
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));  // (not in the table)
+    t.Publish({Phantom(Role::owner)});
+    CHECK(t.KeepsLinkAsAttacker(kActor));  // (brain path off too)
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::owner)});
+    CHECK(t.KeepsLinkAsAttacker(kActor));
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor + 8));
+    Boss baba{kActor, kBsa, Role::owner, "Enemy_DekuBaba", 2};
+    baba.plain = true;
+    t.Publish({baba});
+    CHECK_FALSE(t.KeepsLinkAsAttacker(kActor));
+}
+
+TEST_CASE("native boss: row 178: Phantom Ganon and Ganondorf fight the Player only, the puppets are unseen while here") {
+    CHECK(Table::FightsPlayerOnly("Enemy_DungeonBoss_PhantomGanon"));
+    CHECK(Table::FightsPlayerOnly("Enemy_DungeonBoss_Ganondorf"));
+    for (const char* other : {"Enemy_DungeonBoss_Gohma", "Enemy_DungeonBoss_Dodongo", "Enemy_DungeonBoss_Barinade",
+                              "Enemy_DungeonBoss_Volvagia", "Enemy_DungeonBoss_Morpha", "Enemy_DungeonBoss_BongoBongo",
+                              "Enemy_DungeonBoss_Twinrova", "Enemy_DungeonBoss_Ganon", "Enemy_DekuBaba"}) {
+        CHECK_FALSE(Table::FightsPlayerOnly(other));
+    }
+    Table t;
+    CHECK_FALSE(t.PlayerOnlyBoss());  // (no boss)
+    t.Publish({Phantom(Role::copy)});
+    REQUIRE(t.PlayerOnlyBoss());  // a copy too: its game's perception picks a target as well
+    CHECK(*t.PlayerOnlyBoss() == "Enemy_DungeonBoss_PhantomGanon");
+    t.SetDying({"Enemy_DungeonBoss_PhantomGanon"});
+    CHECK_FALSE(t.PlayerOnlyBoss());  // his death: the puppets are seen again
+    t.SetDying({});
+    t.Publish({Boss{kActor, kBsa, Role::owner, "Enemy_DungeonBoss_Gohma", 2}});
+    CHECK_FALSE(t.PlayerOnlyBoss());  // Gohma still turns to the nearer player (issue 150)
+    t.Publish({});
+    CHECK_FALSE(t.PlayerOnlyBoss());  // he left our walk (another scene)
+}
+
+TEST_CASE("native boss: row 178: our boss fallen far below its fight start chooses again, once per fall") {
+    FakeGuest g;
+    const std::int32_t brain = 6;
+    g.Write(kBsa + addr::kBsaBrainVerb, &brain, 4);
+    Table t;
+    t.SetOn(true, true);
+    t.Publish({Phantom(Role::owner, 10.0f)});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    // A dive within its room: nothing.
+    t.Publish({Phantom(Role::owner, 10.0f - Table::kFallBelowStart + 1.0f)});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    // Out of its room: its brain verb set again through the game's own function.
+    t.Publish({Phantom(Role::owner, -40.0f)});
+    auto c = t.Step(g, false, 0, kMain);
+    REQUIRE(c);
+    CHECK(c->function == kMain + addr::kSetBrainVerb);
+    CHECK(c->x[1] == 6);
+    CHECK_FALSE(t.Step(g, true, 0, kMain));
+    CHECK(t.Totals().owner_fell == 1);
+    // Still falling: once per fall.
+    t.Publish({Phantom(Role::owner, -400.0f)});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.Totals().owner_fell == 1);
+    // Back up, fallen again: again, up to kMaxFallRechoices; then left.
+    for (int i = 1; i < Table::kMaxFallRechoices; ++i) {
+        t.Publish({Phantom(Role::owner, 10.0f)});
+        t.Publish({Phantom(Role::owner, -40.0f)});
+        REQUIRE(t.Step(g, false, 0, kMain));
+        CHECK_FALSE(t.Step(g, true, 0, kMain));
+    }
+    t.Publish({Phantom(Role::owner, 10.0f)});
+    t.Publish({Phantom(Role::owner, -40.0f)});
+    CHECK_FALSE(t.Step(g, false, 0, kMain));
+    CHECK(t.Totals().owner_rechosen == static_cast<std::uint64_t>(Table::kMaxFallRechoices));
+    {
+        // A copy below (the owner's place): its owner's game guards it.
+        Table c2;
+        c2.SetOn(true, true);
+        c2.Publish({Phantom(Role::copy, 10.0f)});
+        c2.Publish({Phantom(Role::copy, -400.0f)});
+        CHECK(c2.Totals().owner_fell == 0);
+    }
+    {
+        // No place read (solo walk without one): nothing.
+        Table s;
+        s.SetOn(true, true);
+        s.Publish({Phantom(Role::owner)});
+        s.Publish({Phantom(Role::owner)});
+        CHECK_FALSE(s.Step(g, false, 0, kMain));
+        CHECK(s.Totals().owner_fell == 0);
+    }
+}

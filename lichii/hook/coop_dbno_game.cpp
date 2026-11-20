@@ -412,9 +412,14 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     // A teammate who cannot be fought now (downed, spectating, or PLAYER_STATUS away: paused, in a
     // menu, loading, in their own event, dead): their puppet is unseen in our game too (issue 150 with
     // row 113; review of perception-on).
+    // Row 178: and every puppet while a boss whose own AI fights the Player only is here
+    // (CoopBossNative::Table::FightsPlayerOnly: Phantom Ganon held his phase 2 with a puppet as his target).
+    const auto player_only = CoopBossNative::TheTable().PlayerOnlyBoss();
     for (const Teammate& t : team) {
         if (auto why = Body::UnseenWhy(t.state == State::downed || t.state == State::spectating, t.status)) {
             body.unseen_puppets.push_back({t.number, std::move(*why)});
+        } else if (player_only) {
+            body.unseen_puppets.push_back({t.number, "fighting " + *player_only + ", whose AI fights the Player only"});
         }
     }
     Body::TheCrawl().Want(body);

@@ -572,7 +572,9 @@ public:
     // Present thread: copies that just became ours, to clear the setter's
     // bit of at the next game frame (issues 150, 157; on unless
     // LICHII_COOP_OBJECTS_RELEASE=0).
-    void Release(const std::vector<u64>& actors) {
+    // `no_replay`: bosses on the brain path (CoopBossNative::Table::RunsOwnMoveWhenOurs, row 178): their own AI
+    // goes on through the Table, no animation is played over their move.
+    void Release(const std::vector<u64>& actors, const std::vector<u64>& no_replay = {}) {
         std::lock_guard lock(mutex_);
         for (const u64 a : actors) {
             if (releases_.size() < 64) {
@@ -589,7 +591,12 @@ public:
             // again: its AI waits for the end of a play we took away. Give
             // it that play back once.
             if (const auto w = wanted_.find(a); w != wanted_.end()) {
-                if (SteadyMs() - w->second.second <= kWakeReplayMs && wakes_.size() < 64) {
+                const bool replay = std::find(no_replay.begin(), no_replay.end(), a) == no_replay.end();
+                if (!replay) {
+                    LOG_INFO(Core, "coop: objects: {:#x} became ours: a boss on the brain path, its own AI goes "
+                                   "on (no '{}' replay, row 178)", a, w->second.first);
+                }
+                if (replay && SteadyMs() - w->second.second <= kWakeReplayMs && wakes_.size() < 64) {
                     wakes_.emplace_back(a, w->second.first);
                 }
                 wanted_.erase(w);
@@ -1850,7 +1857,8 @@ public:
                                            *owner == self ? CoopBossNative::Role::owner : CoopBossNative::Role::copy,
                                            s.name, *owner, s.life_component, owner_dead, plain,
                                            plain && CoopBossNative::PlainDeath(life, owner_dead),
-                                           s.animation ? s.animation->name : std::string{}, life};
+                                           s.animation ? s.animation->name : std::string{}, life,
+                                           s.position};
                     list.push_back(std::move(b));
                 }
             }
@@ -4359,7 +4367,32 @@ private:
         case LifeRoute::replay: {
             Mover::Hit h;
             h.actor = w.address;
-            h.attacker = player;
+            // Row 177: the hitter's puppet, so the game's battle AI turns on the player who hit (else our Link).
+            // A killing blow keeps our Link (the game's kill consequences may want the Player as the killer), and so
+            // does every boss (row 178: its attacks need the game's attack permission, the Player's only).
+            h.attacker = CoopHitReplay::ReplayAttacker(player, w.hitter, CoopPuppet::TheDirector().LiveSeenActor(w.hitter),
+                                                       CoopDbno::Body::TheCrawl().PuppetUnseen(w.hitter),
+                                                       CoopHitReplay::LethalHit(old, w.hurt, w.life),
+                                                       CoopBossNative::TheTable().KeepsLinkAsAttacker(w.address));
+            if (static std::atomic<int> said_kill{0};
+                h.attacker == player && w.hitter != 0 && CoopHitReplay::LethalHit(old, w.hurt, w.life) &&
+                said_kill.fetch_add(1) < 40) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s killing blow replayed with our Link as the "
+                               "attacker (row 177 review: the game's kill consequences see the Player)",
+                         w.address, NameOf(w.address), w.hitter);
+            }
+            if (static std::atomic<int> said_boss{0};
+                h.attacker == player && w.hitter != 0 && CoopBossNative::TheTable().KeepsLinkAsAttacker(w.address) &&
+                said_boss.fetch_add(1) < 40) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit on a boss replayed with our Link as "
+                               "the attacker (row 178: a boss attacks only a target with the game's attack permission)",
+                         w.address, NameOf(w.address), w.hitter);
+            }
+            if (static std::atomic<int> said{0}; h.attacker != player && said.fetch_add(1) < 40) {
+                LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit replayed with their puppet {:#x} as "
+                               "the attacker (row 177: its AI turns on them)",
+                         w.address, NameOf(w.address), w.hitter, h.attacker);
+            }
             h.amount = w.hurt;
             h.at = r.Get<std::array<float, 3>>(w.address + kActorPosition).value_or(h.at);
             if (w.hit_at) {
@@ -4822,7 +4855,13 @@ private:
             TheMover().Hold(sync_.Holds(now_us), CoopHold::MasksFor(ai_hold_));
         }
         if (const auto ours = sync_.TakeOursNow(); release_ && !ours.empty()) {
-            TheMover().Release(ours);
+            std::vector<u64> no_replay;
+            for (const u64 a : ours) {
+                if (CoopBossNative::TheTable().RunsOwnMoveWhenOurs(a)) {
+                    no_replay.push_back(a);
+                }
+            }
+            TheMover().Release(ours, no_replay);
         }
         // Report 109: a copy's own wake. On the enemies' brain path its own brain runs it (NoteOwnWake); the
         // pose-era give-back of the wake's animation is for the other copies only (one maker, rows 109/111).
