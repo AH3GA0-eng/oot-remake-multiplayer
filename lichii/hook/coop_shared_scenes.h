@@ -83,7 +83,12 @@ std::vector<std::string_view> RequestNames();
 //   item taken, rupees, gear equipped from the pouch: Talon woken with the
 //   Cucco Dm_HrlCastle_0020; kOwnStory with why, read from the game's flows by
 //   story_requests.py): another game asked for it would be charged or changed
-//   too. A gift of an item co-op shares stays shared (Zelda's letter).
+//   too. A gift of an item co-op shares stays shared (Zelda's letter);
+// - a story name whose event flow turns a room's own state (kRoomStory: the
+//   Forest Temple's twisted corridor Dm_ForestTemple_0005/_0007 toggles its
+//   flags and turns round the player, row 173): a game that joined it would
+//   turn its corridor once more, under its own player; the corridor's state
+//   comes by its held flags (coop_dungeon.cpp) at that game's next load.
 std::string_view NotShared(std::string_view name);
 // NotShared(name) is "".
 bool Askable(std::string_view name);

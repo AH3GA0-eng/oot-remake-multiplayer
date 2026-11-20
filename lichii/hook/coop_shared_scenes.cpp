@@ -131,6 +131,11 @@ std::string_view NotShared(std::string_view name) {
             return "it changes the player's own things";
         }
     }
+    for (const StoryOwn& o : kRoomStory) {
+        if (o.name == name) {
+            return "it turns a room of each game's own (the held flags bring it)";
+        }
+    }
     return {};
 }
 
