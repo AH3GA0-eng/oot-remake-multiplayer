@@ -14,9 +14,7 @@
 #  2. B: NO start or join of that event ('story' / 'joined' lines naming it) and no EventTriggerRelocateTwistCorridor;
 #     b-before vs b-after/b-end: B's view of the corridor did not turn, B's Link stands (no fall, no void-out).
 #  3. B leaves and re-enters (b-back): the corridor as the shared flag says (turned like A's), B not inside it then.
-#! noload
-#! start coop: test warp done
-#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
+#! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1,LICHII_COOP_OBJECTS_CHEAT=1
 #! timeout 600
 mark start
 setflag Sequence_IsChildhood 0
@@ -34,21 +32,21 @@ wait 600                 # B goes into the corridor meanwhile
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 10 ZR
+rstick 0.3 0.7 4 ZR   # run 020823 a-aim1: eye ~300 px right, ~200 px up of the crosshair; 0.35 x 20 ticks swung far past it
 hold ZR 12 a-aim1
 wait 180
 mark a-shot1
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 20 ZR
+rstick 0.3 1.0 6 ZR
 hold ZR 12 a-aim2
 wait 180
 mark a-shot2
 press ZL 10
 wait 40
 hold ZR 30
-rstick 0 1.0 30 ZR
+rstick 0.45 1.0 8 ZR
 hold ZR 12 a-aim3
 wait 600
 mark a-after

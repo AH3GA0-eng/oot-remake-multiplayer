@@ -14,8 +14,6 @@
 #  2. B: NO start or join of that event ('story' / 'joined' lines naming it) and no EventTriggerRelocateTwistCorridor;
 #     b-before vs b-after/b-end: B's view of the corridor did not turn, B's Link stands (no fall, no void-out).
 #  3. B leaves and re-enters (b-back): the corridor as the shared flag says (turned like A's), B not inside it then.
-#! noload
-#! start coop: test warp done
 #! switches LICHII_COOP_DEBUG_OBJECTS=1,LICHII_COOP_DEBUG_FLAGS=1,LICHII_COOP_CHEATS=1
 #! timeout 600
 mark start

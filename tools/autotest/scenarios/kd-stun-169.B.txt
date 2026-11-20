@@ -28,6 +28,16 @@ wait 300
 press A
 wait 2400
 mark b-in
+setflag HavePlayedEvent.Dm_DodongoCave_BossIn 0   # run 013205: in the arena but no intro and no KD (he appears only with his intro: IsIntendedForEventAppear)
+setflag HavePlayedEvent.Dm_DodongoCave_BossOut 0
+setflag Enemy_DungeonBoss_Dodongo_BossAppear 0
+setflag DodongoCavern_BossGroundChange 0
+setenum 0x1002b466 DungeonStart   # Get_StoneOfFire back before the fight (the lane save is past King Dodongo: molten arena, no intro), as Gohma's GoToBossRoom
+setflag HavePlayedEvent.Get_StoneOfFire_DefeatBoss 0
+wait 60
+warp DodongoStage DodongoStage   # same-map warp = reload with the flags
+wait 3000               # the module own warp took >25 s in run 013912
+goto 24.0 -64.5 1.0 1200   # into the arena (Banc Area 24.0 73.2 -63.0), 1.5 m beside A; earlier KD runs stood at the warp spot, phase none
 give bombs
 wait 120
 assign Bomb
