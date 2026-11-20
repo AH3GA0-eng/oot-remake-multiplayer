@@ -1097,3 +1097,31 @@ TEST_CASE("title menu: an A on Host in the Multiplayer submenu (the game's Conti
         CHECK_FALSE(c.Step(1064, TitlePad(kPadA, multiplayer, true)).picks_file);
     }
 }
+
+TEST_CASE("title menu: the relay and the room name: written when set, the kit's default needs no line") {
+    Options o;
+    CHECK(o.relay.empty());
+    std::string c, opt = "relay = old.example.net:27530\r\nrelay_room = old-room\r\n";
+    o = Options::Read("", opt);
+    CHECK(o.relay == "old.example.net:27530");
+    CHECK(o.relay_room == "old-room");
+    o.relay = "relay.example.net";
+    o.relay_room = "forest-gang";
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "relay") == "relay.example.net");
+    CHECK(IniGet(opt, "relay_room") == "forest-gang");
+    o.relay = kDefaultRelay;
+    o.relay_room.clear();
+    o.Write(c, opt);
+    CHECK_FALSE(IniGet(opt, "relay").has_value());
+    CHECK_FALSE(IniGet(opt, "relay_room").has_value());
+    CHECK(Options::Read("", opt).relay == kDefaultRelay);
+    CHECK(RoomNameOk("forest-gang"));
+    CHECK(RoomNameOk(""));
+    CHECK_FALSE(RoomNameOk("ab"));
+    CHECK_FALSE(RoomNameOk("has space"));
+    CHECK_FALSE(RoomNameOk(std::string(25, 'a')));
+    CHECK(RelayOk("relay.example.net:27530"));
+    CHECK(RelayOk(""));
+    CHECK_FALSE(RelayOk("has space"));
+}
