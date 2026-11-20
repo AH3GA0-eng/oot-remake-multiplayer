@@ -1094,14 +1094,17 @@ TEST_CASE("objects: skulltula-0118, a copy handed to us that our game deletes wi
     b.Bind({{creates[0].key, 0x900}});
     Tick(b, t += 20 * kMs, {}, 2);
     CHECK(b.LeftCount() == 1);
-    REQUIRE(b.Creates().size() == 1);
-    CHECK(b.Creates()[0].removed);
-    CHECK(b.Creates()[0].remakes == 0);
+    // Its director entry ended in that same walk (marked removed, and off our
+    // list, so done): nothing left for the hook to make again.
+    CHECK(b.Creates().empty());
     const auto removes = All<proto::ObjectRemove>(Tick(b, t + Sync::kLeftWaitUs, {}, 2));
     REQUIRE(removes.size() == 1);
     CHECK(removes[0].id == id);
     CHECK(removes[0].epoch == 1);
     CHECK(removes[0].reason == proto::RemoveReason::gone);
+    // Still never made again later, with our Link standing right there.
+    Tick(b, t + Sync::kLeftWaitUs + 2 * kEncounterWaitUs, {}, 2);
+    CHECK(b.Creates().empty());
 
     // Still the host's (not handed to us): our copy going says nothing, as before.
     Sync c;
