@@ -140,7 +140,8 @@ public:
     // Get_StoneOfFire, Get_StoneOfWater, SageOfForest, SageOfFire) is written to the host's step. A guest that held
     // the boss beaten (its own kill, D9 or this class's set) then had Gohma deleted by nothing and the blue warp
     // up, or the warp AND Gohma: the room's logic reads both live. So for each such boss, at the next Check where
-    // the set would be given (out of its area in its own dungeon, anywhere else at once) and the quest now reads a
+    // the set would be given (in its own dungeon: out of its area, or in it once no death of ours can run there,
+    // `death_here`, row 159: a guest at the warp when the host reloaded; anywhere else at once) and the quest now reads a
     // step in `below` (the boss alive in the host's save) and the record does not have it again: each Bool the death
     // raises (true) and the game holds goes back to false, and a `<quest>_IsBefore_<Step>` Bool the death clears goes
     // back to true when the quest is before that step. Left alone: the boss's intro (`..._BossIn`: a save from after

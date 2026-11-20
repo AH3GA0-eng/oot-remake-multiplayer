@@ -185,8 +185,11 @@ std::vector<Write> Apply::Check(const std::optional<std::string>& scene, bool pl
             it = reverts_.erase(it);  // beaten again since the reset: Apply gives the set below
             continue;
         }
-        if (InDungeon(room, *scene) && near(room)) {
-            ++it;  // in (or before) the boss room: once we are out of it
+        if (InDungeon(room, *scene) && near(room) && (!death_here || death_here(room))) {
+            // In (or before) the boss room while our own death of it may run (its event writes the set itself):
+            // after it. Row 159: not until we walk out. The shared quest has the host's step at once, so the room's
+            // logic shows the boss again live while our warp stays up (a mix); the Bools go back there too.
+            ++it;
             continue;
         }
         const std::optional<std::uint32_t> step = read(set->quest);
