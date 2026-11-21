@@ -281,6 +281,7 @@ std::shared_ptr<const Texels> Wardrobe::Load(const std::string& colour) {
 }
 
 void Wardrobe::Step(std::uint64_t now_ms) {
+    if (host_.textures == nullptr) return;   // (no game textures: nothing to look at)
     std::string want;
     {
         std::lock_guard lock(mutex_);

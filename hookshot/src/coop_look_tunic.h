@@ -153,7 +153,13 @@ public:
         std::string start;
     };
 
-    explicit Wardrobe(Host host) : host_(std::move(host)) {}
+    // A Host missing a part never stops the game (0.11.9 lane crash: a Host copied after it was moved from had no
+    // file and no log, and the worker's first call threw out of its thread): no file is a pack without the
+    // colour's, no log says nothing, and with no textures Step does nothing.
+    explicit Wardrobe(Host host) : host_(std::move(host)) {
+        if (!host_.file) host_.file = [](const std::string&) { return std::optional<std::vector<std::uint8_t>>{}; };
+        if (!host_.log) host_.log = [](const std::string&) {};
+    }
     // The colour to wear from now on: "green" (the game's own) or a colour of
     // the pack. Any thread.
     void Wear(std::string colour);
