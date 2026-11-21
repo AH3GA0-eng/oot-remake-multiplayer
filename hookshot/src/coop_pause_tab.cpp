@@ -280,10 +280,13 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
         Hide("the menu's state changed", pages_.state == 3 || pages_.state == 0 || strip_.state == 3 || strip_.state == 0);
     }
     if (!shown_) {
-        if ((down & kPadA) != 0 && system_button_ >= 0 && (system_button_ == 0 || settings_ok_) && CanShow(now_ms)) {
+        if ((down & kPadA) != 0 && system_button_ >= 0 && (system_button_ != 1 || settings_ok_) && CanShow(now_ms)) {
             // (A on one of System's buttons of ours: its page in System's place, at once; the game's own A never
-            // reaches the button, whose name its selectors do not know)
-            shown_ = true, decide_ = false, why_.clear(), which_ = system_button_, sub_ = false, back_ = false;
+            // reaches the button, whose name its selectors do not know. Customize Link's is the Multiplayer page,
+            // opened on Settings and look's Customize page)
+            shown_ = true, decide_ = false, why_.clear(), which_ = system_button_ == 1 ? 1 : 0, sub_ = false, back_ = false;
+            opened_from_ = system_button_;
+            customize_open_ = system_button_ == 2;
             slide_ = 0;
             opened_ = true;
             pages_sound_ = "button_decide";

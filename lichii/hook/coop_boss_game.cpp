@@ -515,6 +515,9 @@ bool Glue::Scenes(Core::System& system, std::uint64_t main, const Local& local, 
     if (a.skip) {
         mover.WantSkip(main);
     }
+    if (a.refill) {
+        CoopObjects::AskRefill();   // (another player took the container: our hearts full, as its pickup would)
+    }
     if (a.set_max_life) {
         max_life_write = a.set_max_life;
     }

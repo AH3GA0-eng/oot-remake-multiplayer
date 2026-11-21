@@ -149,6 +149,10 @@ std::uint64_t g_settings_pane = 0;   // the Settings page (Pa_Settings_00; 0 wit
 // own heights (Options, Special Actions, Title Screen: moved to make room for ours, Title Screen last).
 std::uint64_t g_settings_button = 0, g_settings_button_coop = 0, g_settings_button_set = 0;
 std::uint64_t g_mp_button = 0, g_mp_button_coop = 0, g_mp_button_set = 0;
+// Customize Link (Pa_Button_07): Settings and look's Customize page straight from System (a tester found it too deep
+// under Multiplayer, 2026-11-20). Its page is the Multiplayer page, opened on that view; B there is System again.
+std::uint64_t g_cl_button = 0, g_cl_button_coop = 0, g_cl_button_set = 0;
+std::atomic<bool> g_customize_direct{false};   // the page shows because of that button (B: System, not the rows)
 std::array<std::uint64_t, kRows> g_set_buttons{}, g_coop_buttons{}, g_sys_buttons{};
 std::array<float, kRows> g_sys_rest_y{};
 int g_settings_button_shown = -1;   // (which of ours System shows: 1 Multiplayer, 2 Longshot Settings; -1 not set yet)
@@ -1003,6 +1007,7 @@ void LookPages(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         g_system_pane = 0, g_coop_pane = 0;
         g_settings_button = g_settings_button_coop = g_settings_button_set = 0, g_settings_button_shown = -1, g_set_buttons = {};
         g_mp_button = g_mp_button_coop = g_mp_button_set = 0, g_coop_buttons = {}, g_sys_buttons = {};
+        g_cl_button = g_cl_button_coop = g_cl_button_set = 0;
         g_sys_hidden = false;   // (a new opening: System's buttons as the game shows them)
         g_rows_keep = 0;        // (an older opening's pane: never called on)
     }
@@ -1028,6 +1033,9 @@ void LookPages(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         g_mp_button = button("Pa_System_00", "Pa_Button_06");
         g_mp_button_coop = button("Pa_Coop_00", "Pa_Button_06");
         g_mp_button_set = button("Pa_Settings_00", "Pa_Button_06");
+        g_cl_button = button("Pa_System_00", "Pa_Button_07");   // (0 with an older pack: no such button)
+        g_cl_button_coop = button("Pa_Coop_00", "Pa_Button_07");
+        g_cl_button_set = button("Pa_Settings_00", "Pa_Button_07");
         for (int r = 0; r < kRows; ++r) {
             char name[16];
             std::snprintf(name, sizeof name, "Pa_Button_%02d", r);
@@ -1297,8 +1305,8 @@ int OurSystemButtonFocused() {
     const std::uint64_t pages = g_pages_screen;
     if (pages == 0) return -1;
     const auto read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
-    bool mp = false, ls = false;
-    std::optional<CoopModScreens::Box> mp_box, ls_box;
+    bool mp = false, ls = false, cl = false;
+    std::optional<CoopModScreens::Box> mp_box, ls_box, cl_box;
     for (const std::uint64_t b : CoopModScreens::Buttons(read, pages)) {
         const std::uint8_t state = CoopModScreens::FocusState(read, b);
         const auto box = CoopModScreens::HitBox(read, b);
@@ -1306,8 +1314,10 @@ int OurSystemButtonFocused() {
         const std::string name = CoopModScreens::ButtonName(read, b);
         if (name == "Pa_Button_06") mp = true, mp_box = box;
         if (name == "Pa_Button_05" && g_page.SettingsUsable()) ls = true, ls_box = box;
+        if (name == "Pa_Button_07" && g_cl_button != 0) cl = true, cl_box = box;
     }
-    if (mp && ls) {   // (both while the focus moves from one to the other: the one under the mouse, else the old way)
+    if (static_cast<int>(mp) + static_cast<int>(ls) + static_cast<int>(cl) > 1) {
+        // (two while the focus moves from one to another: the one under the mouse, else the focused one's name)
         float x = 0, y = 0;
         bool held = false;
         if (LayoutCursor(&x, &y, &held)) {
@@ -1315,13 +1325,14 @@ int OurSystemButtonFocused() {
                 return b && x >= std::min(b->x0, b->x1) && x <= std::max(b->x0, b->x1) && y >= std::min(b->y0, b->y1) &&
                        y <= std::max(b->y0, b->y1);
             };
-            if (in(ls_box)) return 1;
-            if (in(mp_box)) return 0;
+            if (ls && in(ls_box)) return 1;
+            if (cl && in(cl_box)) return 2;
+            if (mp && in(mp_box)) return 0;
         }
         const std::string name = FocusedShownName();
-        return name == "Pa_Button_05" ? 1 : 0;
+        return name == "Pa_Button_05" ? 1 : name == "Pa_Button_07" ? 2 : mp ? 0 : cl ? 2 : 1;
     }
-    return mp ? 0 : ls ? 1 : -1;
+    return mp ? 0 : ls ? 1 : cl ? 2 : -1;
 }
 
 // System's two buttons of ours, at each update of the pages: Multiplayer shown while our pages can be used, Longshot
@@ -1374,6 +1385,7 @@ void PlacePaneY(void* ctx, std::uint64_t pane, float y) {
 void PlaceSystemButtons(void* ctx, int shown) {
     if (g_sys_buttons[2] == 0 || g_sys_buttons[3] == 0 || g_sys_buttons[4] == 0) return;
     std::vector<std::uint64_t> order{g_sys_buttons[2], g_sys_buttons[3]};
+    if ((shown & 4) != 0) order.push_back(g_cl_button);
     if ((shown & 1) != 0) order.push_back(g_mp_button);
     if ((shown & 2) != 0) order.push_back(g_settings_button);
     order.push_back(g_sys_buttons[4]);
@@ -1389,12 +1401,13 @@ void PlaceSystemButtons(void* ctx, int shown) {
 // Multiplayer page's Session view chose System's Longshot Settings button, under Back, once System's lower buttons
 // were placed lower).
 bool SystemOwn(std::uint64_t pane) {
-    return pane != 0 && (pane == g_mp_button || pane == g_settings_button ||
+    return pane != 0 && (pane == g_mp_button || pane == g_settings_button || pane == g_cl_button ||
                          std::find(g_sys_buttons.begin(), g_sys_buttons.end(), pane) != g_sys_buttons.end());
 }
 void SystemButtons(void* ctx) {
     const std::uint64_t now = NowMs();
-    const int want = (g_page.Usable() && g_mp_button != 0 ? 1 : 0) | (g_page.SettingsUsable() && g_settings_button != 0 ? 2 : 0);
+    const int want = (g_page.Usable() && g_mp_button != 0 ? 1 : 0) | (g_page.SettingsUsable() && g_settings_button != 0 ? 2 : 0) |
+                     (g_page.Usable() && g_cl_button != 0 ? 4 : 0);
     const bool over = g_page.Shown();
     if (want != g_settings_button_shown || over != g_sys_hidden) {
         if (over != g_sys_hidden) {
@@ -1405,11 +1418,13 @@ void SystemButtons(void* ctx) {
         }
         if (g_mp_button != 0) SetVisible(ctx, g_mp_button, !over && (want & 1) != 0);
         if (g_settings_button != 0) SetVisible(ctx, g_settings_button, !over && (want & 2) != 0);
+        if (g_cl_button != 0) SetVisible(ctx, g_cl_button, !over && (want & 4) != 0);
         if (g_rows_back_ms == 0 && g_settings_button_set != 0) SetVisible(ctx, g_settings_button_set, (want & 2) != 0);
         if (want != g_settings_button_shown) {
             PlaceSystemButtons(ctx, want);
             g_settings_button_shown = want;
-            LOG_INFO(Core, "coop: pause tab: System's buttons of ours: Multiplayer {}, Longshot Settings {}",
+            LOG_INFO(Core, "coop: pause tab: System's buttons of ours: Customize Link {}, Multiplayer {}, Longshot Settings {}",
+                     (want & 4) != 0 ? "shown" : g_cl_button == 0 ? "not in the pack" : "hidden",
                      (want & 1) != 0 ? "shown" : "hidden", (want & 2) != 0 ? "shown" : "hidden");
         }
     }
@@ -1455,14 +1470,17 @@ void SystemButtons(void* ctx) {
     if (g_page.TakeLeft()) {
         // (B: System's other buttons hidden a moment, so the game's cursor comes back to the page's button)
         const bool settings = g_page.Which() == 1;
+        const bool customize = !settings && g_page.OpenedFrom() == 2;   // (back onto the Customize Link button)
         std::vector<std::pair<std::uint64_t, bool>> others;
         for (const std::uint64_t b : g_sys_buttons) others.emplace_back(b, true);
-        others.emplace_back(settings ? g_mp_button : g_settings_button, (want & (settings ? 1 : 2)) != 0);
+        if (!settings) others.emplace_back(g_settings_button, (want & 2) != 0);
+        if (settings || customize) others.emplace_back(g_mp_button, (want & 1) != 0);
+        if (!customize && g_cl_button != 0) others.emplace_back(g_cl_button, (want & 4) != 0);
         // (the button to land on all but see-through, so the page's buttons come all at once: at alpha 0 the game's
         // cursor never landed on it and every page change waited the whole 400 ms, a run's log 2026-11-19; 0.02 is
         // tried, and the log line after says whether it landed)
-        HideRowsAMoment(ctx, std::move(others), settings ? "Pa_Button_05" : "Pa_Button_06",
-                        settings ? g_settings_button : g_mp_button);
+        HideRowsAMoment(ctx, std::move(others), settings ? "Pa_Button_05" : customize ? "Pa_Button_07" : "Pa_Button_06",
+                        settings ? g_settings_button : customize ? g_cl_button : g_mp_button);
         g_left_trace = 4, g_left_since = now, g_left_said.clear();
         LOG_INFO(Core, "coop: pause tab: {} left (B): System again", settings ? "Longshot Settings" : "the Multiplayer page");
     }
@@ -1523,7 +1541,8 @@ void ApplyPages(void* ctx, const Facts& f, const Page::Do& d) {
         }
         // (and the Longshot Settings button our copies of System's page have too: the Multiplayer page's stays hidden;
         // Longshot Settings' Longshot Settings button is its sixth category row, SystemButtons')
-        for (const std::uint64_t b : {g_settings_button_coop, g_mp_button_coop, g_mp_button_set}) {
+        for (const std::uint64_t b : {g_settings_button_coop, g_mp_button_coop, g_mp_button_set, g_cl_button_coop,
+                                      g_cl_button_set}) {
             if (b != 0) SetVisible(ctx, b, false);
         }
     }
@@ -2631,6 +2650,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
             }
             out = g_page.OnPad(in, NowMs());
+            if (g_page.TakeCustomizeOpen()) {   // (the Customize Link button: Settings and look's Customize page)
+                g_customize_direct = true;
+                g_menu_tab = 0, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
+                SetView(View::kMenu);
+                LOG_INFO(Core, "coop: pause tab: Customize Link from System: Settings and look's Customize page");
+            }
             if (g_page.TakeRefusedA()) {
                 LOG_INFO(Core, "coop: pause tab: an A on System's button of ours while the page cannot show (usable {}, "
                                "panes {}, Multiplayer button {:#x}, the menu seen {} ms ago in state {}): kept from the "
@@ -3125,10 +3150,13 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     g_cell = -1, g_live_poke = true;   // (B in the cells: the rows have the pad again)
                 } else if (ViewShown() == View::kMenu && g_menu_list.load()) {
                     menu_back = true;   // (co-op's menu's Back first: a colour's mixer shuts; else the rows have the pad)
+                } else if (g_customize_direct.load() && ViewShown() == View::kMenu) {
+                    g_page.LeaveToButton("B on Customize Link");   // (opened from its own button: System again)
                 } else {
                     SetView(BackOf(ViewShown()));   // (B in a view: where its Back goes)
                 }
             }
+            if (!g_page.Shown()) g_customize_direct = false;
             if (!shown) SetView(View::kMain), g_set_row = -1;
             g_page.SetSubView(g_page.Which() == 1 ? g_set_row.load() >= 0 : ViewShown() != View::kMain);
             why = g_page.TakeWhy();

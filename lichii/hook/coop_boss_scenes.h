@@ -136,6 +136,9 @@ struct Actions {
     std::optional<Vec> move_to;            // put our Link here (in the boss room)
     bool skip = false;                     // the game's own skip of the event that runs
     std::optional<std::int32_t> set_max_life;  // write our maximum life (the server's answer)
+    // Another player took the boss's heart container: our hearts filled as a pickup of it would (once per boss).
+    // Without it a game that did not pick it up got the heart but kept its life (four players, 2026-11-20).
+    bool refill = false;
     // While we are in a beaten boss's area: our maximum may not rise past this by our own game
     // (FlagWatcher::cap_max); nothing: no cap.
     std::optional<std::int32_t> max_life_cap;

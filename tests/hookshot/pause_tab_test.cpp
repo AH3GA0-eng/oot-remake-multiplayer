@@ -1923,6 +1923,35 @@ TEST_CASE("pause tab: the slide follows the game's measured curve and moves the 
     CHECK(system == doctest::Approx(0.0f));
 }
 
+TEST_CASE("pause tab: System's Customize Link button opens the Multiplayer page on Customize, and goes back to System") {
+    Page p = UsablePage();
+    std::uint64_t now = 1000;
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
+    p.OnPad(0, now);
+    p.SetSystemButton(2);
+    CHECK(p.OnPad(kPadA, now + 16) == 0);   // (the game's A kept from it)
+    CHECK(p.Shown());
+    CHECK(p.Which() == 0);                  // (the Multiplayer page, in System's place)
+    CHECK(p.OpenedFrom() == 2);
+    CHECK(p.TakeCustomizeOpen());
+    CHECK_FALSE(p.TakeCustomizeOpen());
+    CHECK(p.TakeOpened());
+    p.SetSystemButton(-1);
+    p.OnPad(0, now + 32);
+    p.LeaveToButton("B on Customize Link");
+    CHECK_FALSE(p.Shown());
+    CHECK(p.TakeLeft());
+    CHECK(p.OpenedFrom() == 2);             // (the cursor back on its button)
+    // The Multiplayer button's own A: no Customize page.
+    p.OnPad(0, now + 48);
+    p.SetSystemButton(0);
+    p.OnPad(kPadA, now + 64);
+    CHECK(p.Shown());
+    CHECK(p.OpenedFrom() == 0);
+    CHECK_FALSE(p.TakeCustomizeOpen());
+}
+
 TEST_CASE("pause tab: Longshot Settings opens from System's button with A, in System's place, B back, L or R the game's") {
     Page p = UsablePage();
     p.SetSettingsUsable(true);
