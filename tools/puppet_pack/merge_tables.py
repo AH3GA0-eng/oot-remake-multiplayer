@@ -1033,15 +1033,40 @@ def self_model(data, age):
     return tunic_extra.model_names(out, "green", names, letter=tunic.SELF_LETTER)
 
 
+def put_back_models(root, name, path, say=print):
+    """A mod's own Link models back where merge_self_models wrote them (a file changed since, a new copy of the mod,
+    keeps its own), and its kept folder gone. Returns the models put back; None when the mod keeps none."""
+    models_keep = os.path.join(path, MODELS_KEEP)
+    if not os.path.isdir(models_keep):
+        return None
+    back = []
+    for rel in SELF_MODELS.values():
+        kept = os.path.join(models_keep, *rel.split("/"))
+        stamp = read_text(kept + ".txt")
+        target = os.path.join(path, "romfs", *rel.split("/"))
+        out = next((l[4:] for l in (stamp or "").split("\n") if l.startswith("out ")), None)
+        if os.path.isfile(kept) and out and os.path.isfile(target) and out == file_line(root, target):
+            shutil.copyfile(kept, target)
+            back.append(rel)
+    shutil.rmtree(models_keep)
+    say(f"Your Link's colours: {name}'s own {', '.join(back)} back." if back else
+        f"Your Link's colours: {name} has other Link models than the ones written: left as they are.")
+    return back
+
+
 def merge_self_models(root, romfs, say=print):
-    """Every other mod's copy of a Link model gets co-op's own tunic names. Returns the copies not done."""
+    """Every other mod's copy of a Link model gets co-op's own tunic names. Returns the copies not done. With the pack
+    off, gone or without your own tunic textures those names would name textures no mod has, so every mod's own
+    models go back (put_back_models, as --undo does) and nothing is named."""
     order = load_order(root)
     pack_path = next((p for n, p in order if fold(n) == PACK), None)
-    if pack_path is None:
+    own_tile = None if pack_path is None else os.path.join(
+        pack_path, "romfs", "Tex", tunic.tile_name("green", tunic.SELF_LETTER) + ".bntx.zs")
+    if own_tile is None or not os.path.isfile(own_tile):
+        for name, path in find_mods(root).items():
+            if fold(name) != PACK:
+                put_back_models(root, name, path, say)
         return 0
-    own_tile = os.path.join(pack_path, "romfs", "Tex", tunic.tile_name("green", tunic.SELF_LETTER) + ".bntx.zs")
-    if not os.path.isfile(own_tile):
-        return 0   # (no own tunic textures in the pack: nothing to name)
     codec = Codec(romfs)
     failed = 0
     for name, path in order:
@@ -1245,20 +1270,7 @@ def undo(root, say=print):
     keeps its own table (the kept one is the old seed's). The kept folder and the mark go either way."""
     n = 0
     for name, path in find_mods(root).items():
-        models_keep = os.path.join(path, MODELS_KEEP)
-        if os.path.isdir(models_keep):   # (merge_self_models: each Link model back where it was written)
-            back = []
-            for rel in SELF_MODELS.values():
-                kept = os.path.join(models_keep, *rel.split("/"))
-                stamp = read_text(kept + ".txt")
-                target = os.path.join(path, "romfs", *rel.split("/"))
-                out = next((l[4:] for l in (stamp or "").split("\n") if l.startswith("out ")), None)
-                if os.path.isfile(kept) and out and os.path.isfile(target) and out == file_line(root, target):
-                    shutil.copyfile(kept, target)
-                    back.append(rel)
-            shutil.rmtree(models_keep)
-            say(f"Your Link's colours: {name}'s own {', '.join(back)} back." if back else
-                f"Your Link's colours: {name} has other Link models than the ones written: left as they are.")
+        put_back_models(root, name, path, say)   # (merge_self_models: each Link model back where it was written)
         gamedata_keep = os.path.join(path, GAMEDATA_KEEP)
         if os.path.isdir(gamedata_keep):   # (merge_gamedata: each list back where the merge wrote it)
             back = []
