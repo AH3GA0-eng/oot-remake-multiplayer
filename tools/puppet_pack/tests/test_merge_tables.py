@@ -1048,6 +1048,51 @@ class MergeMembersTest(unittest.TestCase):
         self.assertIn("Both changed MenuOverlay_00.buil: co-op's part made on", line)
         self.assertIn("Both changed Y.buil:", line)
 
+    def test_a_seeds_title_layout_gets_co_ops_title_rows_made_on_it(self):
+        # compat-0119: an OOTRR 0.8 seed points Title_00.buil at its own logo; the seed's alone lost co-op's title rows.
+        from unittest import mock
+        title = mt.title_menu.TITLE_ARCHIVE
+        game = {"Title_00.buil": b"game title", "Z.buil": b"game Z"}
+        self.put(os.path.join(self.romfs, *title.split("/")), self.archive(game))
+        self.put(os.path.join(self.pack, "romfs", *title.split("/")), self.archive(
+            dict(game, **{"Title_00.buil": b"game title+rows", "Z.buil": b"pack Z"})))
+        self.put(os.path.join(self.mod, "romfs", *title.split("/")), self.archive(
+            dict(game, **{"Title_00.buil": b"seed logo", "Z.buil": b"seed Z"})))
+        with mock.patch.object(mt.title_menu, "add_menu", lambda d: d + b"+rows"):
+            self.merge()
+        raw = read(os.path.join(self.mod, "romfs", *title.split("/")))
+        got = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(raw))
+        self.assertEqual(got["Title_00.buil"], b"seed logo+rows")   # the seed's logo, then co-op's rows
+        self.assertEqual(got["Z.buil"], b"seed Z")                   # no co-op edit of it: the seed's kept
+        line = next(l for l in self.lines if title in l)
+        self.assertIn("Both changed Title_00.buil: co-op's part made on", line)
+        self.assertIn("Both changed Z.buil:", line)
+
+    def test_a_title_message_file_both_changed_gets_the_title_rows(self):
+        from unittest import mock
+        game = {"LayoutMsg/Title_00.msbt": b"game T"}
+        self.put(os.path.join(self.romfs, *MALS.split("/")), self.archive(game))
+        self.put(os.path.join(self.pack, "romfs", *MALS.split("/")), self.archive({"LayoutMsg/Title_00.msbt": b"pack T"}))
+        self.put(os.path.join(self.mod, "romfs", *MALS.split("/")), self.archive({"LayoutMsg/Title_00.msbt": b"seed T"}))
+        with mock.patch.object(mt.title_menu, "add_rows", lambda d, rows: d + b"+rows:" + str(len(rows)).encode()):
+            self.merge()
+        got = self.served()["LayoutMsg/Title_00.msbt"]
+        self.assertTrue(got.startswith(b"seed T+rows:"), got)
+        self.assertEqual(got, b"seed T+rows:" + str(len(mt.title_menu.rows_for(MALS))).encode())
+
+    def test_a_title_layout_that_cannot_take_the_rows_keeps_the_winners(self):
+        title = mt.title_menu.TITLE_ARCHIVE
+        game = {"Title_00.buil": b"game title"}
+        self.put(os.path.join(self.romfs, *title.split("/")), self.archive(game))
+        self.put(os.path.join(self.pack, "romfs", *title.split("/")), self.archive({"Title_00.buil": b"pack title"}))
+        self.put(os.path.join(self.mod, "romfs", *title.split("/")), self.archive({"Title_00.buil": b"not a layout"}))
+        failed, _ = self.merge()
+        raw = read(os.path.join(self.mod, "romfs", *title.split("/")))
+        got = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(raw))
+        self.assertEqual(got["Title_00.buil"], b"not a layout")
+        self.assertTrue(any("could not be made" in l for l in self.lines))
+        self.assertTrue(any("Both changed Title_00.buil: " in l and "kept" in l for l in self.lines))
+
     def test_a_message_file_both_changed_gets_co_ops_labels_added_to_the_winners(self):
         from unittest import mock
         added = lambda d, labels, replace=False: d + b"+" + ",".join(sorted(labels)).encode()
@@ -1161,10 +1206,6 @@ class MergeMembersTest(unittest.TestCase):
         got = self.served_by(PACK)
         self.assertEqual((got["Char.msbt"], got["Hdr.msbt"], got["Coop.msbt"]),
                          (b"mod only", b"pack header", b"pack only"))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class SnailCustomizeTest(MergeMembersTest):
@@ -1312,3 +1353,7 @@ class SelfModelsTest(unittest.TestCase):
         self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)
         self.assertEqual(self.model(self.top, "Child"), self.child)
         self.assertEqual(self.lines, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
