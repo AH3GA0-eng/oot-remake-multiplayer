@@ -378,7 +378,7 @@ class BuildTest(unittest.TestCase):
             for lang in LANGS:
                 rel = "Mals/%s.Product.110.sarc.zs" % lang
                 msgs = sarc.read(written[rel])
-                self.assertEqual(msbt.read(msgs[title_menu.MSG_FILE]).text("0100"), ["Host"])   # the title's rows
+                self.assertEqual(msbt.read(msgs[title_menu.MSG_FILE]).text("0100"), ["Host a game"])   # the title's rows
                 self.assertEqual(msbt.read(msgs[pm.PAGES_MSG]).text("Pa_System_00-Pa_Button_05-T_Btn_00"),
                                  ["Longshot Settings"])
                 self.assertEqual(msbt.read(msgs[pm.PAGES_MSG]).text("Pa_Settings_00-Pa_Button_04-T_Btn_00"), ["Motion"])

@@ -1712,3 +1712,158 @@ TEST_CASE("pause tab: Settings: Original game, A flips it and asks for a save") 
     REQUIRE(r.has_value());
     CHECK(r->kind == Request::Kind::kSave);
 }
+
+TEST_CASE("pause tab: the title's Join opens on one list of both kinds, Enter a code after the games, B one step back") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
+    m.SetTitle(true);
+    m.Open(Page::kJoin);
+    REQUIRE(m.page() == Page::kFind);
+    auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kRefreshFound);   // (both lists asked at once)
+    // None heard yet: "Looking for games...", the selection on Enter a code or address; no filter rows.
+    CHECK(Names(m) == std::vector<std::string>{"Looking for games...", "Enter a code or address"});
+    CHECK(Selected(m) == "Enter a code or address");
+    CHECK(m.BackLeaves());
+    // Both kinds, this network's first; a full one dimmed (fixed) and not pickable.
+    Menu::Found lan{"Saria's game", "1/4", "192.168.1.5", 0, true, "Saria", 1, 4, true, false, false};
+    Menu::Found pub{"forest-4821 (dauro)", "2/4", "forest-4821", 0, true, "dauro", 2, 4, true, true, true};
+    Menu::Found priv{"kokiri (Mido)", "3/4", "kokiri", 0, true, "Mido", 3, 4, true, false, true};
+    Menu::Found full{"lost-woods (Link2)", "Full", "lost-woods", 0, false, "Link2", 4, 4, true, true, true};
+    m.SetFound({lan, pub, priv, full}, "");
+    const View v = m.view();
+    REQUIRE(v.rows.size() == 5);
+    CHECK(v.rows[0].value == "1/4  This network");
+    CHECK(v.rows[1].value == "2/4  Public");
+    CHECK(v.rows[2].value == "3/4  Public, password");
+    CHECK(v.rows[3].value == "Full");
+    CHECK(v.rows[3].fixed);
+    CHECK(v.rows[4].name == "Enter a code or address");
+    // A public game joins at once.
+    SelectRow(m, "forest-4821 (dauro)");
+    m.Press(Input::kDecide);
+    r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoin);
+    // A game with a password: its page, the password and Join; B: the list again.
+    m.Open(Page::kJoin);
+    (void)m.TakeRequest();
+    m.SetFound({lan, pub, priv, full}, "");
+    SelectRow(m, "kokiri (Mido)");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Names(m) == std::vector<std::string>{"kokiri (Mido) asks for a password", "Password", "Join"});
+    CHECK(Selected(m) == "Password");
+    CHECK_FALSE(m.BackLeaves());
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kFind);
+    CHECK(m.BackLeaves());
+    // Enter a code or address: Paste a code (the clipboard, no typing), Type an address, Join; Password once an
+    // address is in.
+    SelectRow(m, "Enter a code or address");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Names(m) == std::vector<std::string>{"Paste a code", "Type an address", "Join"});
+    SelectRow(m, "Paste a code");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.typing());
+    r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kPaste);
+    m.Paste("192.168.1.9");
+    CHECK(Selected(m) == "Join");
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kFind);
+    // Off the title: the overlay's Join page as before.
+    m.SetTitle(false);
+    m.Open(Page::kJoin);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Names(m)[0] == "Browse games");
+}
+
+TEST_CASE("pause tab: a title row's game name gives way, never its players, kind or words (title-join-shots)") {
+    using CoopPauseMenu::TitleGameName;
+    using CoopPauseMenu::kTitleRowBytes;
+    // Fits: as it is.
+    CHECK(TitleGameName("kokiri (Mido)", "Mido", 2 + std::string("3/4  Public").size()) == "kokiri (Mido)");
+    // The relay's own public room was cut at its end on the run's list ("...: 0/16..."): the host's name goes first.
+    const std::string value = "0/16  Public";
+    CHECK(TitleGameName("Squadala public game (squadala)", "squadala", 2 + value.size()) == "Squadala public game");
+    // Still too long: the room cut, "..." at its end, the whole row within a button.
+    const std::string cut = TitleGameName("a-very-long-room-name-here-and-more (someone)", "someone", 2 + value.size());
+    CHECK(cut.size() + 2 + value.size() <= kTitleRowBytes);
+    CHECK(cut.substr(cut.size() - 3) == "...");
+    // Never inside a letter of more bytes.
+    std::string letters;
+    for (int i = 0; i < 15; ++i) letters += "\xe7\x8e\xa9";   // (15 letters of 3 bytes)
+    const std::string zh = TitleGameName(letters, "", 2 + value.size());
+    CHECK((zh.size() - 3) % 3 == 0);
+
+    // On the list and on the password page: the name the list showed (the room's join name can differ), and
+    // "asks for a password" whole.
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
+    m.SetTitle(true);
+    m.Open(Page::kJoin);
+    (void)m.TakeRequest();
+    Menu::Found big{"Squadala public game (squadala)", "0/16", "squadala-public", 0, true, "squadala", 0, 16, true, true,
+                    true};
+    Menu::Found priv{"kokiri (Mido)", "3/4", "test-kokiri", 0, true, "Mido", 3, 4, true, false, true};
+    Menu::Found longpriv{"the-longest-room-name-24 (SomeoneLong)", "1/4", "the-longest-room-name-24", 0, true,
+                         "SomeoneLong", 1, 4, true, false, true};
+    m.SetFound({big, priv, longpriv}, "");
+    CHECK(Names(m)[0] == "Squadala public game");
+    CHECK(m.view().rows[0].value == "0/16  Public");
+    SelectRow(m, "kokiri (Mido)");
+    m.Press(Input::kDecide);
+    CHECK(Names(m)[0] == "kokiri (Mido) asks for a password");
+    m.Press(Input::kBack);
+    m.SetFound({big, priv, longpriv}, "");
+    CHECK(Names(m)[2] == "the-longest-ro...");   // (its "1/4  Public, password" whole)
+    SelectRow(m, "the-longest-ro...");
+    m.Press(Input::kDecide);
+    CHECK(Names(m)[0] == "the-longest-room-... asks for a password");
+    CHECK(Names(m)[0].size() <= kTitleRowBytes);
+}
+
+TEST_CASE("pause tab: the title's Host opens on its choices, hosts on Start hosting, then shows the code and password") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    m.Show(o);
+    m.SetTitle(true);
+    m.Open(Page::kHost);
+    CHECK_FALSE(m.TakeRequest().has_value());   // (not hosted on opening)
+    CHECK(Names(m) == std::vector<std::string>{"Who can join", "Players", "Start hosting"});
+    CHECK(SelectedValue(m) == "Private");
+    m.Press(Input::kRight);   // (Anyone: the room name row)
+    (void)m.TakeRequest();
+    CHECK(Names(m) == std::vector<std::string>{"Who can join", "Players", "Room name", "Start hosting"});
+    m.Press(Input::kLeft);
+    (void)m.TakeRequest();
+    SelectRow(m, "Start hosting");
+    m.Press(Input::kDecide);
+    auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kHost);
+    Session s = Hosting(1, "ABCD-EFGH-IJKL");
+    s.password = "1234567890";
+    m.SetSession(s);
+    const std::vector<std::string> names = Names(m);
+    REQUIRE(names.size() >= 4);
+    CHECK(names[0] == "Code");
+    CHECK(names[1] == "Password");
+    CHECK(names.back() == "Stop hosting");
+    CHECK(m.BackLeaves());   // (Back keeps hosting: the Multiplayer rows)
+    // A public game: its room and players, no code.
+    s.public_game = true;
+    s.password.clear();
+    m.SetSession(s);
+    const std::vector<std::string> pub = Names(m);
+    CHECK(pub[0].rfind("Room", 0) == 0);
+    CHECK(std::find(pub.begin(), pub.end(), std::string("Code")) == pub.end());
+}
