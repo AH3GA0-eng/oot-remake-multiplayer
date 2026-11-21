@@ -852,8 +852,9 @@ their colour (ten presets). Not run in a game yet.
   dresses each puppet in its player's copy (`SetTunicCopies`, `Remote::tunic_copy`); the boots follow the same copies.
 - **The paint**: the pack writes each coloured copy's texels (`coop_look/puppet-<colour>.bin`, marked as the copies
   are); a "puppets' tunics" wardrobe finds them in memory and draws each given copy from `green.bin` in its player's
-  exact colour through Longshot's texture overrides (`CoopLookParts::PuppetTunicsTexels`). A texture of another size
-  than green's (the child's dark tile) keeps the copy's preset, as your own Link's does.
+  exact colour through Longshot's texture overrides (`CoopLookParts::PuppetTunicsTexels`); the child's dark tile (the
+  tunic body: BC3 in the copies, ASTC in green) from green's main tile in the colour times 0.64, as the pack makes it.
+  A player keeps their copy while they stay (a join or a colour change moves nobody else).
 - **Cost**: about 26 MB of pack files outside `romfs`; in RAM the nine copies' texels once read (~26 MB) and one
   override per copy given (~2.9 MB each).
 
