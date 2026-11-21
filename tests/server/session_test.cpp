@@ -3205,9 +3205,12 @@ TEST_CASE("row 215: a boss in its death animation stays, as does one whose answe
     h.receive(1, ObjectSample{0, placed(7), 0, dying_state(2, "Dead_Fall")}, kChannelObjectSamples);
     h.stand(1, 4);
     h.stand(2, 6);
+    h.run(7 * kSecond);  // past the owner's own blow (12 -> 2 reads as one: boss_owner_hit_hold_us)
     h.clear();
+    const auto kept = h.session.stats().boss_finish_kept;
     h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
     CHECK(h.asks() == 0);
+    CHECK(h.session.stats().boss_finish_kept == kept + 1);  // this guard refused it, not the hold
     CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
   }
   SUBCASE("asked while it lived, answered in its finish") {
@@ -3216,6 +3219,7 @@ TEST_CASE("row 215: a boss in its death animation stays, as does one whose answe
     h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 5)}, kChannelObjectSamples);
     h.stand(1, 4);
     h.stand(2, 6);
+    h.run(7 * kSecond);  // past the owner's own blow (12 -> 5 reads as one: boss_owner_hit_hold_us)
     h.clear();
     h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // a stun: the ask
     REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
