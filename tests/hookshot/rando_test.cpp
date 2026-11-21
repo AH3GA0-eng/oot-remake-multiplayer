@@ -1821,6 +1821,31 @@ TEST_CASE("rando: a run whose actor table lacks the pack's rows holds the pack a
     }
 }
 
+TEST_CASE("rando: a seed the kit merged other mods' saved values and archives into (report 206)") {
+    World w;
+    const fs::path seed = w.mods / "randomizer-S2";
+    const fs::path list = fs::path("romfs") / "GameData" / "GameDataList.Product.110.byml.zs";
+    const fs::path mals = fs::path("romfs") / "Mals" / "USen.Product.110.sarc.zs";
+    Put(seed / list, "own list");
+    Put(seed / mals, "own messages");
+    const std::string own = SeedFilesHash(seed);
+    // The kit's start: both rewritten, the seed's own kept beside with their stamps.
+    Put(seed / list, "merged list");
+    Put(seed / "_coop-gamedata" / list.filename(), "own list");
+    Put(seed / "_coop-gamedata" / (list.filename().string() + ".txt"), "coop-gamedata 1");
+    Put(seed / mals, "merged messages");
+    Put(seed / "_coop-archives" / "Mals" / mals.filename(), "own messages");
+    Put(seed / "_coop-archives" / "Mals" / (mals.filename().string() + ".txt"), "coop-members 1");
+    CHECK(SeedFilesHash(seed) == own);  // the same seed for the other players, whatever mods this game merged in
+    // A refresh replaced its size table: its own files go back (no actor table kept: 0 rows), the kept folders go.
+    CHECK(PutBackKeptRows(seed) == 0);
+    CHECK(Get(seed / list) == "own list");
+    CHECK(Get(seed / mals) == "own messages");
+    CHECK_FALSE(fs::exists(seed / "_coop-gamedata"));
+    CHECK_FALSE(fs::exists(seed / "_coop-archives"));
+    CHECK(SeedFilesHash(seed) == own);
+}
+
 TEST_CASE("rando: a refreshed seed gets its own actor tables back and loses the kit mark") {
     World w;
     const fs::path seed = w.mods / "randomizer-S1";
