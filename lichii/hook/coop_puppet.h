@@ -283,6 +283,7 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 // 0.11.9: the look part of the eyes' colour (CoopLook::Part::eyes), dressed on the puppets by co-op's wardrobe.
 inline constexpr std::uint8_t kEyesPart = 18;
+inline constexpr std::uint8_t kHairPart = 19;   // (CoopLook::Part::hair)
 
 namespace block {
 inline constexpr std::uint64_t kSize = 0x880;  // to 0x778: coop_puppet_flame.h's key and handle; then kDress
@@ -497,6 +498,7 @@ public:
         bool mods_routine = false;
         std::string actor_name;   // (a puppet made again as another actor starts anew)
         std::optional<std::uint32_t> eyes;   // 0.11.9: the player's eye colour (their look's part 18), exact
+        std::optional<std::uint32_t> hair;   // 0.11.9: the player's hair colour (part 19), a Link puppet's only
     };
     std::vector<DressView> DressTargets() const;
     // Any thread: bit n set while puppet n's actor is live in this scene and

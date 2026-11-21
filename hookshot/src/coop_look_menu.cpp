@@ -43,6 +43,7 @@ std::uint32_t GameColour(Part part) {
     case Part::gauntlets: return 0xAAAAAA;
     case Part::cap_trim: return 0x4C8C3C;   // (unset it is the tunic's: Shown)
     case Part::eyes: return 0x3C6EC8;       // (Link's blue)
+    case Part::hair: return 0xD8A848;       // (Link's blond)
     }
     return 0x808080;
 }
@@ -71,6 +72,7 @@ const char* Note(Part part) {
     case Part::cap_trim:
         return "The cap's own trims: young Link's headband and knot, adult Link's hood trims (the cap's cloth is the tunic's). Your own Link only, for now.";
     case Part::eyes: return "The colour of the eyes, on your Link and seen by the other players.";
+    case Part::hair: return "The colour of the hair and the brows, on your Link and seen by the other players.";
     }
     return "";
 }
@@ -230,9 +232,9 @@ std::uint32_t ToRgb(const Hsv& c) {
 }
 
 const std::vector<Group>& Groups() {
-    // (0.11.9: Link's own colours first, his eyes among them; Hair joins that page when its painting lands)
+    // (0.11.9: Link's own colours first, his hair and eyes among them)
     static const std::vector<Group> kGroups = {
-        {"Link", {Part::eyes, Part::tunic, Part::cap_trim, Part::goron_tunic, Part::zora_tunic}},
+        {"Link", {Part::hair, Part::eyes, Part::tunic, Part::cap_trim, Part::goron_tunic, Part::zora_tunic}},
         {"Shields", {Part::hylian_frame, Part::hylian_face, Part::hylian_emblem, Part::mirror_rim, Part::mirror_face,
                      Part::deku_shield}},
         {"Swords", {Part::kokiri_blade, Part::kokiri_hilt, Part::master_blade, Part::master_hilt, Part::biggoron_blade,
@@ -252,6 +254,7 @@ std::string PagedName(Part part) {
     case Part::gauntlets: return "Gauntlets";
     case Part::deku_shield: return "Deku Shield";
     case Part::eyes: return "Eye Colour";
+    case Part::hair: return "Hair Colour";
     default: break;
     }
     const PartInfo& info = CoopLook::InfoOf(part);

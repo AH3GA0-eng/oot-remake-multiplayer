@@ -53,8 +53,10 @@ enum class Part : std::uint8_t {
                           // (your own Link only; unset: as the tunic)
     eyes = 18,            // 0.11.9: the eyes' colour (the iris: Mt_Eye_Inner's ns_param_color2, set by the game's own
                           // model calls on your Link and the puppets, CoopCharColours); a kit before it passes it over
+    hair = 19,            // 0.11.9: the hair's colour (the hair materials' ns_param_color0 / 1 and the brows', as the
+                          // game colours its own characters' hair; Link models only)
 };
-inline constexpr std::size_t kParts = 19;
+inline constexpr std::size_t kParts = 20;
 
 // A part as the menu and the settings name it.
 struct PartInfo {

@@ -160,7 +160,17 @@ public:
             if (Stopped()) return;
             u.looked_up = true;
         }
-        if (o.hair != 0 || put_back) {
+        if (o.hair_exact && !Stopped()) {
+            // (co-op's hair colour on a Link model: the parameters alone, as the game colours its own hair)
+            for (std::size_t i = 0; i < kHairNames.size() && !Stopped(); i++) {
+                if (u.material[i] < 0) continue;
+                const bool brow = i + 1 == kHairNames.size();
+                for (int p = 0; p < 2; p++) {
+                    SetFloats(u.unit, u.material[i], u.param[i][static_cast<std::size_t>(p)],
+                              brow ? (*o.hair_exact)[2] : (*o.hair_exact)[static_cast<std::size_t>(p)]);
+                }
+            }
+        } else if (o.hair != 0 || put_back) {
             for (std::size_t i = 0; i < kHairNames.size() && !Stopped(); i++) {
                 if (u.material[i] < 0) continue;
                 const std::uint64_t object = MaterialObject(u.unit, u.material[i]);
@@ -307,6 +317,20 @@ Result Dress(const Game& game, State& state, const Options& options, bool put_ba
     return r;
 }
 
+std::array<std::array<float, 3>, 3> HairParam(std::uint32_t rgb) {
+    const auto linear = [](std::uint32_t c) {
+        const float s = static_cast<float>(c & 0xFF) / 255.0f;
+        return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    };
+    const std::array<float, 3> c0{linear(rgb >> 16), linear(rgb >> 8), linear(rgb)};
+    std::array<float, 3> c1{}, brow{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        c1[i] = std::min(1.0f, c0[i] * kHairLighter);
+        brow[i] = c0[i] * kBrowScale;
+    }
+    return {c0, c1, brow};
+}
+
 std::array<float, 3> EyeParam(std::uint32_t rgb) {
     const float r = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f, g = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f,
                 b = static_cast<float>(rgb & 0xFF) / 255.0f;
@@ -353,11 +377,12 @@ std::size_t Wardrobe::Frame(const Game& game, const std::vector<Target>& targets
         if (t.mods_routine || calls >= kCallsPerFrame || now_ms < k.retry_ms) continue;
         Options o = Options::Of(t.custom);
         if (t.eyes) o.eyes_exact = EyeParam(*t.eyes);
+        if (t.hair) o.hair_exact = HairParam(*t.hair);
         const bool colours = o.Colours();
         bool due;
         if (viewer_paints) {
             due = true;   // the mod's code painted the viewer's options on it this frame
-        } else if (!k.dressed || *k.dressed != t.custom || k.dressed_eyes != t.eyes) {
+        } else if (!k.dressed || *k.dressed != t.custom || k.dressed_eyes != t.eyes || k.dressed_hair != t.hair) {
             due = colours || k.ever;   // a change (to none: put back what was put on)
         } else {
             due = colours && now_ms - k.at_ms >= kAgainMs;
@@ -383,6 +408,7 @@ std::size_t Wardrobe::Frame(const Game& game, const std::vector<Target>& targets
         }
         k.dressed = t.custom;
         k.dressed_eyes = t.eyes;
+        k.dressed_hair = t.hair;
         k.ever = k.ever || colours;
         k.at_ms = now_ms;
     }

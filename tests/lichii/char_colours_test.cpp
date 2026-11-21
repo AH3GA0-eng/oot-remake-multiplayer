@@ -419,3 +419,17 @@ TEST_CASE("char colours (0.11.9): co-op's exact eye colour as the iris parameter
     o.eyes_exact = EyeParam(0x00FF00);
     CHECK(o.Colours());
 }
+
+TEST_CASE("char colours (0.11.9): co-op's hair colour as the hair parameters (linear), colour 1 lighter, brows darker") {
+    using CoopCharColours::HairParam;
+    const auto h = HairParam(0xFF8000);
+    CHECK(h[0][0] == doctest::Approx(1.0f));
+    CHECK(h[0][1] == doctest::Approx(0.2158f).epsilon(0.01));   // (0x80 linear)
+    CHECK(h[0][2] == doctest::Approx(0.0f));
+    CHECK(h[1][0] == doctest::Approx(1.0f));                    // (lighter, not past 1)
+    CHECK(h[1][1] == doctest::Approx(0.2158f * CoopCharColours::kHairLighter).epsilon(0.01));
+    CHECK(h[2][1] == doctest::Approx(0.2158f * CoopCharColours::kBrowScale).epsilon(0.01));
+    CoopCharColours::Options o;
+    o.hair_exact = h;
+    CHECK(o.Colours());
+}

@@ -1910,13 +1910,17 @@ void DressCharacters(void* ctx) {
     for (const auto& v : views) {
         CoopCharColours::Target t{v.actor, v.cell, v.custom, v.mods_routine, 0, std::hash<std::string>{}(v.actor_name)};
         t.eyes = v.eyes;
+        t.hair = v.hair;
         targets.push_back(t);
     }
     // (0.11.9: your own Link's eye colour, the look shown: the one chosen in Customize at once, a preview, else worn;
     // its cell of guest memory made once with the game's malloc, as a puppet's block)
     static std::uint64_t own_cell = 0;
     static bool own_cell_asked = false;
-    if (const auto eyes = CoopLook::Shown()[CoopLook::Part::eyes]) {
+    const CoopLook::Look shown = CoopLook::Shown();
+    const auto eyes = shown[CoopLook::Part::eyes];
+    const auto hair = CoopCharColours::ShownCharacter() == 0 ? shown[CoopLook::Part::hair] : std::nullopt;
+    if (eyes || hair) {
         if (own_cell == 0 && !own_cell_asked) {
             own_cell_asked = true;
             HosCoopCall k{};
@@ -1932,7 +1936,8 @@ void DressCharacters(void* ctx) {
         BridgeGuest guest;
         if (const std::uint64_t own = CoopPose::FindPlayer(guest, CoopRuntime::MainBase()); own != 0 && own_cell != 0) {
             CoopCharColours::Target t{own, own_cell, 0, false, 0, 0};
-            t.eyes = *eyes & 0xFFFFFFu;
+            if (eyes) t.eyes = *eyes & 0xFFFFFFu;
+            if (hair) t.hair = *hair & 0xFFFFFFu;
             targets.push_back(t);
         }
     }
