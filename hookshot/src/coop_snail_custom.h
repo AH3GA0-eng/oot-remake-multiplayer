@@ -35,6 +35,10 @@ struct Texts {
     std::array<std::string, kOptions> labels{}, values{};
     bool operator==(const Texts&) const = default;
 };
+// What a pane of his screen is given for a text: a text pane's text is never empty (the game's set-message call
+// takes no empty one, as the pause tab's rows), so a place with nothing (an option past a character's last row, a
+// character with no options) shows a space.
+inline std::string PaneText(const std::string& s) { return s.empty() ? std::string(" ") : s; }
 
 // Switch pad bits (nn::hid's), as the pause tab has them.
 inline constexpr std::uint64_t kA = 1ull << 0, kB = 1ull << 1, kY = 1ull << 3, kZL = 1ull << 8, kZR = 1ull << 9,

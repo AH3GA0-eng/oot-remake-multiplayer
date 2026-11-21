@@ -95,6 +95,21 @@ TEST_CASE("snail customize: a character with no colour options shows that, and i
     CHECK_FALSE(d.Editing());
 }
 
+TEST_CASE("snail customize: a place with nothing is given a space, never an empty text (Saria's screen, lane 035925)") {
+    Driver d;
+    d.Open(Look{}, 9);   // (a character: one row, the rest of his six places empty)
+    const auto t = d.Shown();
+    bool empty = false;
+    for (int f = 1; f < kOptions; ++f) empty = empty || t.labels[static_cast<std::size_t>(f)].empty();
+    REQUIRE(empty);   // (what the screen's write met: places with no text)
+    for (int f = 0; f < kOptions; ++f) {
+        CHECK_FALSE(PaneText(t.labels[static_cast<std::size_t>(f)]).empty());
+        CHECK_FALSE(PaneText(t.values[static_cast<std::size_t>(f)]).empty());
+    }
+    CHECK(PaneText("") == " ");
+    CHECK(PaneText("Eye Colour") == "Eye Colour");
+}
+
 TEST_CASE("snail customize: his option past a page's parts does nothing") {
     Driver d;
     d.Open(Look{}, 0);

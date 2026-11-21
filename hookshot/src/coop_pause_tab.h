@@ -866,6 +866,14 @@ inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // the last 100 ms, through the same census (any thread; nothing without the variable).
 void CensusFromMenuState() noexcept;
 bool GameMenuUp() noexcept;
+// The pause menu's model actors (the menu manager's object, its four slots: Link on Equipment, and the picture Character
+// Select's Customize screen shows), 0 for an empty slot or with no menu. Any thread (reads only). The eyes' and hair's
+// colours are each actor's own material values, so the picture shows them only when they are dressed on these too.
+struct MenuActor {
+    std::uint64_t actor = 0;
+    std::uint32_t id = 0;   // its slot's id: another actor made at the same address has another
+};
+std::array<MenuActor, 4> MenuActors() noexcept;
 int MousePage() noexcept;
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's mouse reads it too (coop_title.cpp).

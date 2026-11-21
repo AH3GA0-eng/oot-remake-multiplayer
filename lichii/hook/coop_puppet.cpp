@@ -2,6 +2,7 @@
 #include "coop_puppet.h"
 
 #include "coop_camera.h"
+#include "coop_char_colours.h"
 #include "coop_colors.h"
 #include "coop_local_game.h"
 #include "coop_look_share.h"
@@ -199,10 +200,12 @@ std::vector<Director::DressView> Director::DressTargets() const {
         std::optional<std::uint32_t> eyes, hair;   // (0.11.9: the eyes and hair parts of their look, as received)
         if (const auto parts = CoopLookShare::Of(s.number)) {
             for (const auto& p : *parts) {
-                if (p.part == kEyesPart) eyes = p.colour & 0xFFFFFFu;
-                if (p.part == kHairPart && !character) hair = p.colour & 0xFFFFFFu;   // (Link's hair only)
+                if (p.part == kEyesPart) eyes = p.colour;
+                if (p.part == kHairPart) hair = p.colour;
             }
         }
+        const auto link = CoopCharColours::LinkOnly(!character, eyes, hair);   // (a Link puppet's only)
+        eyes = link.eyes, hair = link.hair;
         out.push_back({s.number, s.actor, s.block + block::kDress,
                        t != nullptr && character ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
                        character && character_apply_ != 0 && character_apply_state_ == 1, s.actor_name, eyes, hair});
