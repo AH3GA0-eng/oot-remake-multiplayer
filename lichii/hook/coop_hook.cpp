@@ -1641,8 +1641,9 @@ public:
                                     ? std::optional<std::string>(reading->animation->name)
                                     : std::nullopt,
                                 report.connected ? session_.get() : nullptr);
-        // Character Select's page flags left set after his page closed mid-swap (row 202, coop_charsel_tidy.h): put
-        // back to 0 once no menu has been up for half a second. Without the mod the flags do not exist: nothing.
+        // Character Select's page flags left set by a swap cut short (row 202, coop_charsel_tidy.h): put back to 0 on
+        // the frame his page reads closed (menu up or not), or half a second after the menu closed when his page flag
+        // itself was left set. Without the mod the flags do not exist: nothing.
         if (view.game) {
             static CoopCharselTidy::Tidy charsel_tidy;
             EmulatorMemory tidy_memory(system.ApplicationMemory(), base_);

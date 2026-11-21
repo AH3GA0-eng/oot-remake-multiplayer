@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Character Select's page flags put back when no menu is up (lichii/hook/coop_charsel_tidy.h, player report 202).
+// Character Select's page flags put back after a swap cut short (lichii/hook/coop_charsel_tidy.h, player report 202).
 #include <doctest/doctest.h>
 
 #include <map>
@@ -36,6 +36,12 @@ Game WithMod() {
     for (const Flag& f : kFlags) g.flags[std::string(f.name)] = 0;
     return g;
 }
+// A swap running on his page: the page shown, the keep-camera and slide flags set.
+void Swapping(Game& g) {
+    g.flags["CharacterMenu_IsPageOpen"] = 1;
+    g.flags["CharacterMenu_KeepUICamera"] = 1;
+    g.flags["CharacterMenu_Slide"] = 200;
+}
 std::vector<std::string> Run(Tidy& t, Game& g, std::optional<bool> menu_up, int frames) {
     std::vector<std::string> all;
     for (int i = 0; i < frames; ++i) {
@@ -45,57 +51,79 @@ std::vector<std::string> Run(Tidy& t, Game& g, std::optional<bool> menu_up, int 
 }
 }  // namespace
 
-TEST_CASE("charsel tidy: the keep-camera flag left set after the menu closed goes back to 0 (row 202)") {
+TEST_CASE("charsel tidy: a swap running on his page is never touched") {
     Game g = WithMod();
+    Swapping(g);
     Tidy t;
-    // His page swapping: the flags set while the menu is up are his to clear, never touched.
-    g.flags["CharacterMenu_KeepUICamera"] = 1;
-    g.flags["CharacterMenu_Slide"] = 200;
-    g.flags["CharacterMenu_IsPageOpen"] = 1;
     CHECK(Run(t, g, true, 600).empty());
     CHECK(g.writes == 0);
-    // The menu closed in the middle of the swap: half a second later, each one back to 0, said once.
-    CHECK(Run(t, g, false, kQuietFrames - 1).empty());
-    const auto lines = Run(t, g, false, 1);
-    REQUIRE(lines.size() == 3);
-    CHECK(lines[0].find("CharacterMenu_KeepUICamera was left at 1") != std::string::npos);
+}
+
+TEST_CASE("charsel tidy: his page left mid-swap with the menu still up: cleared on that frame, before any close (row 202)") {
+    // R/ZR to Key Items, or another page of the - menu: his exit cleared IsPageOpen, the swap's flags stayed.
+    Game g = WithMod();
+    Swapping(g);
+    Tidy t;
+    Run(t, g, true, 10);
+    g.flags["CharacterMenu_IsPageOpen"] = 0;
+    const auto lines = Run(t, g, true, 1);   // the menu still up: the very next frame
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].find("CharacterMenu_KeepUICamera was left at 1 after his page closed") != std::string::npos);
     CHECK(g.flags["CharacterMenu_KeepUICamera"] == 0);
     CHECK(g.flags["CharacterMenu_Slide"] == 0);
-    CHECK(g.flags["CharacterMenu_IsPageOpen"] == 0);
-    CHECK(t.cleared() == 3);
-    CHECK(Run(t, g, false, 600).empty());   // nothing more while they stay 0
-    CHECK(g.writes == 3);
+    CHECK(Run(t, g, true, 600).empty());
+    CHECK(Run(t, g, false, 600).empty());
+    CHECK(g.writes == 2);
 }
 
-TEST_CASE("charsel tidy: a short look away from the menu, an unknown menu state or no mod change nothing") {
+TEST_CASE("charsel tidy: B or - closing the menu mid-swap: cleared on the first frame his page reads closed") {
+    // MinusMenuToMain clears IsPageOpen in the step that closes the screens; no area load can come before it.
     Game g = WithMod();
-    g.flags["CharacterMenu_SlideOut"] = 3;
+    Swapping(g);
     Tidy t;
-    for (int n = 0; n < 20; ++n) {   // the menu flickering shut for fewer than kQuietFrames each time
-        Run(t, g, false, kQuietFrames - 1);
-        Run(t, g, true, 1);
-    }
-    CHECK(g.writes == 0);
-    CHECK(Run(t, g, std::nullopt, 600).empty());   // not known: not touched
-    CHECK(g.writes == 0);
-    Game none;   // no Character Select: no such flags
-    Tidy t2;
-    CHECK(Run(t2, none, false, 600).empty());
-    CHECK(none.writes == 0);
+    Run(t, g, true, 10);
+    g.flags["CharacterMenu_IsPageOpen"] = 0;
+    CHECK(Run(t, g, false, 1).size() == 2);   // the menu state already says closed: still at once, no wait
+    CHECK(g.flags["CharacterMenu_KeepUICamera"] == 0);
 }
 
-TEST_CASE("charsel tidy: a refused write is tried again, and a flag set again later is put back again") {
+TEST_CASE("charsel tidy: IsPageOpen itself left at 1 is cleared with the rest once no menu has been up a while") {
     Game g = WithMod();
-    g.flags["CharacterMenu_KeepUICamera"] = 1;
+    Swapping(g);
+    Tidy t;
+    CHECK(Run(t, g, false, kQuietFrames - 1).empty());
+    const auto lines = Run(t, g, false, 1);
+    CHECK(lines.size() == 3);
+    CHECK(g.flags["CharacterMenu_IsPageOpen"] == 0);
+    CHECK(g.flags["CharacterMenu_KeepUICamera"] == 0);
+    CHECK(g.flags["CharacterMenu_Slide"] == 0);
+    // A short look away from the menu (fewer than kQuietFrames) or an unknown menu state never counts.
+    Game h = WithMod();
+    Swapping(h);
+    Tidy t2;
+    for (int n = 0; n < 20; ++n) {
+        Run(t2, h, false, kQuietFrames - 1);
+        Run(t2, h, true, 1);
+    }
+    CHECK(Run(t2, h, std::nullopt, 600).empty());
+    CHECK(h.writes == 0);
+}
+
+TEST_CASE("charsel tidy: no mod, a refused write, and a later cut swap") {
+    Game none;   // no Character Select: no such flags
+    Tidy t0;
+    CHECK(Run(t0, none, false, 600).empty());
+    CHECK(none.writes == 0);
+    Game g = WithMod();
+    g.flags["CharacterMenu_KeepUICamera"] = 1;   // IsPageOpen 0
     g.refuse = true;
     Tidy t;
-    CHECK(Run(t, g, false, kQuietFrames + 5).empty());
+    CHECK(Run(t, g, true, 5).empty());
     g.refuse = false;
-    CHECK(Run(t, g, false, 1).size() == 1);
-    CHECK(g.flags["CharacterMenu_KeepUICamera"] == 0);
-    // Another swap cut short later: the menu up, set, closed again.
+    CHECK(Run(t, g, true, 1).size() == 1);
+    Swapping(g);
     Run(t, g, true, 10);
-    g.flags["CharacterMenu_KeepUICamera"] = 1;
-    CHECK(Run(t, g, false, kQuietFrames).size() == 1);
-    CHECK(t.cleared() == 2);
+    g.flags["CharacterMenu_IsPageOpen"] = 0;
+    CHECK(Run(t, g, true, 1).size() == 2);
+    CHECK(t.cleared() == 3);
 }
