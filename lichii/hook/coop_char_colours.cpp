@@ -203,9 +203,14 @@ public:
         if (model == 0 || list == 0 || count <= 0 || count > 64) return;
         if (!s_.names_written) {
             std::array<char, 16 * (kNames + 3)> names{};
-            for (std::size_t i = 0; i < kHairNames.size(); i++) std::strncpy(&names[16 * i], kHairNames[i], 15);
-            std::strncpy(&names[16 * kHairNames.size()], kEyeName, 15);
-            for (std::size_t p = 0; p < 3; p++) std::strncpy(&names[16 * (kNames + p)], kParamNames[p], 15);
+            // (16-byte slots, zeroed above: at most 15 bytes each, the 16th stays 0; memcpy, not strncpy, since gcc's
+            // -Wstringop-truncation refuses a 15-letter name copied with 15)
+            const auto put = [&names](std::size_t slot, const char* s) {
+                std::memcpy(&names[16 * slot], s, std::min<std::size_t>(std::strlen(s), 15));
+            };
+            for (std::size_t i = 0; i < kHairNames.size(); i++) put(i, kHairNames[i]);
+            put(kHairNames.size(), kEyeName);
+            for (std::size_t p = 0; p < 3; p++) put(kNames + p, kParamNames[p]);
             if (!g_.write(s_.cell + kCellNames, names.data(), names.size())) {
                 r_.failed = true;
                 return;
