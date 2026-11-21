@@ -372,9 +372,13 @@ function coopJoinText(mine) {
 }
 
 // This game's coop.ini with no server, port or password (a bad or missing host code): if Nucleus goes on anyway, the
-// game starts solo, not at the host of the last session.
+// game starts solo, not at the host of the last session. The player's own lines stay (the name typed in the game and the
+// look, as a normal start keeps them): only the host's lines go.
 function coopNoHost(inst) {
-    coopWrite(coopPath(inst, "coop.ini"), "# Join a game on another PC: no usable host code, so no server line (Nucleus handler).\r\n");
+    var path = coopPath(inst, "coop.ini"), before = coopRead(path);
+    var own = coopKeepKeys(before, function (k) { return k === "name" || k === "color" || k.indexOf("look_") === 0; });
+    coopWrite(path, "# Join a game on another PC: no usable host code, so no server line (Nucleus handler).\r\n" +
+                    (own !== "" ? own + "\r\n" : ""));
 }
 
 // A player name the game takes: up to 16 characters, no control characters ("" when none is left).
