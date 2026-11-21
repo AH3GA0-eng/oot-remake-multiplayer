@@ -7595,3 +7595,10 @@ TEST_CASE("objects: report 200, a copy of another game's encounter goes without 
     Tick(own, 0, {Enemy(0x700, 0x1234, 8, 1.0f, kGuard)}, 2);
     CHECK_FALSE(own.GoesWithoutDeath(0x700, 10 * kMs));
 }
+
+TEST_CASE("boss turns: a sample's attack bits: read and attacking, read and between moves, not read (nothing)") {
+    using CoopObjects::AttackBits;
+    CHECK(AttackBits(true) == (proto::object_state::attack_read | proto::object_state::attacking));
+    CHECK(AttackBits(false) == proto::object_state::attack_read);
+    CHECK(AttackBits(std::nullopt) == 0);
+}
