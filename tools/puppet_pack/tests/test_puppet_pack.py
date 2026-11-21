@@ -1773,6 +1773,58 @@ class FullBuildTest(unittest.TestCase):
         with self.assertRaises(look_items.TunicError):
             look_items.model_info(looped, item)
 
+    def test_look_copy_retargets_its_animations(self):
+        # Row 184: a copy names a model project of its own, so the item's animation project plays on it
+        # only retargeted (as the game's child Epona plays the adult's clips). The copy gets its own
+        # AnimationParam with IsRetarget on every resource; the item's own file stays as it was.
+        from puppet_pack import look_items
+        ap = "Actor/{}.engine__actor__ActorParam.bgyml"
+        mi = "Component/ModelInfo/{}.engine__component__ModelInfo.bgyml"
+        an = "Component/AnimationParam/{}.engine__component__AnimationParam.bgyml"
+        item = "Weapon_Shield_Hylian"
+        game_anim = byml.dumps({"AnimationResources": [{"ModelProjectName": "Weapon_Shield_Hylian_Animation"},
+                                                       {"IsRetarget": True, "ModelProjectName": "Other"}]})
+        members = {
+            ap.format(item): byml.dumps({"Components": {"ModelInfoRef": "?" + mi.format(item),
+                                                        "AnimationRef": "?" + an.format(item),
+                                                        "ASRef": "?AS/Weapon_Shield_Hylian.root.asb"}}),
+            mi.format(item): byml.dumps({"FmdbName": item, "ModelProjectName": item}),
+            an.format(item): game_anim,
+        }
+        actor = look_items.actor_name(item, 1)
+        pack, ap_bytes, _ = look_items.copy_pack(members, item, 1)
+        files = sarc.read(pack)
+        comps = byml.loads(ap_bytes)["Components"]
+        self.assertEqual(comps["AnimationRef"], "?" + an.format(actor))
+        self.assertEqual(comps["ASRef"], "?AS/Weapon_Shield_Hylian.root.asb")   # its AS and AI stay the game's
+        got = byml.loads(files[an.format(actor)])
+        self.assertEqual(got["AnimationResources"],
+                         [{"IsRetarget": True, "ModelProjectName": "Weapon_Shield_Hylian_Animation"},
+                          {"IsRetarget": True, "ModelProjectName": "Other"}])
+        self.assertEqual(files[an.format(item)], game_anim)   # the item's own, untouched
+        self.assertEqual(look_items.item_animation_param(members, item)[0], an.format(item))
+        # A blade copy (copy_pack_as with a shared project) gets the same.
+        pack2, ap2, _ = look_items.copy_pack_as(members, item, "Weapon_Shield_Hylian_Blade1", "P_Blade1")
+        self.assertEqual(byml.loads(ap2)["Components"]["AnimationRef"],
+                         "?" + an.format("Weapon_Shield_Hylian_Blade1"))
+        self.assertIn(an.format("Weapon_Shield_Hylian_Blade1"), sarc.read(pack2))
+        # The swords' AnimationParam has no resources: nothing to retarget, the copy keeps the game's ref.
+        sword = "Weapon_Sword_Kokiri"
+        common = an.format("EquipItemCommon")
+        swords = {
+            ap.format(sword): byml.dumps({"Components": {"ModelInfoRef": "?" + mi.format(sword),
+                                                         "AnimationRef": "?" + common}}),
+            mi.format(sword): byml.dumps({"FmdbName": sword, "ModelProjectName": sword}),
+            common: byml.dumps({}),
+        }
+        self.assertIsNone(look_items.copy_animation_param(swords, sword, look_items.actor_name(sword, 1)))
+        _, sap, _ = look_items.copy_pack(swords, sword, 1)
+        self.assertEqual(byml.loads(sap)["Components"]["AnimationRef"], "?" + common)
+        # No AnimationRef at all (the gauntlets): None, no file.
+        bare = {ap.format(sword): byml.dumps({"Components": {"ModelInfoRef": "?" + mi.format(sword)}}),
+                mi.format(sword): swords[mi.format(sword)]}
+        self.assertIsNone(look_items.copy_animation_param(bare, sword, look_items.actor_name(sword, 1)))
+
     def test_build_from_nup_has_the_gear(self):
         # The 0.11.0 kit made its pack from the player's .nup, which took out only dumpcheck's files:
         # coop_look/gear.bin had the boots alone (your own sword, shields and gauntlets kept the
