@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <span>
 #include <utility>
 
@@ -189,6 +191,21 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
         Fail("the name is longer than 16 characters", HOS_COOP_PROBLEM_BAD_NAME);
         return 0;
     }
+    job.public_game = COOP_HAS(o, HosCoopHostOptions, public_game) && o->public_game != 0;
+    job.bans_file = COOP_HAS(o, HosCoopHostOptions, bans_file) ? Text(o->bans_file) : std::string();
+    if (job.public_game) {
+        // (HostServiceConfig::public_game: the relay only, the password the room's)
+        if (job.relay_via.empty() || job.relay_room.empty()) {
+            Fail("a public game needs the game list's server (Relay) and a room name", HOS_COOP_PROBLEM_RELAY_FAILED);
+            return 0;
+        }
+        job.password = coop::protocol::public_join_password(job.relay_room);
+        if (job.relay_list.empty()) job.relay_list = job.relay_room;
+        job.upnp = job.invite = job.same_network_open = false;
+    } else if (!job.password.empty() && coop::protocol::is_public_join_password(job.password)) {
+        Fail("that join password is kept for public games; choose another one", HOS_COOP_PROBLEM_BAD_PASSWORD);
+        return 0;
+    }
     if (job.password.empty()) {
         job.password = nat::make_password();  // every session has one; the invite code carries it
     } else if (const char* why = coop::server::password_problem(job.password)) {
@@ -241,6 +258,10 @@ void Menu::RunHost(HostJob job) {
         config.relay_key = job.relay_key;
         config.relay_room = job.relay_via.empty() ? std::string() : job.relay_room;
         config.relay_list = config.relay_room.empty() ? std::string() : job.relay_list;   // (the public list: opt-in)
+        config.public_game = job.public_game;
+        // The host's kept bans (player keys; HosCoopHostOptions::bans_file): in force from the start.
+        std::vector<std::string> bans = coop::server::read_ban_file(job.bans_file);
+        config.session.kept_bans = bans;
         config.counts = false;  // the game's log need not have them every 5 s
         config.log_invite = false;  // it holds the join password; the menu shows it
         config.log = [this](const std::string& text) { Say("coop: host: " + text); };
@@ -269,6 +290,13 @@ void Menu::RunHost(HostJob job) {
         while (!stop_) {
             host.set_ngplus(hooks_.ngplus_level ? hooks_.ngplus_level() : 0);   // (Navi) New Game+ (Hooks)
             host.service(kRoundMs);
+            if (!job.bans_file.empty() && host.session() != nullptr) {   // (a new ban by key: kept for next time)
+                std::vector<std::string> now = host.session()->key_bans();
+                if (now != bans) {
+                    coop::server::write_ban_file(job.bans_file, now);
+                    bans = std::move(now);
+                }
+            }
             std::deque<std::string> pasted;
             std::optional<std::string> new_password;
             {
@@ -288,7 +316,7 @@ void Menu::RunHost(HostJob job) {
                     CopyText(status_.password, sizeof status_.password, *new_password);
                     status_.problem = HOS_COOP_PROBLEM_NONE;
                     CopyText(status_.message, sizeof status_.message,
-                             "join password changed: players who join from now on need the new one");
+                             "new join password is set");   // (one line of the list)
                 } else {
                     status_.problem = HOS_COOP_PROBLEM_BAD_PASSWORD;
                     CopyText(status_.message, sizeof status_.message, "join password not changed: " + why);
@@ -484,6 +512,11 @@ void Menu::RunJoin(JoinJob job) {
                 }
             } else if (state == nat::JoinState::kWaitingForHost) {
                 std::lock_guard lock(mutex_);
+                if (helper.no_way() && status_.problem != HOS_COOP_PROBLEM_NO_WAY) {   // row 209
+                    status_.problem = HOS_COOP_PROBLEM_NO_WAY;
+                    CopyText(status_.message, sizeof status_.message,
+                             "still no way in after 3 minutes: if the host pasted the answer code, both routers are strict or CGNAT: join over a VPN network");
+                }
                 if (status_.state != HOS_COOP_WAIT_HOST) {
                     status_.state = HOS_COOP_WAIT_HOST;
                     CopyText(status_.answer, sizeof status_.answer, helper.answer_code());

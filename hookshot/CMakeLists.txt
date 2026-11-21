@@ -27,16 +27,33 @@ foreach(line IN LISTS _coop_lines)
 endforeach()
 list(REMOVE_DUPLICATES _coop_sources)
 
+# COOP_HOOK_STRICT (CI's "Compile the hook code" step, GCC only): the lichii/hook files get the
+# flags the emulator's core target gives them on Linux (Fritchii's -O3 and -Werror=all/extra, with
+# the same -Wno-* list and the hook's de-errors from lichii/hook/core.cmake), so a warning that
+# fails the emulator build (0.11.8: -Werror=stringop-truncation, which only shows at -O3) fails
+# linux (gcc) on the branch push instead of at the release gate. Our own hookshot/src files keep coop_warnings.
+option(COOP_HOOK_STRICT "Compile lichii/hook files with the emulator's GCC flags, warnings as errors" OFF)
+if(COOP_HOOK_STRICT AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set_property(SOURCE ${_coop_sources} APPEND PROPERTY COMPILE_OPTIONS
+    -O3 -Werror=all -Werror=extra -Werror=missing-declarations -Werror=shadow -Werror=unused
+    -Wno-attributes -Wno-invalid-offsetof -Wno-unused-parameter -Wno-missing-field-initializers
+    -Wno-error=unused -Wno-error=unused-function
+    -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
+    -Wno-cast-function-type -Wno-shadow -Wno-implicit-fallthrough
+    -Wno-error=all -Wno-error=extra -Wno-error=missing-declarations -Wno-error=shadow -Wno-error=unused
+    -Wno-error=range-loop-construct -Wno-error=maybe-uninitialized)
+endif()
+
 add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_map_page.cpp src/coop_dbno_draw.cpp src/coop_png.cpp src/coop_window_brand.cpp src/coop_chatbox.cpp src/coop_cheats_panel.cpp
   src/coop_host_menu.cpp src/coop_title.cpp src/coop_title_menu.cpp src/coop_input.cpp src/coop_pause.cpp
-  src/coop_pause_menu.cpp src/coop_pause_files.cpp src/coop_i18n.cpp src/coop_null_page.cpp
+  src/coop_pause_menu.cpp src/coop_original.cpp src/coop_pause_files.cpp src/coop_i18n.cpp src/coop_null_page.cpp
   src/coop_mod_json.cpp src/coop_mod_library.cpp src/coop_mods.cpp src/coop_mod_plugins.cpp src/coop_mod_guard.cpp
   src/coop_mod_screens.cpp
   src/coop_mods_runtime.cpp src/coop_rando.cpp src/coop_mods_tab.cpp src/coop_mods_tab_module.cpp
   src/coop_lobby_tab.cpp src/coop_lobby_tab_module.cpp
-  src/coop_pause_tab.cpp src/coop_pause_tab_module.cpp src/coop_title_native.cpp
-  src/coop_auto_rejoin.cpp src/coop_lan.cpp src/coop_lan_net.cpp src/coop_room_list.cpp src/coop_longshot_settings.cpp
-  src/coop_look.cpp src/coop_look_live.cpp src/coop_look_tunic.cpp src/coop_look_paint.cpp src/coop_look_parts.cpp src/coop_look_menu.cpp src/coop_look_view.cpp
+  src/coop_pause_tab.cpp src/coop_pause_tab_module.cpp src/coop_title_native.cpp src/coop_problem_ask.cpp
+  src/coop_auto_rejoin.cpp src/coop_lan.cpp src/coop_lan_net.cpp src/coop_room_list.cpp src/coop_browse.cpp src/coop_longshot_settings.cpp
+  src/coop_look.cpp src/coop_look_live.cpp src/coop_look_tunic.cpp src/coop_look_paint.cpp src/coop_look_parts.cpp src/coop_look_menu.cpp src/coop_snail_custom.cpp src/coop_look_view.cpp
   ${_coop_sources})
 # compat/ first: its core/ and common/ headers stand in for the emulator's.
 target_include_directories(hookshot_coop PRIVATE compat src "${_coop_hook}" ../server)

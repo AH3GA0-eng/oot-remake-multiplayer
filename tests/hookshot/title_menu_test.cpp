@@ -3,6 +3,7 @@
 // Host and Join in plain words, the addresses for a home network or VPN, and the host's save loaded after a join.
 #include <doctest/doctest.h>
 
+#include <map>
 #include <string>
 #include <variant>
 
@@ -213,7 +214,20 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     j.answer = "QWERT-YUPAS";
     s = PlainStatus(j);
     CHECK(s[0] == "Your friend's router blocks the way in.");
+    CHECK(s[1] == "Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:");
     CHECK(s[2] == "QWERT-YUPAS");
+    // Row 209: still no way in after the helper's wait. That can be a host who has not pasted yet, so the answer code
+    // and where to paste it stay on the page; the VPN is for when a paste did not help (review-ui-tabs-0119).
+    j.problem = HOS_COOP_PROBLEM_NO_WAY;
+    s = PlainStatus(j);
+    REQUIRE(s.size() == 4);
+    CHECK(s[0] == "Your friend's router blocks the way in.");
+    CHECK(s[1] == "Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:");
+    CHECK(s[2] == "QWERT-YUPAS");
+    CHECK(s[3].rfind("If they pasted it and nothing happens", 0) == 0);
+    CHECK(s[3].find("Radmin VPN or Tailscale") != std::string::npos);
+    CHECK(s[3].find("\"VPN\" on their Host page") != std::string::npos);
+    j.problem = HOS_COOP_PROBLEM_NONE;
     for (const auto& st : {HOS_COOP_STARTING, HOS_COOP_HOSTING, HOS_COOP_JOINING, HOS_COOP_WAIT_HOST, HOS_COOP_CONNECTED,
                            HOS_COOP_FAILED}) {
         for (const bool host : {true, false}) {
@@ -837,6 +851,24 @@ TEST_CASE("title menu: after a re-read the open title gets OpenTitle's buttons f
     CHECK(static_cast<std::size_t>(without.btn_num_frame) == without.count);
 }
 
+TEST_CASE("title menu: the open title is arranged on its requests' layout, the screen's +0xf0 then +0x28 (row 193)") {
+    // Player logs (row 193): the screen's +0xe0 held the layout + 0xb8 in every game: it is the request queue's slot
+    // array, not a layout. The walk the game's update makes: the object at +0xf0, its +0x28.
+    const std::uint64_t screen = 0x1000, owner = 0x5000, layout = 0x9d40;
+    std::map<std::uint64_t, std::uint64_t> mem{{screen + 0x28, layout}, {screen + 0xe0, layout + 0xb8},
+                                               {screen + 0xf0, owner}, {owner + 0x28, layout}};
+    const auto read = [&](std::uint64_t a) { const auto it = mem.find(a); return it != mem.end() ? it->second : 0; };
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) == layout);
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) == read(screen + 0x28));   // (ArrangeTitle's check passes)
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) != read(screen + 0xe0));
+    mem[screen + 0xf0] = 0;   // (no owner yet: nothing is arranged)
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) == 0);
+    CHECK(CoopTitleMenu::RequestsLayout(read, 0) == 0);
+    // With the check passing, an empty list gives New Game first again (Geno's #308: Start on a file select mod).
+    CHECK(std::string(ArrangementFor(false).texts[0].label) == "0000");
+    CHECK(ArrangementFor(false).sound_type == 0);
+}
+
 TEST_CASE("title menu: Skip title screen is free solo and held while co-op does anything (patch 0028, report 133)") {
     SkipTitleInput in;   // solo, co-op idle: Longshot's Skip title screen may choose
     CHECK(SkipTitleHold(in) == nullptr);
@@ -1006,6 +1038,34 @@ TEST_CASE("title menu: list_room is off unless coop-options.ini turns it on, and
     CHECK(options.find("relay = relay.example:27600") != std::string::npos);   // (the other lines kept)
 }
 
+TEST_CASE("title menu: public_game (the Host view's Private / Public choice) is private unless chosen, and remembered") {
+    using CoopTitleMenu::Options;
+    CHECK_FALSE(Options::Read("", "").public_game);   // private: the default
+    CHECK(Options::Read("", "public_game = on\r\n").public_game);
+    Options o = Options::Read("", "");
+    std::string coop, options;
+    o.public_game = true;
+    o.Write(coop, options);
+    CHECK(Options::Read(coop, options).public_game);
+    o.public_game = false;
+    o.Write(coop, options);
+    CHECK_FALSE(Options::Read(coop, options).public_game);
+    CHECK_FALSE(CoopTitleMenu::IniGet(options, "public_game").has_value());   // (the line is commented out, as others)
+}
+
+TEST_CASE("title menu: a ready room name for a public game is a word, a dash and four digits") {
+    using CoopTitleMenu::Options;
+    for (std::uint64_t seed = 0; seed < 200; ++seed) {
+        const std::string n = Options::RandomRoomName(seed);
+        const auto dash = n.find('-');
+        REQUIRE(dash != std::string::npos);
+        CHECK(n.size() == dash + 5);
+        for (std::size_t i = 0; i < dash; ++i) CHECK((n[i] >= 'a' && n[i] <= 'z'));
+        for (std::size_t i = dash + 1; i < n.size(); ++i) CHECK((n[i] >= '0' && n[i] <= '9'));
+    }
+    CHECK(Options::RandomRoomName(1) != Options::RandomRoomName(2));
+}
+
 namespace {
 PlayerChoice::Pad TitlePad(std::uint64_t buttons, int focused, bool coop_row = false) {
     PlayerChoice::Pad p;
@@ -1099,7 +1159,8 @@ TEST_CASE("title menu: an A on Host in the Multiplayer submenu (the game's Conti
 
 TEST_CASE("title menu: the relay and the room name: written when set, the kit's default needs no line") {
     Options o;
-    CHECK(o.relay.empty());
+    CHECK(o.relay == kDefaultRelay);   // (the project's own relay, built in)
+    CHECK(Options::Read("", "relay =\r\n").relay == kDefaultRelay);   // (an empty line: never no relay)
     std::string c, opt = "relay = old.example.net:27530\r\nrelay_room = old-room\r\n";
     o = Options::Read("", opt);
     CHECK(o.relay == "old.example.net:27530");

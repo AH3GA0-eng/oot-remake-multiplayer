@@ -2,6 +2,7 @@
 #include "coop_puppet.h"
 
 #include "coop_camera.h"
+#include "coop_char_colours.h"
 #include "coop_colors.h"
 #include "coop_local_game.h"
 #include "coop_look_share.h"
@@ -190,6 +191,28 @@ std::vector<Director::SlotView> Director::Slots() const {
     return out;
 }
 
+std::vector<Director::DressView> Director::DressTargets() const {
+    std::vector<DressView> out;
+    for (const auto& s : slots_) {
+        if (s.phase != Phase::live || s.actor == 0 || s.block == 0) continue;
+        const Target* t = Wanted(s.number);
+        const bool character = IsCharacterActor(s.actor_name);
+        std::optional<std::uint32_t> eyes, hair;   // (0.11.9: the eyes and hair parts of their look, as received)
+        if (const auto parts = CoopLookShare::Of(s.number)) {
+            for (const auto& p : *parts) {
+                if (p.part == kEyesPart) eyes = p.colour;
+                if (p.part == kHairPart) hair = p.colour;
+            }
+        }
+        const auto link = CoopCharColours::LinkOnly(!character, eyes, hair);   // (a Link puppet's only)
+        eyes = link.eyes, hair = link.hair;
+        out.push_back({s.number, s.actor, s.block + block::kDress,
+                       t != nullptr && character ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
+                       character && character_apply_ != 0 && character_apply_state_ == 1, s.actor_name, eyes, hair});
+    }
+    return out;
+}
+
 const Target* Director::Wanted(std::uint8_t number) const {
     for (const auto& t : input_.targets) {
         if (t.number == number) {
@@ -296,6 +319,11 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         pending_ = Pending::none;  // not made: asked again this frame
     }
     first_slot_ = slots_.empty() ? 0 : (first_slot_ + 1) % slots_.size();
+    if (pending_ == Pending::dress && ++dress_not_made_ >= kDressNotMade && character_apply_state_ == 1) {
+        character_apply_state_ = 2;
+        Say("characters: the Character Select mod's colour routine at main+" + Hex(character_apply_) +
+            " could not be called (not a game function of this build): co-op dresses the puppets itself");
+    }
     if (pending_ != Pending::none) {
         // The cave did not make the call (its own limit): undo the phase.
         Slot& slot = SlotFor(pending_slot_);
@@ -761,6 +789,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopPuppetFlame::Finish(slot.flame, result, who, [this](const std::string& line) { Say(line); });
         break;
     case Pending::dress:
+        dress_not_made_ = 0;
         slot.dressed = slot.dress_asked;
         slot.dress_ms = now_ms;
         break;
@@ -2222,6 +2251,14 @@ Gear GearOf(const coop::protocol::Equipment& e) {
     if (e.weapon_slot && !e.weapon_slot->empty()) {
         gear[0] = e.weapon_slot;
     }
+    // Only a mask is worn on the head (row 197): a 0.11.8 player still sends
+    // the Lens of Truth's base `Armor_GlassTruth` from its flag, whose adult,
+    // unposed glasses drew spikes and a ground streak on the puppet. Nothing
+    // worn there, so a puppet that wears it takes it off.
+    if (gear[kGearHead] && !gear[kGearHead]->empty() &&
+        !coop::protocol::is_drawn_head(*gear[kGearHead])) {
+        gear[kGearHead] = std::string{};
+    }
     return gear;
 }
 
@@ -2281,7 +2318,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         Target t;
         t.number = r.number;
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
-        t.actor = ActorFor(r.adult, t.color, r.character);
+        t.actor = ActorFor(r.adult, t.color, r.character, r.tunic_copy);
         if (r.number >= 1 && r.number < 32 && (PvpCopies() & (1u << r.number)) != 0) {
             t.actor = CoopPvpNative::PvpActor(t.actor);  // PvP on real bodies (phase 4)
         }
@@ -2299,10 +2336,16 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
-        if (r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies) {
+        const bool own_copy = r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies;
+        if (own_copy) {
             DressInLook(t.gear, *r.look_copy, settings_.look_items);
         }
         DressInBlades(t.gear, r.number, settings_.blade_items, settings_.blade_copies);
+        // (row 198: no copy of its own (more players than slots): the neutral copy, never the game's item, whose
+        // texture your own colour is drawn over; a sword already on its player's own wearer copy keeps it)
+        if (!own_copy && settings_.look_neutral > settings_.look_copies) {
+            DressInLook(t.gear, settings_.look_neutral, settings_.look_items);
+        }
         t.drawn = r.drawn;
         t.lit = r.lit;
         t.ocarina = r.ocarina;
@@ -2440,6 +2483,13 @@ LookItems PackLookItems(std::string_view manifest, std::string_view key) {
         return out;
     }
     const std::string_view body = manifest.substr(open, close - open);
+    if (const auto s = body.find("\"neutral\""); s != std::string_view::npos) {
+        std::size_t i = body.find_first_not_of(" \t\r\n:", s + 9);
+        while (i < body.size() && body[i] >= '0' && body[i] <= '9' && out.neutral < 100) {
+            out.neutral = out.neutral * 10 + static_cast<std::size_t>(body[i] - '0');
+            ++i;
+        }
+    }
     std::size_t copies = 0;
     if (const auto s = body.find("\"copies\""); s != std::string_view::npos) {
         std::size_t i = body.find_first_not_of(" \t\r\n:", s + 8);
@@ -2625,7 +2675,8 @@ bool PackHasTunicPuppets(std::string_view manifest) {
            manifest.find("\"CoopPuppet_Adult_") != std::string_view::npos;
 }
 
-std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, std::uint16_t character) const {
+std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, std::uint16_t character,
+                              const std::optional<std::string>& tunic_copy) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
@@ -2655,8 +2706,9 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, st
             return name;
         }
     }
-    if (settings_.tunics && color) {
-        const std::string_view tunic = CoopColors::TunicOf(*color);
+    if (settings_.tunics && (color || tunic_copy)) {
+        // (0.11.9: the copy given to this player, repainted in their exact colour; else the one nearest)
+        const std::string_view tunic = tunic_copy ? std::string_view(*tunic_copy) : CoopColors::TunicOf(*color);
         if (!tunic.empty()) {
             std::string name = named(plain + '_' + std::string(tunic));
             if (works(name)) {
@@ -2709,6 +2761,22 @@ std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (
 std::array<std::vector<CoopLinkSound::Sound>, kNumbers> g_sounds;  // the same; guarded (LINK_SOUND)
 
 } // namespace
+
+namespace {
+std::mutex g_tunic_copies_mutex;
+std::map<std::uint8_t, std::string> g_tunic_copies;   // guarded by g_tunic_copies_mutex
+}  // namespace
+
+void SetTunicCopies(std::map<std::uint8_t, std::string> copies) {
+    std::lock_guard lock(g_tunic_copies_mutex);
+    g_tunic_copies = std::move(copies);
+}
+
+std::optional<std::string> TunicCopyOf(std::uint8_t number) {
+    std::lock_guard lock(g_tunic_copies_mutex);
+    const auto it = g_tunic_copies.find(number);
+    return it == g_tunic_copies.end() ? std::nullopt : std::optional<std::string>(it->second);
+}
 
 std::optional<std::uint32_t> PlayerColor(std::uint8_t number) {
     std::lock_guard lock(g_anim_mutex);
@@ -2881,6 +2949,10 @@ std::uint32_t LivePuppets() {
     return g_configured && g_director ? g_director->LiveMask() : 0;
 }
 
+std::vector<Director::DressView> DressTargets() {
+    return g_configured && g_director ? g_director->DressTargets() : std::vector<Director::DressView>{};
+}
+
 std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us) {
     std::vector<Remote> remotes;
     if (session != nullptr && server_now_us != 0) {
@@ -2926,6 +2998,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.drawn = g_drawn[r.number];
                 r.lit = g_lit[r.number];
                 r.color = g_color[r.number];
+                r.tunic_copy = TunicCopyOf(r.number);
                 r.ocarina = g_ocarina[r.number];
                 r.sounds = std::exchange(g_sounds[r.number], {});
             }

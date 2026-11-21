@@ -25,7 +25,9 @@ from test_self_tunic import *  # noqa: E402,F401,F403
 from test_merge_tables import *  # noqa: E402,F401,F403
 from test_eye_switches import *  # noqa: E402,F401,F403
 from test_room_graph import *  # noqa: E402,F401,F403
+from test_shared_anchors import *  # noqa: E402,F401,F403
 from test_look_metal import *  # noqa: E402,F401,F403
+from test_look_cap import *  # noqa: E402,F401,F403
 
 try:
     import zstandard
@@ -1311,8 +1313,27 @@ class TunicExtraTest(unittest.TestCase):
         from puppet_pack import look_live, look_metal
         src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
         with open(src, encoding="utf-8") as f:
-            names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', f.read())
+            text = f.read()
+        gear = text[text.index("kGear = {"):text.index("};", text.index("kGear = {"))]
+        names = re.findall(r'\{"(Mt_[A-Za-z0-9_.]+)", Format::', gear)
         self.assertEqual(tuple(names) + look_metal.TEXTURES, look_live.GEAR)
+
+    def test_tunic_names_match_the_module(self):
+        """The module paints your own tunic from green.bin (hookshot/src/coop_look_parts.cpp
+        TunicTextures): the same textures in green.bin's order (write_tunics: the tile, the dark tile,
+        tunic_extra.EXTRA), the tile recoloured whole as tunic.py does, the rest only in their green."""
+        import re
+        from puppet_pack import tunic, tunic_extra
+        src = os.path.join(os.path.dirname(__file__), "..", "..", "..", "hookshot", "src", "coop_look_parts.cpp")
+        with open(src, encoding="utf-8") as f:
+            text = f.read()
+        table = text[text.index("kTunic = {"):text.index("};", text.index("kTunic = {"))]
+        rows = re.findall(r'\{(kTunicTile|"[A-Za-z0-9_]+"), Format::(\w+), T::Takes::(\w+)\}', table)
+        names = [tunic.TILE if n == "kTunicTile" else n.strip('"') for n, _, _ in rows]
+        self.assertEqual(names, [tunic.TILE, tunic.DARK] + list(tunic_extra.EXTRA))
+        with open(src[:-4] + ".h", encoding="utf-8") as f:
+            self.assertIn(f'kTunicTile = "{tunic.TILE}"', f.read().replace("constexpr const char* ", ""))
+        self.assertEqual([t for _, _, t in rows], ["all", "all"] + ["green"] * len(tunic_extra.EXTRA))
 
     def test_body_boots(self):
         """Each tunic colour's body model names boots of its own, as the module names and marks them
@@ -1640,8 +1661,15 @@ class FullBuildTest(unittest.TestCase):
                       f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
                 self.assertGreater(t.get(f) or 0, 0, f)
         self.assertEqual(m["look_items"]["copies"], 4)   # two per slot
+        # (row 198) and one more, the neutral copy: the game's colours, marked with its number, never painted
+        self.assertEqual(m["look_items"]["neutral"], 5)
+        name = look_items.tex_name("Mt_Weapon_Shield_Hylian_Alb", 5)
+        got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
+        renamed = tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00")
+        self.assertEqual(got, look_live.mark_bntx(renamed, 5))
         self.assertTrue(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look4.pack.zs")))
-        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look5.pack.zs")))
+        self.assertTrue(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look5.pack.zs")))    # (the neutral)
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look6.pack.zs")))
 
         # The game's own item is not in the pack.
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}.pack.zs")))
@@ -1653,8 +1681,10 @@ class FullBuildTest(unittest.TestCase):
     def test_blade_copies(self):
         # held-piece: every player item with the game's weapon component (WeaponRef, through its
         # $parents) gets one copy per player number, `<item>_Blade<n>`, on a model project copy of
-        # its own per number (the game's bytes and textures), read from the romfs; a shield (no
-        # WeaponRef), an enemy's weapon (PerimeterAnalyserRef) and a `_Base` get none.
+        # its own per number, read from the romfs; a shield (no WeaponRef), an enemy's weapon
+        # (PerimeterAnalyserRef) and a `_Base` get none. Row 198: the copy's model names gear
+        # textures of its own (`W<a..p>_`), marked with BLADE_MARK_BASE + its number, so your own
+        # Link's colour (drawn over the game's texture, found by its texels) never reaches it.
         from puppet_pack import look_items, zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Sword_Kokiri"
@@ -1682,6 +1712,8 @@ class FullBuildTest(unittest.TestCase):
         model = b"FRES" + bytes(12) + b"\x1b\x00Mt_Weapon_Sword_Kokiri_Alb\x00" + f"{item}\x00".encode()
         raw = plain.compress(model)
         self.write(f"Model/{item}.{item}.bfres.zs", raw)
+        tex = fake_bntx("Mt_Weapon_Sword_Kokiri_Alb", [bc1_block(1, 2)], fmt=0x1A)
+        self.write("Tex/Mt_Weapon_Sword_Kokiri_Alb.bntx.zs", plain.compress(tex))
         self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
         self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
                    plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
@@ -1709,10 +1741,28 @@ class FullBuildTest(unittest.TestCase):
                 self.assertEqual(byml.loads(files[comps["ModelInfoRef"][1:]]),
                                  {"FmdbName": item, "ModelProjectName": project})
             actor = look_items.blade_name(item, n)
-            # The model under the copy's project, byte for byte the game's: the game's textures.
-            self.assertEqual(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")), raw)
-            for f in (f"Pack/Actor/{actor}.pack", f"Model/{actor}.{item}.bfres"):
+            # The model under the copy's project, as long as the game's, naming its own gear texture.
+            got = d.decompress(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")))
+            name = look_items.blade_tex_name("Mt_Weapon_Sword_Kokiri_Alb", n)
+            self.assertEqual(name, "W%s_Weapon_Sword_Kokiri_Alb" % "abc"[n - 1])
+            self.assertEqual(len(got), len(model))
+            self.assertIn(name.encode() + b"\x00", got)
+            self.assertNotIn(b"Mt_Weapon_Sword_Kokiri_Alb\x00", got)
+            # Its texture: the game's texels under that name, marked BLADE_MARK_BASE + n (never a look copy's
+            # 1..8, a boots colour's letter or the tunic's marks).
+            got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
+            renamed = tex.replace(b"Mt_Weapon_Sword_Kokiri_Alb\x00", name.encode() + b"\x00")
+            self.assertEqual(got, look_live.mark_bntx(renamed, look_items.BLADE_MARK_BASE + n))
+            self.assertEqual(look_live.texels(got)[-1], look_live.texels(renamed)[-1] ^ (0x80 + n))
+            self.assertIn(f"Tex/{name}.bntx.zs", m["blade_items"]["files"])
+            for f in (f"Pack/Actor/{actor}.pack", f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
                 self.assertGreater(t.get(f) or 0, 0, f)
+        marks = {look_items.blade_mark(n) for n in range(1, look_items.BLADE_COPIES + 1)}
+        self.assertFalse(marks & set(range(1, 9)))                                   # the look copies'
+        self.assertFalse(marks & {look_items.boots_mark(c) for c in look_items.COLORS})   # the boots colours'
+        self.assertFalse(marks & {0xA5, 0x5A})                                       # the tunic's
+        with self.assertRaises(look_items.TunicError):
+            look_items.blade_tex_name("Mt_Weapon_Sword_Kokiri_Alb", look_items.BLADE_COPIES + 1)
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Blade4.pack.zs")))
         self.assertEqual(look_items.BLADE_COPIES, 16)   # the protocol's kMaxPlayers
         for none in ("Weapon_Shield_Wood", "Weapon_PoeLamp", "Weapon_Sword_Base"):
@@ -1771,6 +1821,58 @@ class FullBuildTest(unittest.TestCase):
         looped[mi.format(item)] = byml.dumps({"$parent": "Work/" + mi.format(item + "_With_SubModel")[:-6] + ".gyml"})
         with self.assertRaises(look_items.TunicError):
             look_items.model_info(looped, item)
+
+    def test_look_copy_retargets_its_animations(self):
+        # Row 184: a copy names a model project of its own, so the item's animation project plays on it
+        # only retargeted (as the game's child Epona plays the adult's clips). The copy gets its own
+        # AnimationParam with IsRetarget on every resource; the item's own file stays as it was.
+        from puppet_pack import look_items
+        ap = "Actor/{}.engine__actor__ActorParam.bgyml"
+        mi = "Component/ModelInfo/{}.engine__component__ModelInfo.bgyml"
+        an = "Component/AnimationParam/{}.engine__component__AnimationParam.bgyml"
+        item = "Weapon_Shield_Hylian"
+        game_anim = byml.dumps({"AnimationResources": [{"ModelProjectName": "Weapon_Shield_Hylian_Animation"},
+                                                       {"IsRetarget": True, "ModelProjectName": "Other"}]})
+        members = {
+            ap.format(item): byml.dumps({"Components": {"ModelInfoRef": "?" + mi.format(item),
+                                                        "AnimationRef": "?" + an.format(item),
+                                                        "ASRef": "?AS/Weapon_Shield_Hylian.root.asb"}}),
+            mi.format(item): byml.dumps({"FmdbName": item, "ModelProjectName": item}),
+            an.format(item): game_anim,
+        }
+        actor = look_items.actor_name(item, 1)
+        pack, ap_bytes, _ = look_items.copy_pack(members, item, 1)
+        files = sarc.read(pack)
+        comps = byml.loads(ap_bytes)["Components"]
+        self.assertEqual(comps["AnimationRef"], "?" + an.format(actor))
+        self.assertEqual(comps["ASRef"], "?AS/Weapon_Shield_Hylian.root.asb")   # its AS and AI stay the game's
+        got = byml.loads(files[an.format(actor)])
+        self.assertEqual(got["AnimationResources"],
+                         [{"IsRetarget": True, "ModelProjectName": "Weapon_Shield_Hylian_Animation"},
+                          {"IsRetarget": True, "ModelProjectName": "Other"}])
+        self.assertEqual(files[an.format(item)], game_anim)   # the item's own, untouched
+        self.assertEqual(look_items.item_animation_param(members, item)[0], an.format(item))
+        # A blade copy (copy_pack_as with a shared project) gets the same.
+        pack2, ap2, _ = look_items.copy_pack_as(members, item, "Weapon_Shield_Hylian_Blade1", "P_Blade1")
+        self.assertEqual(byml.loads(ap2)["Components"]["AnimationRef"],
+                         "?" + an.format("Weapon_Shield_Hylian_Blade1"))
+        self.assertIn(an.format("Weapon_Shield_Hylian_Blade1"), sarc.read(pack2))
+        # The swords' AnimationParam has no resources: nothing to retarget, the copy keeps the game's ref.
+        sword = "Weapon_Sword_Kokiri"
+        common = an.format("EquipItemCommon")
+        swords = {
+            ap.format(sword): byml.dumps({"Components": {"ModelInfoRef": "?" + mi.format(sword),
+                                                         "AnimationRef": "?" + common}}),
+            mi.format(sword): byml.dumps({"FmdbName": sword, "ModelProjectName": sword}),
+            common: byml.dumps({}),
+        }
+        self.assertIsNone(look_items.copy_animation_param(swords, sword, look_items.actor_name(sword, 1)))
+        _, sap, _ = look_items.copy_pack(swords, sword, 1)
+        self.assertEqual(byml.loads(sap)["Components"]["AnimationRef"], "?" + common)
+        # No AnimationRef at all (the gauntlets): None, no file.
+        bare = {ap.format(sword): byml.dumps({"Components": {"ModelInfoRef": "?" + mi.format(sword)}}),
+                mi.format(sword): swords[mi.format(sword)]}
+        self.assertIsNone(look_items.copy_animation_param(bare, sword, look_items.actor_name(sword, 1)))
 
     def test_build_from_nup_has_the_gear(self):
         # The 0.11.0 kit made its pack from the player's .nup, which took out only dumpcheck's files:
@@ -2416,7 +2518,16 @@ class FullBuildTest(unittest.TestCase):
         # your colour changed while the game runs (look_live): per colour, green too, the texels of
         # every tunic texture your Link wears, each as long as the game's own (written over them)
         from puppet_pack import look_live, tunic_extra
-        self.assertEqual(m["look_files"], {c: f"coop_look/{c}.bin" for c in ("red", "blue", "green")})
+        expect = {c: f"coop_look/{c}.bin" for c in ("red", "blue", "green")}
+        expect.update({f"puppet-{c}": f"coop_look/puppet-{c}.bin" for c in ("red", "blue")})   # (not green: the game's)
+        self.assertEqual(m["look_files"], expect)
+        # (0.11.9, exact puppet tunics) the puppets' copies as written: found in memory by these texels, the same
+        # textures in the same order as green.bin's
+        pup_red = look_live.unpack(build.read(os.path.join(mod, "coop_look/puppet-red.bin")))
+        self.assertEqual(pup_red[0], ("Angin_Tile_R_Alb", _ll.texels(pup_tile)))
+        green_look = look_live.unpack(build.read(os.path.join(mod, "coop_look/green.bin")))
+        self.assertEqual(len(pup_red), len(green_look))
+        self.assertFalse(os.path.exists(os.path.join(mod, "coop_look/puppet-green.bin")))
         names = ["Angin_Tile_A_Alb", "Angin_Tile_A_Dark_Alb"] + list(tunic_extra.EXTRA)
         game = {n: look_live.texels(d.decompress(build.read(os.path.join(self.romfs, f"Tex/{n}.bntx.zs"))))
                 for n in names}
@@ -2447,7 +2558,7 @@ class FullBuildTest(unittest.TestCase):
         # green is always there (to go back to), marked as your own green copies would be: never the
         # game's own texels, which Mido's model shares (npc-colour)
         from puppet_pack import tunic
-        self.assertEqual(sorted(m["look_files"]), ["green", "red"])
+        self.assertEqual(sorted(m["look_files"]), ["green", "puppet-red", "red"])   # (0.11.9: the puppets' red copy)
         green = look_live.unpack(build.read(os.path.join(mod, "coop_look", "green.bin")))
         self.assertEqual(green[0][0], "Angin_Tile_A_Alb")
         d = zs.Dicts.from_romfs(self.romfs)
@@ -2802,6 +2913,30 @@ class FullBuildTest(unittest.TestCase):
         with self.assertRaises(build.BuildError):
             build.build(self.romfs, os.path.join(self.dir, "mod_x"), log=lambda *_: None,
                         skins=[("Mod", mod_src)], test_skin="Other", look_slots=0)
+
+    def test_find_characters_follows_models_and_mods_list(self):
+        # C #58 (lane 051234): only the models there count (a UI-only Character Select gives no characters), and a mod
+        # switched off in the Mods tab gives none (the game loads none of its models).
+        mods = os.path.join(self.dir, "mods_list")
+        cs = os.path.join(mods, "OoT Character Select")
+        os.makedirs(os.path.join(cs, "romfs", "Model"))
+        doc = {"format": 1, "mod": "OoT Character Select",
+               "actor_heaps": {v: {"InstanceHeapSize": 1, "PreActorRenderInfoHeapSize": 1} for v in build.VARIANTS},
+               "characters": [{"number": 7, "name": "Made Up", "file": 5}]}
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        pack = os.path.join(mods, "contents", "0400486024DEC000", "coop-puppet")
+        os.makedirs(pack)
+        self.assertIsNone(build.find_characters(pack, log=lambda *_: None))   # UI-only: no models
+        with open(os.path.join(cs, "romfs", "Model", "Player_Child_C005.Player_Child.bfres.zs"), "wb") as f:
+            f.write(b"made up")
+        self.assertEqual(build.find_characters(pack, log=lambda *_: None)["files"], {5: ["Child"]})
+        with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8", newline="") as f:
+            f.write("coop-mods 1\r\non contents/0400486024DEC000/coop-puppet\r\noff oot character select\r\n")
+        self.assertIsNone(build.find_characters(pack, log=lambda *_: None))
+        with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8") as f:
+            f.write("coop-mods 1\non OoT Character Select\n")
+        self.assertEqual(build.find_characters(pack, log=lambda *_: None)["numbers"], {5: 7})
 
     def test_build_characters(self):
         # A Character Select mod beside the pack (made-up data): a puppet per character and age it has a

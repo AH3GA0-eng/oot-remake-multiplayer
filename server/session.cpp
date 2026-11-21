@@ -66,15 +66,16 @@ bool hidden_characters(const std::string& name) {
 
 
 // For the server's window when a game of another protocol version is refused:
-// which side is out of date, and what to do about it.
-std::string version_note(std::uint16_t theirs) {
+// which side is out of date, the host's co-op release when known, and what to do about it.
+std::string version_note(std::uint16_t theirs, const std::string& host_release = {}) {
   const std::string other = std::to_string(theirs);
   const std::string mine = std::to_string(kProtocolVersion);
+  const std::string host = host_release.empty() ? std::string() : " (the host runs co-op " + host_release + ")";
   if (theirs < kProtocolVersion) {
-    return "the game speaks protocol " + other + ", older than this server's " + mine +
+    return "the game speaks protocol " + other + ", older than this server's " + mine + host +
            ": that player runs Update.bat in their kit";
   }
-  return "the game speaks protocol " + other + ", newer than this server's " + mine +
+  return "the game speaks protocol " + other + ", newer than this server's " + mine + host +
          ": run Update.bat in this kit (the host's)";
 }
 
@@ -90,6 +91,17 @@ std::uint64_t Stats::dropped() const {
 
 Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp), dbno_(config_.dbno) {
   dbno_.set_by = 0;
+  for (const std::string& id : config_.kept_bans) {
+    if (id.rfind("k:", 0) == 0) banned_ids_.insert(id);   // (SessionConfig::kept_bans: keys only)
+  }
+}
+
+std::vector<std::string> Session::key_bans() const {
+  std::vector<std::string> out;
+  for (const std::string& id : banned_ids_) {
+    if (id.rfind("k:", 0) == 0 && id.find('/') == std::string::npos) out.push_back(id);
+  }
+  return out;   // (a std::set: sorted)
 }
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
@@ -152,7 +164,7 @@ void Session::received(ConnectionId id, std::uint8_t channel,
   if (c.state == State::awaiting_hello) {
     if (auto version = hello_protocol_version(bytes);
         version && *version != kProtocolVersion) {
-      refuse(id, c, RefuseReason::wrong_protocol_version, now_us, version_note(*version));
+      refuse(id, c, RefuseReason::wrong_protocol_version, now_us, version_note(*version, session_release_));
       return;
     }
   }
@@ -210,7 +222,7 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
                        std::uint64_t now_us) {
   if (hello.protocol_version != kProtocolVersion) {
     refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
-           version_note(hello.protocol_version));
+           version_note(hello.protocol_version, session_release_));
     return;
   }
   // The password comes before every other check, so someone without it
@@ -360,9 +372,17 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   }
   if (auto reason = check_hello(hello, expected)) {
     refuse(id, c, *reason, now_us,
-           *reason == RefuseReason::wrong_protocol_version ? version_note(hello.protocol_version)
+           *reason == RefuseReason::wrong_protocol_version ? version_note(hello.protocol_version, session_release_)
                                                            : std::string());
     return;
+  }
+  // Another co-op release than the host's on the same protocol plays (owner, 2026-11-21: refuse only when the wire
+  // data differs, which is what the protocol version says; releases that changed it raised it). Logged, so a
+  // desync between two releases can be told apart.
+  if (const std::string theirs = coop_release(hello.build_id); player_count() != 0 && !theirs.empty() &&
+                                                                 !session_release_.empty() && theirs != session_release_) {
+    log("co-op " + theirs + " joins the host's " + session_release_ + " (the same protocol " +
+        std::to_string(kProtocolVersion) + ")");
   }
   if (blank_name(hello.nickname) || hidden_characters(hello.nickname)) {
     refuse(id, c, RefuseReason::bad_name, now_us);
@@ -436,6 +456,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
             [](const PlayerInfo& a, const PlayerInfo& b) { return a.number < b.number; });
 
   c.state = State::joined;
+  c.joined_order = ++joins_;
   c.number = welcome.player_number;
   c.nickname = hello.nickname;
   c.player_key = player_key;
@@ -467,7 +488,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.voice_budget = 2.0 * config_.voice_per_second;
   c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
-  if (player_count() == 1) session_game_build_ = hello.game_build_id;
+  if (player_count() == 1) {
+    session_game_build_ = hello.game_build_id;
+    session_release_ = coop_release(hello.build_id);
+  }
 
   send(id, kChannelSession, welcome);
   c.rejoin_claim.reset();
@@ -554,7 +578,7 @@ void Session::hold(ConnectionId id, Connection& c, const Hello& hello,
 }
 
 void Session::on_join_allow(ConnectionId id, const JoinAllow& a, std::uint64_t now_us) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.join_answers_stray;  // only the host answers
     return;
   }
@@ -875,7 +899,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
 // host included, gets the new value; an unchanged value is told back to the
 // host alone, so its game still learns the session's.
 void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.pvp_mode_refused;
     send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
     return;
@@ -941,7 +965,7 @@ void Session::set_ngplus(std::uint8_t level) {
 // The host's sliders are kept through a preset or the automatic scaler, so
 // custom comes back as it was left.
 void Session::on_difficulty(ConnectionId id, Connection& c, const Difficulty& m) {
-  const bool hosts = host_ && *host_ == id;
+  const bool hosts = hosts_rules(id);
   DifficultyChoice wish = difficulty_;
   wish.auto_scale = m.auto_scale;
   if (!m.auto_scale) {
@@ -1135,7 +1159,7 @@ void Session::on_pvp_result(ConnectionId id, Connection& c, Message& message,
 
 // The host changes down but not out for everyone, as PVP_MODE.
 void Session::on_dbno_mode(ConnectionId id, Connection& c, const DbnoMode& m) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.dbno_mode_refused;
     send(id, kChannelSession, dbno_);
     return;
@@ -1650,6 +1674,7 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     const bool says_fight =
         sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
     note_hold(o, sample->state, now_us);
+    note_attack(o, sample->epoch, sample->state, now_us);
     if (life_changed || says_fight) mark_fight(o, now_us);
     // The owner's own hit: its life fell with no DAMAGE from another player
     // just before (issue 150, boss_owner_hit_hold_us).
@@ -2129,6 +2154,81 @@ bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
   return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
 }
 
+void Session::note_attack(Object& o, std::uint16_t epoch, const ObjectState& sample, std::uint64_t now_us) {
+  const std::uint8_t bits = sample.state.value_or(0);
+  const bool read = (bits & object_state::attack_read) != 0;
+  const bool attacking = read && (bits & object_state::attacking) != 0;
+  if (epoch != o.attack_epoch) {
+    // A new owner (or its epoch): what the old one said is not this game's attack; no edge across the change.
+    o.attack_epoch = epoch;
+    o.attacking = attacking;
+    o.attack_read = read;
+    o.attack_ended_at = 0;
+    return;
+  }
+  if (read && o.attack_read && o.attacking && !attacking) o.attack_ended_at = stamp(now_us);
+  o.attacking = attacking;
+  o.attack_read = read;
+}
+
+std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, std::uint64_t now_us) {
+  if (config_.boss_turn_us == 0 || o.root) return std::nullopt;
+  if (!in_fight(o, now_us)) {
+    o.fight_began = 0;
+    return std::nullopt;
+  }
+  if (o.fight_began == 0) o.fight_began = stamp(now_us);
+  const std::uint64_t turn_began = std::max(o.fight_began, o.changed_at);
+  if (now_us - turn_began < config_.boss_turn_us) return std::nullopt;
+  // Only right where its own attack ended in its owner's game (boss_turn_edge_us): never in an attack or in a
+  // reaction's tail (Phantom Ganon's SmallDamage into 'Run'), never in a phase with no attack, and never for an
+  // owner that reads no attacks. An edge older than the turn (the old owner's) does not count.
+  if (!o.attack_read || o.attacking || o.attack_ended_at == 0 || o.attack_ended_at < turn_began ||
+      now_us - o.attack_ended_at > config_.boss_turn_edge_us) {
+    return std::nullopt;
+  }
+  // A calm moment: nobody hit it lately, and it is not dying or in a cutscene.
+  if (owner_hit_lately(o, now_us)) return std::nullopt;
+  if (o.hit_at != 0 && now_us - o.hit_at < config_.boss_turn_quiet_us) return std::nullopt;
+  if (o.last_state) {
+    if (o.last_state->life && o.last_state->life->life <= 0) return std::nullopt;
+    if (const auto& a = o.last_state->animation;
+        a && (coop::protocol::anim::IsDeath(a->name) || coop::protocol::anim::IsEvent(a->name) ||
+              coop::protocol::anim::IsStun(a->name))) {  // nor in its stun (its chance time: a phase's own)
+      return std::nullopt;
+    }
+  }
+  // Nor while a shot of its owner's game flies there (Phantom Ganon's ball in
+  // a rally): a shot is never handed over, so its rally would go on in the old
+  // owner's game alone. A shot whose end was lost counts for 10 s at most.
+  for (const auto& [sid, s] : objects_) {
+    if (s.projectile && !s.removed && s.owner == owner && s.scene == o.scene && s.first_at != 0 &&
+        now_us - s.first_at < config_.boss_turn_shot_us) {
+      return std::nullopt;
+    }
+  }
+  // The next player by number after the owner, round: in the boss's area,
+  // ready (its intro played), up and playing.
+  const auto own = connections_.find(owner);
+  if (own == connections_.end()) return std::nullopt;
+  const std::uint8_t from = own->second.number;
+  std::optional<ConnectionId> after;  // the lowest number above the owner's
+  std::optional<ConnectionId> first;  // the lowest number of all (round)
+  for (ConnectionId other : o.present) {
+    if (other == owner || !has_loaded(other, o) || o.unready.contains(other)) continue;
+    const Connection& pc = connections_.at(other);
+    if (busy(pc)) continue;
+    const auto d = distance_to(pc, o, now_us);
+    if (!d || *d > config_.boss_turn_m) continue;
+    const auto lower = [&](const std::optional<ConnectionId>& than) {
+      return !than || pc.number < connections_.at(*than).number;
+    };
+    if (pc.number > from && lower(after)) after = other;
+    if (lower(first)) first = other;
+  }
+  return after ? after : first;
+}
+
 bool Session::hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us) {
   if (config_.handover_back_us == 0) return false;
   const auto lately = [&](std::uint64_t at) {
@@ -2169,7 +2269,10 @@ void Session::note_hold(Object& o, const ObjectState& sample, std::uint64_t now_
   // lock there could hand a dying boss over mid-death (boss-die-0116; the game's own stall check has the same rule,
   // CoopBossNative::StallJudged).
   const bool judged = animation && life && life->life > 0 && !coop::protocol::anim::IsDeath(animation->name) &&
-                      !coop::protocol::anim::IsEvent(animation->name);
+                      !coop::protocol::anim::IsEvent(animation->name) &&
+                      // Row 189: nor its wait before the fight, as the hook's check (StallJudged's 'Sleep', and
+                      // Table::SetNotBegun: its owner's game has not begun the fight).
+                      animation->name != "Sleep" && !(o.owner && o.unready.contains(*o.owner));
   if (key != o.hold_key || !judged) {
     o.hold_key = std::move(key);
     o.hold_since = now_us;
@@ -2501,7 +2604,14 @@ void Session::run_ownership(std::uint64_t now_us) {
       if (o.fish) {
         fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
       } else if (auto next = best_other(o, owner, true, now_us)) {
-        ask_handover(oid, o, *next, now_us);
+        // Row 189: a boss in its fight (its owner's game ready) never goes to a game whose boss has not begun
+        // it (unready: every game's boss would go back to its wait before the fight). It waits for its owner,
+        // or for a ready game; an owner that leaves still gives it on (next_owner: nobody else has it).
+        if (o.boss && !o.unready.contains(owner) && o.unready.contains(*next)) {
+          ++stats_.boss_kept_from_unready;
+        } else {
+          ask_handover(oid, o, *next, now_us);
+        }
       }
       continue;
     }
@@ -2521,6 +2631,25 @@ void Session::run_ownership(std::uint64_t now_us) {
     if (o.boss && o.unready.contains(owner)) {
       if (auto next = best_other(o, owner, true, now_us); next && !o.unready.contains(*next)) {
         ++stats_.boss_to_ready;
+        ask_handover(oid, o, *next, now_us);
+        continue;
+      }
+    }
+
+    // A boss in a fight takes turns: its AI fights only its owner's Link, so
+    // every player gets it for a while (Phantom Ganon's ball, a charge, a
+    // breath aimed at each in turn).
+    if (o.boss) {
+      if (auto next = next_turn(o, owner, now_us)) {
+        ++stats_.boss_turns;
+        // One line per turn (proof runs read it: a turn passes only at "its attack ended").
+        const auto from = connections_.find(owner);
+        const auto to = connections_.find(*next);
+        if (from != connections_.end() && to != connections_.end()) {
+          log("boss turns: " + (o.actor.empty() ? std::string("a boss") : o.actor) + " of player " +
+              std::to_string(from->second.number) + ": its attack ended: to player " +
+              std::to_string(to->second.number) + " (turn " + std::to_string(stats_.boss_turns) + ")");
+        }
         ask_handover(oid, o, *next, now_us);
         continue;
       }
@@ -2768,22 +2897,26 @@ bool Session::object_in_fight(const ObjectId& id, std::uint64_t now_us) const {
 }
 
 void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_us) {
-  const auto answer = [&](LobbyResultCode result) {
-    send(id, kChannelSession, LobbyResult{a.action, a.target, result});
-  };
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.lobby_refused;
-    answer(LobbyResultCode::not_host);
+    send(id, kChannelSession, LobbyResult{a.action, a.target, LobbyResultCode::not_host});
     return;
   }
+  if (const auto result = apply_lobby(a, id, now_us, "the host")) {
+    send(id, kChannelSession, LobbyResult{a.action, a.target, *result});
+  }
+}
+
+std::optional<LobbyResultCode> Session::apply_lobby(const LobbyAction& a, std::optional<ConnectionId> actor,
+                                                    std::uint64_t now_us, const char* by) {
+  using Code = LobbyResultCode;
+  const auto answer = [](Code result) { return std::optional<Code>(result); };
   const std::optional<ConnectionId> target = connection_of(a.target);
   if (!target) {
-    answer(LobbyResultCode::no_player);
-    return;
+    return answer(LobbyResultCode::no_player);
   }
-  if (same_game(*target, id)) {  // the host, or a split-screen seat of its own game
-    answer(LobbyResultCode::is_host);
-    return;
+  if (actor && same_game(*target, *actor)) {  // the host, or a split-screen seat of its own game
+    return answer(LobbyResultCode::is_host);
   }
   Connection& t = connections_.at(*target);
   const std::string key = lobby_id(t);
@@ -2808,10 +2941,9 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
       actions_.push_back(DisconnectAction{*target});
     }
     remove_player(*target, LeaveReason::kicked, now_us,
-                  ban ? "banned by the host" : "kicked by the host");
+                  std::string(ban ? "banned by " : "kicked by ") + by);
     ++stats_.lobby_done;
-    answer(LobbyResultCode::done);
-    return;
+    return answer(LobbyResultCode::done);
   }
   std::uint8_t bit = lobby_mute::voice;
   bool on = true;
@@ -2820,14 +2952,13 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
     case LobbyActionKind::unmute_voice: on = false; break;
     case LobbyActionKind::mute_chat: bit = lobby_mute::chat; break;
     case LobbyActionKind::unmute_chat: bit = lobby_mute::chat; on = false; break;
-    default: return;  // kick and ban above; the codec takes nothing else
+    default: return std::nullopt;  // kick and ban above; the codec takes nothing else
   }
   const std::uint8_t before = lobby_mutes_of(t);
   const std::uint8_t after = on ? static_cast<std::uint8_t>(before | bit)
                                 : static_cast<std::uint8_t>(before & ~bit);
   if (after == before) {
-    answer(LobbyResultCode::unchanged);
-    return;
+    return answer(LobbyResultCode::unchanged);
   }
   if (after == 0) {
     lobby_mutes_.erase(key);
@@ -2836,9 +2967,80 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
   }
   send_to_scene({}, std::nullopt, kChannelSession, LobbyMutes{t.number, after});
   ++stats_.lobby_done;
-  answer(LobbyResultCode::done);
-  log(who + (on ? " muted" : " unmuted") + (bit == lobby_mute::voice ? " (voice)" : " (chat)") +
-      " by the host");
+  log(who + (on ? " muted" : " unmuted") + (bit == lobby_mute::voice ? " (voice)" : " (chat)") + " by " + by);
+  return answer(LobbyResultCode::done);
+}
+
+std::string Session::admin(std::string_view line, std::uint64_t now_us) {
+  std::vector<std::string> w;
+  for (std::size_t i = 0; i < line.size();) {
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')) ++i;
+    std::size_t j = i;
+    while (j < line.size() && line[j] != ' ' && line[j] != '\t' && line[j] != '\r') ++j;
+    if (j > i) w.emplace_back(line.substr(i, j - i));
+    i = j;
+  }
+  const std::string help =
+      "commands: /players, /kick N, /ban N, /unban KEYID, /mute N voice|chat, /unmute N voice|chat";
+  if (w.empty()) return help;
+  const auto number = [&](std::size_t at) -> std::optional<std::uint8_t> {
+    if (w.size() <= at || w[at].empty() || w[at].size() > 3 ||
+        w[at].find_first_not_of("0123456789") != std::string::npos) {
+      return std::nullopt;
+    }
+    const int n = std::stoi(w[at]);
+    if (n < 1 || n > 255) return std::nullopt;
+    return static_cast<std::uint8_t>(n);
+  };
+  const auto said = [](std::optional<LobbyResultCode> r) -> std::string {
+    if (!r) return "not done";
+    switch (*r) {
+      case LobbyResultCode::done: return "done";
+      case LobbyResultCode::no_player: return "no player with that number";
+      case LobbyResultCode::unchanged: return "it was so already";
+      default: return "not done";
+    }
+  };
+  if (w[0] == "/players") {
+    std::string out = std::to_string(player_count()) + " player(s)";
+    for (const auto& [id, c] : connections_) {
+      if (c.state != State::joined) continue;
+      std::string key = lobby_id(c);
+      if (key.rfind("k:", 0) == 0 && key.size() > 14) key = key.substr(0, 14);   // (a short key id: k: + 12 hex)
+      out += "\n  " + std::to_string(c.number) + "  " + c.nickname + "  " + key +
+             (host_ && *host_ == id ? "  (hosts the save)" : "");
+    }
+    return out;
+  }
+  if ((w[0] == "/kick" || w[0] == "/ban") && number(1)) {
+    const auto kind = w[0] == "/ban" ? LobbyActionKind::ban : LobbyActionKind::kick;
+    return w[0].substr(1) + " " + w[1] + ": " + said(apply_lobby(LobbyAction{kind, *number(1)}, std::nullopt, now_us,
+                                                                 "the server"));
+  }
+  if ((w[0] == "/mute" || w[0] == "/unmute") && number(1) && w.size() == 3 && (w[2] == "voice" || w[2] == "chat")) {
+    const bool on = w[0] == "/mute";
+    const auto kind = w[2] == "voice" ? (on ? LobbyActionKind::mute_voice : LobbyActionKind::unmute_voice)
+                                      : (on ? LobbyActionKind::mute_chat : LobbyActionKind::unmute_chat);
+    return w[0].substr(1) + " " + w[1] + " " + w[2] + ": " +
+           said(apply_lobby(LobbyAction{kind, *number(1)}, std::nullopt, now_us, "the server"));
+  }
+  if (w[0] == "/unban" && w.size() == 2) {
+    std::string want = w[1];
+    if (want.rfind("k:", 0) != 0) want = "k:" + want;
+    if (want.size() < 2 + 8 || want.find_first_not_of("0123456789abcdef", 2) != std::string::npos) {
+      return "unban: give the key id /players or the bans file shows (8 or more of its hex digits)";
+    }
+    std::vector<std::string> gone;
+    for (const std::string& id : banned_ids_) {
+      if (id.rfind(want, 0) == 0) gone.push_back(id);
+    }
+    if (gone.size() != 1) return gone.empty() ? "unban: no ban with that key id" : "unban: more than one ban starts so";
+    banned_ids_.erase(gone[0]);
+    std::erase(config_.kept_bans, gone[0]);
+    log("a ban was lifted by the server (" + gone[0].substr(0, 14) + ")");
+    return "unban: done";
+  }
+  return help;
 }
 
 std::uint8_t Session::lobby_mutes_of(const Connection& c) const {
@@ -3024,6 +3226,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
       (!why.empty() ? " (" + why + ")" : reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
+    session_release_.clear();
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;
@@ -3035,6 +3238,9 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     mod_settings_.reset();
     lobby_mutes_.clear();
     banned_ids_.clear();
+    for (const std::string& id : config_.kept_bans) {   // (the host's kept bans stay: SessionConfig::kept_bans)
+      if (id.rfind("k:", 0) == 0) banned_ids_.insert(id);
+    }
     banned_addresses_.clear();
     allowed_ids_.clear();
     remembered_ids_.clear();
@@ -3050,8 +3256,10 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     // told on the progress channel, so the new host learns it hosts before
     // any FLAG_SET relayed to it.
     std::optional<ConnectionId> next;
+    // The player in the session longest (join order; a game's own seats never host).
     for (const auto& [other, oc] : connections_) {
-      if (oc.state == State::joined && !oc.parent && (!next || oc.number < connections_.at(*next).number)) {
+      if (oc.state == State::joined && !oc.parent &&
+          (!next || oc.joined_order < connections_.at(*next).joined_order)) {
         next = other;
       }
     }

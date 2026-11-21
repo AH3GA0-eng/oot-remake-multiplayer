@@ -71,6 +71,8 @@ text "$src/revert.sh" "$kit/revert.sh"
 for f in start.sh build.sh update.sh collect-logs.sh lib.sh; do text "$src/scripts/$f" "$kit/scripts/$f"; done
 text "$repo/tools/release/kit/scripts/apply_patch.py" "$kit/scripts/apply_patch.py"
 text "$repo/tools/release/kit/scripts/discord_status.py" "$kit/scripts/discord_status.py"
+text "$src/scripts/problem_report.py" "$kit/scripts/problem_report.py"
+text "$repo/tools/release/kit/scripts/problem-send-url.txt" "$kit/scripts/problem-send-url.txt"
 text "$repo/tools/release/kit/coop.ini.template" "$kit/scripts/coop.ini.template"
 text "$repo/tools/release/kit/coop-options.ini" "$kit/data/coop-options.ini"
 cp -- "$repo/tools/release/kit/assets/squadala-icon.png" "$kit/data/squadala-icon.png"   # (the window and menu icon, start.sh)
@@ -80,6 +82,7 @@ install -m 644 "$module" "$kit/data/longshot/hookshot_coop.so"
 text "$pin" "$kit/data/longshot/PIN"
 text "$linux_pin" "$kit/data/longshot/LINUX.txt"
 text "$repo/tools/release/kit/hookshot/OOTRR.txt" "$kit/data/longshot/OOTRR.txt"   # (the randomizer build.sh fetches)
+text "$repo/tools/release/kit/hookshot/CHARACTER-SELECT.txt" "$kit/data/longshot/CHARACTER-SELECT.txt"   # (Snail's mod build.sh fetches, asked first)
 # (byte for byte) Every patch. Longshot (since rc.5) has no WebGPU renderer and gpu/render holds headers only, on Windows
 # and Linux alike, so a patch that changes a gpu/render .cpp has nothing to apply to: it stops the kit.
 for p in "$repo"/hookshot/patches/*.patch; do

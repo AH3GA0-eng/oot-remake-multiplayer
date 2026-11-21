@@ -17,6 +17,7 @@ add_executable(coop_tests
   protocol/codec_test.cpp
   protocol/fuzz_test.cpp
   protocol/join_password_test.cpp
+  protocol/official_mark_test.cpp
   protocol/traffic_crypto_test.cpp
   net/clock_test.cpp
   net/client_test.cpp
@@ -68,6 +69,7 @@ add_executable(coop_tests
   lichii/enemy_shots_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_enemy_shots.cpp
   lichii/drops_test.cpp
   lichii/guard_test.cpp
+  lichii/boundary_test.cpp
   lichii/event_member_test.cpp
   lichii/snap_test.cpp
   lichii/follow_test.cpp
@@ -150,6 +152,9 @@ add_executable(coop_tests
   lichii/room_objects_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_room_objects.cpp
   lichii/switch_share_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_share.cpp
   lichii/caller_orders_test.cpp
+  lichii/char_colours_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_char_colours.cpp
+  lichii/charsel_tidy_test.cpp
+  lichii/char_slots_test.cpp
   lichii/eye_switch_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_eye_switch.cpp
   lichii/event_result_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_event_result.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp
@@ -187,6 +192,7 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/window_brand_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_window_brand.cpp
   hookshot/title_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_menu.cpp
   hookshot/pause_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_menu.cpp
+  hookshot/original_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_original.cpp
   hookshot/host_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_host_menu.cpp
   hookshot/input_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_input.cpp
   hookshot/mods_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_mod_json.cpp
@@ -200,14 +206,17 @@ target_sources(coop_tests PRIVATE hookshot/module_test.cpp hookshot/draw_test.cp
   hookshot/look_paint_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_paint.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_parts.cpp
   hookshot/look_menu_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_menu.cpp
+  hookshot/snail_custom_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_snail_custom.cpp
   hookshot/look_view_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_view.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_look_tunic.cpp
   hookshot/texture_override_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_texture.c
   hookshot/lobby_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lobby_tab.cpp
   hookshot/pause_tab_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_pause_tab.cpp
   hookshot/title_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_title_native.cpp
+  hookshot/problem_ask_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_problem_ask.cpp
   hookshot/auto_rejoin_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_auto_rejoin.cpp
   hookshot/lan_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_lan.cpp
+  hookshot/browse_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_browse.cpp
   hookshot/longshot_settings_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_longshot_settings.cpp
   hookshot/pad_order_test.cpp
   hookshot/i18n_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../hookshot/src/coop_i18n.cpp)

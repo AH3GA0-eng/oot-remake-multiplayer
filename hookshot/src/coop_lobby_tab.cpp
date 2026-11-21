@@ -134,13 +134,29 @@ std::vector<Tab::Line> Tab::Lines() const {
     if (!lobby_.connected && !lobby_.waiting.empty()) {
         heading("Lobby");
         note(lobby_.waiting);
-        note("The players show here once this game is in the session.");
+        note(lobby_.waiting_next.empty() ? "The players show here once this game is in the session."
+                                         : lobby_.waiting_next);
         return out;
     }
     if (!lobby_.connected) {
         heading("Lobby");
         note("You are not in a game.");
         note("Host one or join a friend's on the Multiplayer tab; the players show here.");
+        // The relay's public games (the same list and words as Browse games): Join with one press.
+        heading("Public games");
+        if (lobby_.games.empty()) {
+            note(lobby_.games_state.empty() ? std::string("Looking for public games...") : lobby_.games_state);
+        }
+        for (std::size_t i = 0; i < lobby_.games.size() && i < 255; ++i) {
+            const PublicGame& g = lobby_.games[i];
+            action(g.name, g.joinable ? CoopI18n::Tr("Join") : g.detail, Act::kJoinGame,
+                   g.detail + (g.joinable ? std::string(". ") +
+                                                (g.is_public ? CoopI18n::Tr("Press to join: no password needed.")
+                                                             : CoopI18n::Tr("Press, then type the host's password."))
+                                          : std::string()),
+                   static_cast<std::uint8_t>(i));
+        }
+        action("Refresh list", "Refresh", Act::kRefreshGames, "Asks the game list again now.");
         return out;
     }
 
@@ -263,7 +279,13 @@ void Tab::Hide() {
 }
 
 void Tab::Set(Lobby lobby) {
+    const bool was_connected = lobby_.connected;
     lobby_ = std::move(lobby);
+    // In or out of a game, the page is another list (out of one: Public games): it starts at its top again.
+    if (lobby_.connected != was_connected) {
+        selected_ = 0;
+        confirm_ = Act::kNone;
+    }
     if (player_ != 0 && (Shown() == nullptr || !lobby_.connected)) {
         player_ = 0;
         selected_ = 0;
@@ -358,6 +380,28 @@ void Tab::Decide(const Line& line) {
         r.kind = Request::Kind::kCopyInvite;
         request_ = std::move(r);
         note_ = "The invite code is on the clipboard.";
+        return;
+    }
+    case Act::kJoinGame: {
+        if (line.player >= lobby_.games.size()) return;
+        const PublicGame& g = lobby_.games[line.player];
+        if (!g.joinable) {
+            note_ = g.detail;
+            return;
+        }
+        Request r;
+        r.kind = Request::Kind::kJoinRoom;
+        r.name = g.room;
+        r.on = g.is_public;
+        request_ = std::move(r);
+        note_ = g.is_public ? "Joining " + g.room + "..." : "Type the host's password on the Multiplayer tab.";
+        return;
+    }
+    case Act::kRefreshGames: {
+        Request r;
+        r.kind = Request::Kind::kRefreshGames;
+        request_ = std::move(r);
+        note_ = "Asking the game list again...";
         return;
     }
     case Act::kResync: {
@@ -505,6 +549,33 @@ std::string DiscordState(bool connected, std::size_t players) {
         return "Solo";
     }
     return players == 1 ? "Co-op: 1 player" : "Co-op: " + std::to_string(players) + " players";
+}
+
+Waiting WaitingText(int state, const std::string& answer, bool held, std::uint64_t waited_ms) {
+    // (the numbers of hos_coop_host.h's HosCoopState: this file has no C header of the host menu)
+    constexpr int kIdle = 0, kJoining = 3, kWaitHost = 4, kConnected = 5, kFailed = 6;   // (1 starting, 2 hosting)
+    Waiting w;
+    if (state == kIdle || state == kFailed) return w;
+    if (held) {
+        w.line = "The host has to let you in.";
+        w.next = "They answer with /allow in their chat. This page joins by itself once they do.";
+        return w;
+    }
+    const bool joining = state == kJoining || state == kWaitHost || state == kConnected;
+    if (!joining) {   // (our own hosting, starting or listening: as before)
+        w.line = "Co-op is starting...";
+        return w;
+    }
+    if (state == kWaitHost || waited_ms >= kNoAnswerMs) {
+        w.line = "The host's game has not answered yet.";
+        // (each line whole on one line: the table finds it by its text, i18n_test)
+        w.next = answer.empty()
+            ? "Ask the host to choose Host (Multiplayer tab, or the title screen). Keep this page open: it joins by itself."
+            : "Ask the host to choose Host (Multiplayer tab, or the title screen). If they host already, send them this answer code: " + answer;
+        return w;
+    }
+    w.line = state == kConnected ? "Joining the host's game..." : "Looking for the host's game...";
+    return w;
 }
 
 }  // namespace CoopLobbyTab

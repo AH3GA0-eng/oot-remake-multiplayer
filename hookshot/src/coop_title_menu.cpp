@@ -243,6 +243,18 @@ bool PasswordOk(std::string_view password) {
     });
 }
 
+std::string Options::RandomRoomName(std::uint64_t seed) {
+    static constexpr const char* kWords[] = {"forest", "lake",  "field", "river",  "valley", "meadow",
+                                             "canyon", "grove", "cliff", "marsh",  "harbor", "summit"};
+    std::uint64_t x = seed * 0x9E3779B97F4A7C15ull + 0xD1B54A32D192ED03ull;   // (splitmix64)
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    const char* word = kWords[x % (sizeof kWords / sizeof kWords[0])];
+    const unsigned digits = static_cast<unsigned>((x >> 16) % 9000) + 1000;
+    return std::string(word) + "-" + std::to_string(digits);
+}
+
 Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     Options o;
     if (const auto v = IniGet(coop_ini, "name"); v && NameOk(*v)) {
@@ -276,7 +288,9 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.approve_joins = On(IniGet(options_ini, "approve_joins"));
     o.same_network_open = On(IniGet(options_ini, "same_network_open"));
     o.auto_rejoin = On(IniGet(options_ini, "auto_rejoin"));
+    o.original_game = On(IniGet(options_ini, "original_game"));
     o.list_room = On(IniGet(options_ini, "list_room"));
+    o.public_game = On(IniGet(options_ini, "public_game"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
         o.password = *v;
@@ -305,10 +319,16 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
+    {
+        std::string size(Trim(IniGet(options_ini, "LICHII_COOP_HUD_SIZE").value_or("auto")));
+        for (char& c : size) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        o.hud_size = size == "full" || size == "compact" || size == "off" ? size : "auto";
+    }
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
     o.relay = std::string(Trim(IniGet(options_ini, "relay").value_or(kDefaultRelay)));
+    if (o.relay.empty()) o.relay = kDefaultRelay;   // (an empty line: the built-in one, which is never removed)
     o.relay_key = std::string(Trim(IniGet(options_ini, "relay_key").value_or("")));
     o.relay_room = std::string(Trim(IniGet(options_ini, "relay_room").value_or("")));
     o.list_name = std::string(Trim(IniGet(options_ini, "list_name").value_or("")));
@@ -364,8 +384,10 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = show_players ? IniSet(o, "LICHII_COOP_SHOW_PLAYERS", "1", false) : IniUnset(o, "LICHII_COOP_SHOW_PLAYERS");
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
+    o = original_game ? IniSet(o, "original_game", "on", true) : IniUnset(o, "original_game");
     o = same_network_open ? IniSet(o, "same_network_open", "on", true) : IniUnset(o, "same_network_open");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
+    o = public_game ? IniSet(o, "public_game", "on", true) : IniUnset(o, "public_game");
     // (the relay: the kit's default needs no line; a room name, or none)
     // A line whose value did not change is kept as the player wrote it (its spacing and a comment after it).
     if (std::string(Trim(IniGet(o, "relay").value_or(kDefaultRelay))) != relay) {
@@ -386,6 +408,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     const std::uint16_t port = host_port != 0 ? host_port : kDefaultPort;
     o = port == kDefaultPort ? IniUnset(o, "server_port") : IniSet(o, "server_port", std::to_string(port), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
+    o = hud_size == "auto" ? IniUnset(o, "LICHII_COOP_HUD_SIZE") : IniSet(o, "LICHII_COOP_HUD_SIZE", hud_size, false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
 }
@@ -403,6 +426,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
+        {"LICHII_COOP_HUD_SIZE", hud_size == "auto" ? "" : hud_size},
     };
 }
 
@@ -806,8 +830,17 @@ std::vector<std::string> PlainStatus(const HostView& v) {
     case HOS_COOP_JOINING:
         return {"Joining your friend..."};
     case HOS_COOP_WAIT_HOST:
-        return {"Your friend's router blocks the way in.", "Send your friend this answer code; they paste it into their game:",
-                v.answer, "Or ask them to turn on UPnP in their router's settings and host again."};
+        // (row 209: where the host pastes it, by the row's own name on their Host page)
+        if (v.problem == HOS_COOP_PROBLEM_NO_WAY) {
+            // Row 209: still no way in after the helper's wait (join_helper punch_ms). That is also a host who has not
+            // pasted the code yet, so the code stays and the VPN is for when a paste did not help.
+            return {"Your friend's router blocks the way in.",
+                    "Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:", v.answer,
+                    "If they pasted it and nothing happens, both routers are strict or a provider shares one address (CGNAT): both join a free VPN network (Radmin VPN or Tailscale); the host copies the line from \"VPN\" on their Host page and you paste it in Join a game."};
+        }
+        return {"Your friend's router blocks the way in.",
+                "Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:", v.answer,
+                "Or ask them to turn on UPnP in their router's settings and host again."};
     case HOS_COOP_CONNECTED:
         if (!v.refused.empty()) {
             return {RefusedLine(v.refused), v.banned ? "Press Leave." : "Press Leave, then join again."};

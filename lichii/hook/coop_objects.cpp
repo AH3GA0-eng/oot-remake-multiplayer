@@ -50,6 +50,7 @@
 
 #include "coop_objects.h"
 #include "coop_caller_orders.h"
+#include "coop_boss.h"
 #include "coop_hit_replay.h"
 #include "coop_every.h"
 #include "coop_event_result.h"
@@ -67,6 +68,7 @@
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_svc.h"
+#include "coop_testinput.h"
 
 #include <algorithm>
 #include <limits>
@@ -194,6 +196,7 @@ CoopWorld::GrassSync& TheGrass() {
 constexpr int kScrubsCallerOrder = CoopCallerOrders::kScrubs;
 constexpr int kLiftRideCallerOrder = CoopCallerOrders::kLiftRide;  // jabu-lifts (#65): after the boss table (45), before the boss rooms (50)
 constexpr int kSwitchShareCallerOrder = CoopCallerOrders::kSwitchShare;  // room-objects: another player's timed switch held on ours
+constexpr int kKeptShieldCallerOrder = CoopCallerOrders::kKeptShield;  // row 160 (b): kept kills' copies
 constexpr int kPvpShieldCallerOrder = CoopCallerOrders::kPvpShield;  // phase 4: the _Pvp copies' Life invincible
 constexpr int kDbnoBodyCallerOrder = CoopCallerOrders::kDbnoBody;  // down but not out: our downed Link's crawl, shield, unseen (coop_dbno_body.h)
 
@@ -329,6 +332,50 @@ constexpr u64 kLastHitId = 0x1b18;
   // the copy's own AI took over: play again at most this often
 constexpr u64 kDriftLogUs = 5'000'000;
 constexpr u64 kActorComponents = 0x270;
+
+namespace {
+// Boss turns debug (always on, capped: no switch): each boss's attack starting or ending in our walk, with its five action
+// slots' verbs and their attribute bits; at most kMaxAttackNotes lines (plain enemies: their first 20 edges).
+void NoteAttackEdge(u64 actor, const std::string& name, bool attacking, const std::array<s32, 5>& verbs, u64 bits) {
+    static std::mutex m;
+    static std::map<u64, bool> last;
+    static std::size_t notes = 0, plain_notes = 0;
+    constexpr std::size_t kMaxAttackNotes = 400;
+    std::lock_guard lock(m);
+    if (last.size() >= 512) {
+        last.clear();  // (actors come and go with scenes: kept small; review-charsel-0118 m2)
+    }
+    auto [it, fresh] = last.try_emplace(actor, attacking);
+    if (!fresh && it->second == attacking) {
+        return;
+    }
+    it->second = attacking;
+    const bool boss = CoopObjects::IsBossOrPart(name);
+    if (notes >= kMaxAttackNotes || (!boss && plain_notes >= 20)) {
+        return;
+    }
+    ++notes;
+    if (!boss) {
+        ++plain_notes;
+    }
+    LOG_INFO(Core, "coop: bosses: turns: {} {:#x} {} (action verbs {} {} {} {} {}, attributes {:#x})", name, actor,
+             fresh ? (attacking ? "first read: attacking" : "first read: between moves")
+                   : (attacking ? "attack starts" : "attack ends"),
+             verbs[0], verbs[1], verbs[2], verbs[3], verbs[4], bits);
+}
+// Boss turns: each boss's attack sequence over our walks (CoopBossNative::addr::InAttackSequence: after a
+// reaction it stays on until its own next attack), kept by actor.
+bool InAttackSequenceOf(u64 actor, u64 bits, bool boss) {
+    namespace ba = CoopBossNative::addr;
+    static std::mutex m;
+    static std::map<u64, ba::AttackSequence> sequences;
+    std::lock_guard lock(m);
+    if (sequences.size() >= 512) {
+        sequences.clear();  // (actors come and go with scenes: kept small)
+    }
+    return ba::InAttackSequence(sequences[actor], bits, boss);
+}
+}  // namespace
 // LICHII_COOP_OBJECTS_AI_HOLD=1 or 2 (off by default; docs/objects.md
 // "Holding a copy's AI", coop_hold.h): the BSA component is table +0xb0
 // (0xcad060), and bit 0 of its u16 at +0xc4 is what QueryBsaIsBrainSkip (run
@@ -348,6 +395,14 @@ constexpr u64 kLifeCopy = 0x1ca8;  // life and max as last mirrored
 constexpr u64 kActorPlacement = 0x3d8;
 constexpr u64 kPlacementHash = 0x88;
 constexpr std::size_t kMaxWalk = 8192;
+// What an actor's cached name was read with (row 172): its name pointer and its placement pointer. A new
+// actor at a reused address differs in at least one, and its name is read again.
+struct ActorStamp {
+    u64 name = 0;
+    u64 head = 0;  // the name's first 8 characters (a name kept inside the actor has the same pointer)
+    u64 placement = 0;
+    bool operator==(const ActorStamp&) const = default;
+};
 
 // LICHII_COOP_OBJECTS_CHEAT: what it sets is in coop_cheat_items.h.
 
@@ -383,6 +438,10 @@ struct TestPlatformPlaces {  // TestPlatformPlace: the last walk's moving platfo
 TestPlatformPlaces& ThePlatformPlaces() {
     static TestPlatformPlaces p;
     return p;
+}
+std::vector<std::pair<std::string, float>>& TestDropQueue() {  // the test script's drop steps (QueueTestDrop)
+    static std::vector<std::pair<std::string, float>> q;
+    return q;
 }
 std::vector<TestStrike>& TestKillQueue() {  // the test script's kill, hit and stun steps (QueueTestKill)
     static std::vector<TestStrike> q;
@@ -545,6 +604,22 @@ public:
     };
 
     using Hit = CoopHitReplay::Hit;
+
+    // Test only (`aim X Y Z`, row 173): our next arrow is put on its way into `target` the first frame it flies.
+    void ArmAim(const std::array<float, 3>& target, u64 until_ms) {
+        std::lock_guard lock(mutex_);
+        aim_ = Aim{target, until_ms};
+    }
+    // The walk: a NormalArrow first seen (ours, nocked: another player's is a CoopShot_Arrow stand-in), taken
+    // while an aim waits for one.
+    void AimArrow(u64 actor, const std::array<float, 3>& at) {
+        std::lock_guard lock(mutex_);
+        if (aim_ && aim_->arrow == 0) {
+            aim_->arrow = actor;
+            aim_->last = at;
+            LOG_INFO(Core, "coop: test aim: our arrow {:#x} nocked at {:.2f} {:.2f} {:.2f}", actor, at[0], at[1], at[2]);
+        }
+    }
 
     // Any thread: the hit id we last wrote into this Life component (the walk never takes our own replay for
     // a hit of our game's).
@@ -808,6 +883,11 @@ public:
         if (main_ == 0) {
             return std::nullopt;
         }
+        if (!after_call && aim_) {
+            if (auto c = AimStep(guest)) {
+                return c;
+            }
+        }
         while (next_wake_ < work_wakes_.size() && block_ != 0) {
             const auto [actor, name] = work_wakes_[next_wake_++];
             if (!Alive(guest, actor)) {
@@ -902,6 +982,30 @@ public:
             if (!slot_name.empty() && !PlaysOver(slot_name, p.only_over)) {
                 continue;
             }
+            // Row 175 (runs 20261120-142219, -135153): our arrow's hit made the painting copy's own AI play its
+            // death, and the owner's 'Pct_Wait' put here at once erased it before any walk saw it (its death here
+            // is read from its own animation). Not covered: a death is told to Sync now (TakeOwnDeaths). One we
+            // played there (the owner's death or stun, row 169) is the owner's and is covered as usual.
+            const auto played = played_at_.find(key);
+            const bool played_by_us = played != played_at_.end() &&
+                                      AnimationBase(played->second.first) == AnimationBase(slot_name);
+            if (!played_by_us && CoversOwnReaction(p, slot_name)) {
+                if (IsDeathAnimation(slot_name) && own_deaths_.size() < 256 &&
+                    std::none_of(own_deaths_.begin(), own_deaths_.end(),
+                                 [&p](const auto& d) { return d.first == p.address; })) {
+                    own_deaths_.emplace_back(p.address, slot_name);
+                }
+                if (kept_own_.size() >= 512) {
+                    kept_own_.clear();
+                }
+                if (const auto [it, added] = kept_own_.insert(p.address); added) {
+                    LOG_INFO(Core, "coop: objects: copy {:#x} shows its own '{}': the owner's '{}' is not put over it "
+                                   "(row 175)",
+                             p.address, slot_name, p.name);
+                }
+                continue;
+            }
+            kept_own_.erase(p.address);
             // Issue 157: the name we played last is gone from slot 0, so the
             // copy's own AI chose another one (a Peahat rising for our Link).
             // It is put back below at once, so the walk would rarely see it:
@@ -1079,6 +1183,12 @@ public:
     std::vector<std::pair<u64, std::string>> TakeTakeovers() {
         std::lock_guard lock(mutex_);
         return std::exchange(took_over_, {});
+    }
+
+    // Present thread: the copies whose own death in slot 0 a play did not cover (row 175, CoversOwnReaction).
+    std::vector<std::pair<u64, std::string>> TakeOwnDeaths() {
+        std::lock_guard lock(mutex_);
+        return std::exchange(own_deaths_, {});
     }
 
     // Since the last ask: copy-frames held, and in how many of them the
@@ -1260,6 +1370,55 @@ private:
     // On the game thread, so the list cannot change under us: still on the
     // actor list (its node points back at it), awake, and an actor.
     // `asleep`: state 6 counts too (a copy moved to us from its far home).
+    // `aim` (row 173), each frame under mutex_: the nocked arrow is watched until it moves more than
+    // CoopTestInput::kAimLetGoM in a frame (let go: ~113 m/s), then put once on its line into the target, pointed
+    // at it, so its own flight takes it in; the place's set-matrix call is returned.
+    std::optional<CoopPuppet::Call> AimStep(CoopPuppet::Guest& guest) {
+        Aim& a = *aim_;
+        const auto target = a.target;
+        if (SteadyNowMs() > a.until_ms) {
+            LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: not put ({})", target[0], target[1], target[2],
+                     a.arrow ? "the arrow was never let go" : "no arrow of ours nocked");
+            aim_.reset();
+            return std::nullopt;
+        }
+        if (a.arrow == 0) {
+            return std::nullopt;
+        }
+        std::array<float, 3> at{};
+        if (!Alive(guest, a.arrow) || !guest.Read(a.arrow + kActorPosition, at.data(), sizeof(at))) {
+            LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: not put (arrow {:#x} gone first)", target[0],
+                     target[1], target[2], a.arrow);
+            aim_.reset();
+            return std::nullopt;
+        }
+        const float dx = at[0] - a.last[0];
+        const float dy = at[1] - a.last[1];
+        const float dz = at[2] - a.last[2];
+        const float moved = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(moved > CoopTestInput::kAimLetGoM)) {
+            a.last = at;
+            return std::nullopt;
+        }
+        const u64 arrow = a.arrow;
+        aim_.reset();
+        const auto put = CoopTestInput::AimPlace(at, target, kAimShortM);
+        if (!put || !guest.Write(arrow + kActorPosition, put->data(), sizeof(*put))) {
+            LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: not put (arrow {:#x} at {:.2f} {:.2f} {:.2f})",
+                     target[0], target[1], target[2], arrow, at[0], at[1], at[2]);
+            return std::nullopt;
+        }
+        LOG_INFO(Core,
+                 "coop: test aim {:.2f} {:.2f} {:.2f}: arrow {:#x} let go ({:.2f} m in a frame, at {:.2f} {:.2f} "
+                 "{:.2f}), put at {:.2f} {:.2f} {:.2f}",
+                 target[0], target[1], target[2], arrow, moved, at[0], at[1], at[2], (*put)[0], (*put)[1], (*put)[2]);
+        CoopPuppet::Call c;
+        c.function = main_ + kSetMatrix;
+        c.x[0] = arrow;
+        c.x[1] = 0;
+        return c;
+    }
+
     bool Alive(CoopPuppet::Guest& guest, u64 a, bool asleep = false) {
         u32 state = 0;
         u64 owner = 0;
@@ -1270,6 +1429,14 @@ private:
                guest.Read(a, &vtable, 8) && vtable == main_ + kActorVtable;
     }
 
+    struct Aim {
+        std::array<float, 3> target{};
+        u64 until_ms = 0;
+        u64 arrow = 0;               // our nocked arrow, from the walk (0: none yet)
+        std::array<float, 3> last{};  // its place the frame before
+    };
+    static constexpr float kAimShortM = 0.6f;  // the arrow is put this far short of the target
+    std::optional<Aim> aim_;                    // test only (`aim`)
     std::mutex mutex_;
     CoopHitReplay::Replayer replayer_;  // the hit replay: its own locks (Step runs it under mutex_)
     u64 main_ = 0;
@@ -1301,6 +1468,8 @@ private:
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
     std::vector<std::pair<u64, std::string>> took_over_;  // copies whose own AI changed slot 0, and to what
+    std::vector<std::pair<u64, std::string>> own_deaths_;  // row 175: copies whose own death was not covered
+    std::unordered_set<u64> kept_own_;  // row 175: copies showing their own death/stun now (logged once)
     std::unordered_map<std::string, u64> cells_;
     u64 block_ = 0;
     bool allocating_ = false;
@@ -1376,6 +1545,11 @@ std::atomic<s32>& TheMaxLife() {
 }
 
 // SetMaxLifeLowerTo; -1: no hold.
+std::atomic<bool>& TheRefillAsked() {   // (AskRefill)
+    static std::atomic<bool> asked{false};
+    return asked;
+}
+
 std::atomic<s32>& TheMaxLifeLowerTo() {
     static std::atomic<s32> quarters{-1};
     return quarters;
@@ -1489,6 +1663,85 @@ private:
 };
 PvpShieldCaller& ThePvpShield() {
     static PvpShieldCaller caller;
+    return caller;
+}
+
+// Row 160 (b): the kept kills' copies (CoopEventResult::KeptShield) hold our key in the game's own no-reaction
+// invincibility while their kill waits here, through the same call our downed Link's shield makes. The objects'
+// walk sets what it wants (Want); the calc thread, at the svc cave, makes one call a frame; the walk reads On before
+// a kept kill lands (the key is out first).
+class KeptShieldCaller {
+public:
+    void Want(std::set<u64> want, std::set<u64> live) {
+        std::lock_guard lock(mutex_);
+        want_ = std::move(want);
+        live_ = std::move(live);
+    }
+    bool On(u64 life) const {
+        std::lock_guard lock(mutex_);
+        return shield_.On(life);
+    }
+    std::optional<CoopPuppet::Call> Next(CoopPuppet::Guest& guest, bool after_call, std::uint64_t result,
+                                         std::uint64_t main_base) {
+        std::lock_guard lock(mutex_);
+        if (after_call) {
+            const Pending was = std::exchange(pending_, Pending::none);
+            if (was == Pending::malloc) {
+                block_ = result;
+            } else if (was == Pending::shield) {
+                shield_.Called(asked_, true);
+                LOG_INFO(Core, "coop: dungeon: trigger: a kept kill's copy (Life {:#x}): the game's invincibility {}",
+                         asked_.life, asked_.on ? "on (no hit lands while its kill waits)" : "off (its kill lands)");
+                return std::nullopt;  // one a frame
+            }
+        }
+        if (main_base == 0 || pending_ != Pending::none) {
+            return std::nullopt;
+        }
+        const auto next = shield_.Next(want_, live_);
+        if (!next) {
+            return std::nullopt;
+        }
+        CoopPuppet::Call c;
+        if (block_ == 0) {
+            if (after_call && result == 0) {
+                return std::nullopt;  // the game had no memory: next frame
+            }
+            c.function = main_base + CoopBossNative::addr::kMalloc;
+            c.x[0] = 16;
+            pending_ = Pending::malloc;
+            return c;
+        }
+        const std::uint32_t key = CoopEventResult::kKeptShieldKey;
+        if (!guest.Write(block_, &key, sizeof key)) {
+            shield_.Called(*next, false);
+            if (shield_.GivenUp(*next)) {
+                LOG_INFO(Core, "coop: dungeon: trigger: a kept kill's copy (Life {:#x}): could not turn the game's "
+                               "invincibility {}: given up", next->life, next->on ? "on" : "off");
+            }
+            return std::nullopt;
+        }
+        asked_ = *next;
+        c.function = main_base + CoopDbno::Body::addr::kInvincibleNoReaction;
+        c.x[0] = next->life;           // the Life component
+        c.x[1] = next->on ? 1 : 0;     // Bool: add our key / take it out
+        c.x[2] = block_;               // -> the key
+        pending_ = Pending::shield;
+        return c;
+    }
+
+private:
+    enum class Pending : std::uint8_t { none, malloc, shield };
+    mutable std::mutex mutex_;
+    std::set<u64> want_;
+    std::set<u64> live_;
+    Pending pending_ = Pending::none;
+    u64 block_ = 0;
+    CoopEventResult::KeptShield shield_;
+    CoopEventResult::KeptShield::Step asked_{};
+};
+KeptShieldCaller& TheKeptShield() {
+    static KeptShieldCaller caller;
     return caller;
 }
 
@@ -1789,7 +2042,8 @@ public:
                     world_.TakenKey(key);
                     // skulltula-0118: taken here, so no copy of it stays or is made
                     // here either, and our own one leaving is its death for all.
-                    sync_.Take(key);
+                    sync_.Take(key);       // (#308: its key + 2 too, as a take from another game's flag does: an
+                    sync_.Take(key + 2);   // announcement of it made a copy, 2026-11-20; both name one placement)
                     char hex[24];
                     std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
                     LOG_INFO(Core, "coop: objects: Gold Skulltula {} is taken in this save: its token goes",
@@ -1848,6 +2102,11 @@ public:
                         owner = root_owner;
                     }
                 }
+                if (owner && *owner != 0 && *owner != self &&
+                    (sync_.GoneWithoutDeath(s.address) ||
+                     (sync_.OwnerSaysDead(s.address) && sync_.GoesWithoutDeath(s.address, share_now_us_)))) {
+                    continue;  // report 200: its owner killed our copy of their encounter: no death run here, it goes
+                }
                 if (owner && *owner != 0) {
                     const bool owner_dead = sync_.OwnerSaysDead(s.address);
                     const bool plain = !IsBossOrPart(s.name);  // (seen with a BSA only under LICHII_COOP_ENEMY_BRAIN)
@@ -1858,7 +2117,7 @@ public:
                                            s.name, *owner, s.life_component, owner_dead, plain,
                                            plain && CoopBossNative::PlainDeath(life, owner_dead),
                                            s.animation ? s.animation->name : std::string{}, life,
-                                           s.position};
+                                           s.position, s.attacking};
                     list.push_back(std::move(b));
                 }
             }
@@ -2232,7 +2491,12 @@ public:
             for (std::size_t i = 0; i < passed.released; ++i) {
                 sync_.Written(writes[i].address, writes[i].life, server_now_us);
             }
-            KeepTriggerKills(system, *scene, seen, writes, server_now_us);
+            std::map<u8, u8> statuses;  // row 160: each player's PLAYER_STATUS flags (dead, loading)
+            session->with_client([&](coop::net::Client& c) {
+                for (const auto& p : c.players()) statuses[p.number] = p.status.value_or(0);
+                return 0;
+            });
+            KeepTriggerKills(system, *scene, seen, writes, server_now_us, statuses);
             if (held_writes_.Size() != 0 && !guard_said_) {
                 guard_said_ = true;
                 LOG_INFO(Core, "coop: objects: our Link is in an event: changes to {} actors near it wait until it ends",
@@ -2488,6 +2752,19 @@ public:
     std::map<u64, u64> trigger_kept_since_;  // address -> when its kill was first kept (crossing last kills)
     std::set<u64> owned_seen_;               // placement hashes our game owned in this scene (crossing last kills)
     std::map<u64, u64> owned_died_at_;       // of those, when our walk first saw it dead or gone
+    // Row 160: kept kills whose actor went (a reload re-made the room): placement hash -> the kill, when first kept.
+    std::map<u64, std::pair<LifeWrite, u64>> trigger_kept_gone_;
+    std::map<u64, u8> trigger_kept_owner_;  // placement hash -> the player whose game's kill is kept here
+    std::map<u64, u64> trigger_dead_;       // kill actors seen dead in this visit: placement hash -> that actor
+    std::set<u64> trigger_redone_;          // re-made actors our game killed again (once each)
+    std::map<u64, u64> land_wait_since_;    // address -> since when its landing kill waits for our key to come out
+    // Run 20261120-145142: a kept kill landed (the killing blow replayed) and the owner's dead ObjectRemove, waiting
+    // since, deleted the actor in the same walk, before its death ran: our room never counted it and never asked its
+    // event. Every kill that lands here on a kill actor of an event our game has not played (another game's kill, a
+    // kept one landing, a redo) holds other games' removes of that actor until its own death deleted it (it left our
+    // walk) or our game played the event; kLandedHoldUs is only a safety cap, logged when it ends a hold.
+    static constexpr u64 kLandedHoldUs = 8'000'000;
+    std::map<u64, std::pair<u64, u64>> landed_hold_;  // address -> (safety cap, placement hash)
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
     // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
@@ -2503,21 +2780,118 @@ public:
         });
     }
     void KeepTriggerKills(Core::System& system, const std::string& scene, const std::vector<Seen>& seen,
-                          std::vector<LifeWrite>& writes, u64 now_us) {
-        if (scene != keeper_scene_) {
+                          std::vector<LifeWrite>& writes, u64 now_us, const std::map<u8, u8>& statuses) {
+        static const bool kept_shield_caller = [] {
+            CoopSvc::AddCaller(kKeptShieldCallerOrder, [](CoopPuppet::Guest& guest, bool after_call,
+                                                          std::uint64_t result, std::uint64_t /*now_ms*/) {
+                return TheKeptShield().Next(guest, after_call, result, TheBossMain().load());
+            });
+            return true;
+        }();
+        (void)kept_shield_caller;
+        const u8 self = sync_.Self();
+        // Row 160: a scene visit ends with a scene change or our Game Over (DBNO out: nobody stood, every game
+        // reloads and the group fights the room again). A reload of the same scene inside the visit (a revive's
+        // respawn, a void-out) keeps the kept kills and the deaths seen here, by placement hash.
+        const bool our_out = self != 0 && CoopDbno::StateOfPlayer(self) == CoopDbno::State::out;
+        if (scene != keeper_scene_ || our_out) {
             keeper_scene_ = scene;
             trigger_kept_.clear();  // those actors are gone with the scene
             trigger_kept_since_.clear();
+            trigger_kept_gone_.clear();
+            trigger_kept_owner_.clear();
+            trigger_dead_.clear();
+            trigger_redone_.clear();
+            land_wait_since_.clear();
+            landed_hold_.clear();
             owned_seen_.clear();
             owned_died_at_.clear();
         }
         std::unordered_map<u64, u64> hash_at;  // address -> placement hash
+        std::unordered_map<u64, u64> life_at;  // address -> its Life component
+        std::set<u64> lives;                   // every Life component in this walk
         std::set<u64> alive;
         for (const Seen& s : seen) {
             hash_at.emplace(s.address, s.hash);
+            if (s.life_component != 0) {
+                life_at.emplace(s.address, s.life_component);
+                lives.insert(s.life_component);
+            }
             if (!s.life || s.life->life > 0) {
                 alive.insert(s.hash);
+            } else if (s.hash != 0 && s.hash != ~u64{0} && CoopEventResult::KillEventOf(scene, s.hash)) {
+                trigger_dead_.insert_or_assign(s.hash, s.address);  // a kill actor seen dead here in this visit
             }
+        }
+        std::optional<CoopHook::EmulatorMemory> memory;
+        std::optional<coop::host::GameFlags> flags;
+        if (main_ != 0) {
+            memory.emplace(system.ApplicationMemory(), main_);
+            flags.emplace(*memory);
+        }
+        const auto played = [&flags](const std::string& e) {
+            return flags && flags->get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
+        };
+        // The removes held for a landed kill end on the real signal: its own death deleted the actor (gone from our
+        // walk), or our game played its event; the safety cap is logged (it should not be what ends one).
+        std::erase_if(landed_hold_, [&](const auto& h) {
+            if (!hash_at.contains(h.first) || hash_at.at(h.first) != h.second.second) return true;  // its death ran
+            const auto e = CoopEventResult::KillEventOf(scene, h.second.second);
+            if (!e || played(std::string(*e))) return true;  // our room asked and played its event
+            if (now_us >= h.second.first) {
+                LOG_INFO(Core, "coop: dungeon: trigger: {:#x} still stands {} ms after its kill landed: another game's "
+                               "remove of it goes ahead (safety cap)", h.second.second, kLandedHoldUs / 1000);
+                return true;
+            }
+            return false;
+        });
+        // Row 160: a kept kill whose actor went (a reload re-made the room) waits by its placement hash; the re-made
+        // actor of that hash takes it over, with the time it was first kept.
+        for (auto it = trigger_kept_gone_.begin(); it != trigger_kept_gone_.end();) {
+            const u64 hash = it->first;
+            if (const auto e = CoopEventResult::KillEventOf(scene, hash); !e || played(std::string(*e))) {
+                it = trigger_kept_gone_.erase(it);  // its event played here (or no event): nothing waits
+                continue;
+            }
+            const auto s = std::find_if(seen.begin(), seen.end(), [&](const Seen& x) {
+                return x.hash == hash && (!x.life || x.life->life > 0) && !trigger_kept_.contains(x.address);
+            });
+            if (s == seen.end()) {
+                ++it;
+                continue;
+            }
+            LOG_INFO(Core, "coop: dungeon: trigger: {:#x} is made again (a reload): its kept kill waits on the new "
+                           "actor {:#x}", hash, s->address);
+            it->second.first.address = s->address;
+            trigger_kept_since_.insert_or_assign(s->address, it->second.second);
+            trigger_kept_.insert_or_assign(s->address, std::make_pair(std::move(it->second.first), hash));
+            it = trigger_kept_gone_.erase(it);
+        }
+        // Row 160: the group killed every kill actor of an event here (seen dead, or another game's kill kept), and a
+        // reload made them again: the ones seen dead die again (our game's own death), the kept ones keep waiting.
+        // Co-op idle (a host alone in the room) and solo: no kept kill, so no redo: the game's own refight.
+        std::set<u64> dead;
+        std::set<u64> kept_here;
+        for (const auto& [h, a] : trigger_dead_) dead.insert(h);
+        for (const auto& [a, k] : trigger_kept_) kept_here.insert(k.second);
+        for (const auto& [h, k] : trigger_kept_gone_) kept_here.insert(h);
+        const std::set<u64> redo = CoopEventResult::KillsToRedo(scene, dead, kept_here, played);
+        std::vector<LifeWrite> redo_writes;
+        for (const Seen& s : seen) {
+            const auto d = trigger_dead_.find(s.hash);
+            if (!redo.contains(s.hash) || d == trigger_dead_.end() || d->second == s.address ||
+                (s.life && s.life->life <= 0) || trigger_kept_.contains(s.address) ||
+                trigger_redone_.contains(s.address)) {
+                continue;
+            }
+            LOG_INFO(Core, "coop: dungeon: trigger: {:#x} is made again (a reload) after the group killed its whole "
+                           "room: it dies again here", s.hash);
+            trigger_redone_.insert(s.address);
+            alive.erase(s.hash);
+            LifeWrite w;
+            w.address = s.address;
+            w.life = 0;
+            redo_writes.push_back(std::move(w));
         }
         // Rows 160/161: the enemies our game owns (their death is decided here, a remote hit's too).
         std::set<u64> owned;
@@ -2528,14 +2902,9 @@ public:
             }
         }
         std::set<std::uint64_t> keepers;
-        if (main_ != 0) {
-            CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
-            coop::host::GameFlags flags(memory);
+        if (flags) {
             keepers = CoopEventResult::KillKeepers(
-                scene, [&alive](std::uint64_t h) { return alive.contains(h); },
-                [&flags](const std::string& e) {
-                    return flags.get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
-                },
+                scene, [&alive](std::uint64_t h) { return alive.contains(h); }, played,
                 [&owned](std::uint64_t h) { return owned.contains(h); });
         }
         keeper_addresses_.clear();
@@ -2544,6 +2913,18 @@ public:
                 keeper_addresses_.insert(a);
             }
         }
+        // Row 160 (a): a game can play the event when its player is in our scene, its Link up (DBNO) and its game
+        // neither dead nor in a load (CoopEventResult::AbleToPlay). Ours by our own state.
+        const auto status_of = [&statuses](u8 p) -> u8 {
+            const auto it = statuses.find(p);
+            return it == statuses.end() ? 0 : it->second;
+        };
+        const auto able = [&](u8 p) {
+            return CoopEventResult::AbleToPlay(p == self || sync_.InOurScene(p, now_us),
+                                               CoopDbno::StateOfPlayer(p) == CoopDbno::State::up, status_of(p));
+        };
+        const std::vector<u8> in_scene = sync_.PlayersInOurScene(self, now_us);
+        const bool we_decide = self != 0 && CoopEventResult::DeciderAmongAble(self, in_scene, able) == self;
         // Crossing last kills (review-dc-0118): two owners each killed their own last enemy of the event within one
         // round trip, so each game keeps the other's kill. After kCrossingUs the lowest-numbered of those owners lets
         // it land (CoopEventResult::CrossingKillLands): that one game plays the event, the others get its flags.
@@ -2562,21 +2943,27 @@ public:
             if (!keeper_addresses_.contains(address)) {
                 continue;
             }
-            const std::optional<u8> owner = sync_.OwnerOrDeathOwnerOf(address);
-            const bool owner_here = owner && sync_.InOurScene(*owner, now_us);
-            const bool we_decide = sync_.Self() != 0 && sync_.SceneDecider(sync_.Self(), now_us) == sync_.Self();
-            if (!CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, sync_.Self(), owner,
-                                                    ours_died, owner_here, we_decide)) {
+            std::optional<u8> owner = sync_.OwnerOrDeathOwnerOf(address);
+            if (owner && *owner != 0) {
+                trigger_kept_owner_.insert_or_assign(kept.second, *owner);
+            } else if (const auto o = trigger_kept_owner_.find(kept.second); o != trigger_kept_owner_.end()) {
+                owner = o->second;  // its actor was made again: the owner its kill came from
+            }
+            const bool owner_here = owner && able(*owner);
+            if (!CoopEventResult::CrossingKillLands(scene, kept.second, now_us - kept_at, self, owner, ours_died,
+                                                    owner_here, we_decide)) {
                 continue;
             }
             LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept {} ms lands: {} (player {}), our game plays "
                            "the event", kept.second, (now_us - kept_at) / 1000,
                      owner_here ? "crossing last kills, ours is the lowest owner's number"
-                                : "its owner is gone from our scene, we decide here",
+                                : "its owner cannot play it (gone from our scene, down, out or loading), we decide here",
                      owner.value_or(0));
             keeper_addresses_.erase(address);
         }
-        // A kept kill whose actor is no keeper any more lands now, on the same actor (else it is dropped).
+        // A kept kill whose actor is no keeper any more lands now, on the same actor, once our key is out of its Life
+        // (row 160 (b)); one whose actor went waits by its placement hash for this visit.
+        std::set<u64> landing;  // kept kills whose landing waits for our key to come out: still held as keepers
         for (auto it = trigger_kept_.begin(); it != trigger_kept_.end();) {
             if (keeper_addresses_.contains(it->first)) {
                 ++it;
@@ -2584,13 +2971,37 @@ public:
             }
             const auto at = hash_at.find(it->first);
             if (at != hash_at.end() && at->second == it->second.second) {
+                const auto life = life_at.find(it->first);
+                if (life != life_at.end() && TheKeptShield().On(life->second)) {
+                    const u64 since = land_wait_since_.try_emplace(it->first, now_us).first->second;
+                    if (now_us - since < CoopEventResult::kKeptShieldWaitUs) {
+                        // The key comes out first (the shield's next call). Run 20261120-144321: meanwhile the
+                        // owner's dead ObjectRemove took the actor (no keeper skips it), so the kill never landed
+                        // and our room never asked its event: the address stays a keeper until the kill lands.
+                        landing.insert(it->first);
+                        ++it;
+                        continue;
+                    }
+                }
                 LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
+            } else {
+                // Row 160 (run 20261120-132403): the kept kill was dropped here and the reload made the enemy alive.
+                LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event waits by its placement: {}",
+                         it->second.second,
+                         at == hash_at.end() ? "its actor is gone from our walk" : "another actor is at its address");
+                const auto since = trigger_kept_since_.find(it->first);
+                trigger_kept_gone_.insert_or_assign(
+                    it->second.second,
+                    std::make_pair(std::move(it->second.first),
+                                   since != trigger_kept_since_.end() ? since->second : now_us));
             }
+            land_wait_since_.erase(it->first);
             trigger_kept_since_.erase(it->first);
             it = trigger_kept_.erase(it);
         }
+        keeper_addresses_.insert(landing.begin(), landing.end());
         std::erase_if(writes, [&](LifeWrite& w) {
             if (w.life > 0 || w.heal || w.test_kill || !keeper_addresses_.contains(w.address)) {
                 return false;
@@ -2600,10 +3011,36 @@ public:
                 LOG_INFO(Core, "coop: dungeon: trigger: another game's kill of {:#x} waits: the last enemy of a room "
                                "event our game has not played (its asker would ask the event here)", hash);
             }
+            if (const auto o = sync_.OwnerOrDeathOwnerOf(w.address); o && *o != 0) {
+                trigger_kept_owner_.insert_or_assign(hash, *o);
+            }
             trigger_kept_since_.try_emplace(w.address, now_us);
             trigger_kept_.insert_or_assign(w.address, std::make_pair(std::move(w), hash));
             return true;
         });
+        for (LifeWrite& w : redo_writes) {
+            sync_.Written(w.address, w.life, now_us);
+            writes.push_back(std::move(w));
+        }
+        // Every kill landing here this walk on a kill actor of an event our game has not played holds other games'
+        // removes of that actor until its death ran (run 20261120-145142).
+        for (const LifeWrite& w : writes) {
+            if (w.life > 0 || w.heal || landed_hold_.contains(w.address)) continue;
+            const auto at = hash_at.find(w.address);
+            if (at == hash_at.end()) continue;
+            if (const auto e = CoopEventResult::KillEventOf(scene, at->second); e && !played(std::string(*e))) {
+                landed_hold_.emplace(w.address, std::make_pair(now_us + kLandedHoldUs, at->second));
+            }
+        }
+        // Row 160 (b): every kept kill's copy that is still a keeper holds our key (no hit lands on it).
+        std::set<u64> want;
+        for (const auto& [address, kept] : trigger_kept_) {
+            if (!keeper_addresses_.contains(address) || landing.contains(address)) continue;  // landing: key out
+            if (const auto life = life_at.find(address); life != life_at.end() && life->second != 0) {
+                want.insert(life->second);
+            }
+        }
+        TheKeptShield().Want(std::move(want), std::move(lives));
     }
     // Row 97: the event's partners wait wherever they are (Sync::EventPartner).
     CoopGuard::Local GuardLocal(u64 now_us) const {
@@ -2676,6 +3113,7 @@ private:
             actors_.clear();
             first_ = true;
             names_.clear();
+            stamps_.clear();
             no_area_.clear();
             TheMover().ForgetReplayed();
 #ifdef COOP_HOOKSHOT
@@ -3402,6 +3840,7 @@ private:
         };
         std::vector<TalkScrub> talk_scrubs;
         std::unordered_map<u64, std::pair<std::string, u64>> names;
+        std::unordered_map<u64, ActorStamp> stamps;
         std::unordered_map<u64, u64> life_components;
         {
             // Difficulty: the extra enemies the director made so far (coop_difficulty.h Extras).
@@ -3424,15 +3863,30 @@ private:
         }
         const u64 now_ms = SteadyNowMs();
         for (const u64 a : actors) {
+            // Row 172 (run 053934): a scene change can put a new actor at an address an old one held without a
+            // walk between (our adult Link where the last scene's TerrainScenePermanent was): the cached name
+            // would stay the old one, and WriteLife found no Player (another player's kill not replayed). The
+            // cache holds only while the actor's name (pointer and first characters) and placement are the ones it
+            // was read with (the vtable is one generic class for every actor, main+0x4b25e18: no help).
+            const u64 name_at = r.Ptr(a + kActorName).value_or(0);
+            const ActorStamp stamp{name_at, name_at ? r.Get<u64>(name_at).value_or(0) : 0,
+                                   r.Ptr(a + kActorPlacement).value_or(0)};
+            stamps.emplace(a, stamp);
             auto it = names_.find(a);
+            const auto was = stamps_.find(a);
             std::pair<std::string, u64> known;
-            if (it != names_.end()) {
+            if (it != names_.end() && was != stamps_.end() && was->second == stamp) {
                 known = std::move(it->second);
             } else {
                 known.first = r.Name(a);
                 const auto placement = r.Ptr(a + kActorPlacement);
                 known.second = placement ? r.Get<u64>(*placement + kPlacementHash).value_or(0) : 0;
                 CoopPickups::Note(known.first, known.second);  // one-time pickups (docs/items.md)
+                if (known.first == "NormalArrow") {  // test only (`aim`): a new arrow of ours
+                    if (const auto at = r.Get<std::array<float, 3>>(a + kActorPosition)) {
+                        TheMover().AimArrow(a, *at);
+                    }
+                }
                 if (IsShared(known.first) && vtables_logged_.insert(known.first).second) {
                     // The set-matrix node (0x2622e50) writes +0x31c..+0x34b and
                     // then calls vtable slot 0x218 (actor, 0): what does it do?
@@ -3519,7 +3973,8 @@ private:
                         ReadPvpCopies(r, a);  // PvP on real bodies (coop_pvp_native_game.cpp)
                     }
                     if (known.first == "Player_Child" || known.first == "Player_Adult") {
-                        GiveDbno(r, a, value->first + 8, life);  // down but not out (coop_dbno_game.h)
+                        GiveDbno(r, a, value->first + 8, life,
+                                 known.first == "Player_Adult");  // down but not out (coop_dbno_game.h)
                     }
                     // On by default (=0 turns it off): a MaxLife raised by
                     // another player is put into the component the hearts are
@@ -3530,6 +3985,17 @@ private:
                         memory_->Write32(value->second + 8, static_cast<u32>(*raised));
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
                                  max, *raised);
+                        CoopBoss::NoteMaxLifeFromOthers(*raised);   // (not our pickup: no heart claim)
+                    }
+                    // Another player took the boss's heart container: our hearts full, as its pickup fills them.
+                    if (TheRefillAsked().load() && memory_ != nullptr &&
+                        memory_->IsValidVirtualAddressRange(value->first + 8, 4)) {
+                        const s32 full = raised ? *raised : max;
+                        if (full > 0 && TheRefillAsked().exchange(false)) {
+                            memory_->Write32(value->first + 8, static_cast<u32>(full));
+                            LOG_INFO(Core, "coop: objects: our Link's life {} -> {} (another player took the heart "
+                                           "container: as its pickup)", life, full);
+                        }
                     }
                     // Rows 136/137: the host's older save lowered MaxLife; row 181: a second pickup of a boss's one
                     // container was put back. The component follows it (never in the frame it was raised).
@@ -3679,6 +4145,31 @@ private:
                         }  // our own hit: its own reaction runs (NoteOwnHit) unless it took life (NoteOwnDamage)
                     }
                 }
+                if (IsBossOrPart(s.name) || OnBrainPath(s.name)) {
+                    // Boss turns (Session::next_turn): its attack as its own game says (the attributes of
+                    // its current action verbs, Attack), sent in our samples so the server hands it on between attacks.
+                    if (const auto table = r.Ptr(a + kActorComponents)) {
+                        if (const auto bsa = r.Ptr(*table + CoopBossNative::addr::kComponentBsa); bsa && *bsa != 0) {
+                            namespace ba = CoopBossNative::addr;
+                            std::uint64_t bits = 0;
+                            std::array<s32, ba::kBsaActionSlots> verbs{};
+                            bool read = true;
+                            for (std::size_t slot = 0; slot < ba::kBsaActionSlots && read; ++slot) {
+                                const auto verb = r.Get<s32>(ba::ActionVerbAt(*bsa, slot));
+                                const auto word = verb ? r.Get<u64>(ba::ActionAttributesAt(*bsa, *verb)) : std::nullopt;
+                                read = verb && word;
+                                if (read) {
+                                    verbs[slot] = *verb;
+                                    bits |= *word;
+                                }
+                            }
+                            if (read) {
+                                s.attacking = InAttackSequenceOf(a, bits, IsBossOrPart(s.name));
+                                NoteAttackEdge(a, s.name, *s.attacking, verbs, bits);
+                            }
+                        }
+                    }
+                }
                 if (IsBossOrPart(s.name)) {
                     s.hit_ours.reset();  // issue 133: whose hit is for plain enemies (bosses: NewOwnHitAt, their sync)
                     s.slots = OtherSlots(r, a);  // issue 150
@@ -3741,6 +4232,7 @@ private:
             names.emplace(a, std::move(known));
         }
         names_ = std::move(names);
+        stamps_ = std::move(stamps);
         life_components_ = std::move(life_components);
         CoopDbno::NoteEnemiesNear(player && CoopDbno::AnyNear(*player, foes));
         sync_.SetPlayer(player);
@@ -4046,7 +4538,7 @@ private:
     // Down but not out (coop_dbno_game.h): our Link's Life component for the
     // Life step's guard, and the life the rules ask for (a revive, a downed
     // Link's quarter heart, out), written as PvP's fallback does.
-    void GiveDbno(Reader& r, u64 link, u64 life_at, s32 life) {
+    void GiveDbno(Reader& r, u64 link, u64 life_at, s32 life, bool adult) {
         const auto table = r.Ptr(link + kActorComponents);
         const auto component = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
         CoopDbno::SetOurLifeComponent(component.value_or(0));
@@ -4054,7 +4546,7 @@ private:
         // caller that asks the game.
         const auto bsa = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentBsa) : std::nullopt;
         const auto emitter = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentEmitter) : std::nullopt;
-        CoopDbno::SetOurComponents(bsa.value_or(0), emitter.value_or(0));
+        CoopDbno::SetOurComponents(bsa.value_or(0), emitter.value_or(0), adult);
         static const bool body_caller = [] {
             // A downed teammate's puppet (issue 150): its actor, from the puppet director's slots (the same
             // calc-thread caller chain, so its slots are not changing meanwhile).
@@ -4289,6 +4781,49 @@ private:
         }
     }
 
+    // Test only ("drop NAME METRES", row 178): the nearest boss of that name that we own goes METRES straight down,
+    // placed like a copy (one set-matrix write); our fall guard (CoopBossNative::Table::Fall) then puts it back.
+    void TestDrops(Reader& r, std::vector<PoseWrite>& poses) {
+        std::vector<std::pair<std::string, float>> drops;
+        {
+            std::lock_guard lock(KeyRefundMutex());
+            drops.swap(TestDropQueue());
+        }
+        for (const auto& [name, metres] : drops) {
+            const std::uint8_t self = sync_.Self();
+            u64 best = 0;
+            float best_m = 0.0f;
+            coop::protocol::Vec3 at{};
+            for (const auto& [address, entry] : names_) {
+                if (entry.first != name || !IsBoss(entry.first) || self == 0 || sync_.OwnerOf(address) != self) {
+                    continue;
+                }
+                coop::protocol::Vec3 p{};
+                for (std::size_t i = 0; i < 3; ++i) {
+                    p[i] = r.Get<float>(address + kActorPosition + 4 * i).value_or(0.0f);
+                }
+                const float m = player_ ? Apart(*player_, p) : 0.0f;
+                if (best == 0 || m < best_m) {
+                    best = address;
+                    best_m = m;
+                    at = p;
+                }
+            }
+            if (best == 0) {
+                LOG_INFO(Core, "coop: test drop {} {:.0f}: no boss of ours by that name here (a copy, or none)", name,
+                         metres);
+                continue;
+            }
+            PoseWrite w;
+            w.address = best;
+            w.position = at;
+            w.position[1] -= metres;
+            poses.push_back(w);
+            LOG_INFO(Core, "coop: test drop {} {:#x} from {:.2f} {:.2f} {:.2f} by {:.0f} m ({:.1f} m from Link)", name,
+                     best, at[0], at[1], at[2], metres, best_m);
+        }
+    }
+
     void TestKills(const std::vector<Seen>& seen, std::vector<LifeWrite>& writes, std::uint8_t self) {
         std::vector<TestStrike> strikes;
         {
@@ -4359,6 +4894,13 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
+        // Report 200: another player's kill of our copy of their encounter (the Gerudo jail guard's death runs our
+        // game's own defeat event, which warps our Link to the cell): never given, the copy goes without a death
+        // (CoopObjects::CopyGoesWithoutDeath).
+        const bool lethal = !w.heal && !w.test_kill && (w.life <= 0 || (w.hurt > 0 && old >= 0 && w.hurt >= old));
+        if (lethal && sync_.GoesWithoutDeath(w.address, share_now_us_)) {
+            return;
+        }
         // An enemy (a boss too, or an actor we cannot name) is never written (the owner's native rule): its life
         // changes only through its game's own damage step (the replayed hit) or its own Life step (patch 0007);
         // else the change is lost. RouteLife decides (objects_test); this reads the game for it and acts.
@@ -4421,6 +4963,14 @@ private:
         }
 #endif
         const LifeRouted routed = RouteLife(ask);
+        if (static std::atomic<int> said_why{0};
+            w.hurt > 0 && routed.route != LifeRoute::replay && said_why.fetch_add(1) < 40) {
+            // Row 172 (run 053413): another player's hit not replayed loses the game's kill consequences.
+            LOG_INFO(Core, "coop: objects: share life {:#x} '{}': P{}'s hit not replayed (route {}): replay {}, "
+                           "player {:#x} (our Link {:#x}, {} names), direct {}, out of reach {}",
+                     w.address, NameOf(w.address), w.hitter, static_cast<int>(routed.route), replay_, player,
+                     our_link_, names_.size(), w.direct, ask.out_of_reach);
+        }
         switch (routed.route) {
         case LifeRoute::replay: {
             Mover::Hit h;
@@ -4838,8 +5388,17 @@ private:
         // A placed world object goes where coop_world says, or stays where
         // this game has it: the enemy sharing does not place those.
         std::erase_if(poses, [this](const PoseWrite& w) { return world_.Places(w.address); });
-        world_.Poses(now_us, poses);        auto& memory = system.ApplicationMemory();
+        world_.Poses(now_us, poses);
+        // Row 178: our own boss that fell out of its room goes back to its fight start, by the same call.
+        for (const auto& [actor, start] : CoopBossNative::TheTable().TakeReturns()) {
+            PoseWrite w;
+            w.address = actor;
+            w.position = start;
+            poses.push_back(w);
+        }
+        auto& memory = system.ApplicationMemory();
         Reader r(memory);
+        TestDrops(r, poses);
         std::unordered_map<u64, coop::protocol::Vec3> placed;
         std::vector<Mover::Pose> wish;
         if (drive_pose_) {
@@ -4848,6 +5407,10 @@ private:
         // Copies whose own AI wanted another animation (issue 157).
         for (const auto& [a, name] : TheMover().TakeTakeovers()) {
             sync_.NoteTakeover(a, now_us, name);
+        }
+        // Row 175: a copy's own death the Mover did not cover: marked as a walk would mark it.
+        for (const auto& [a, name] : TheMover().TakeOwnDeaths()) {
+            sync_.NoteOwnDeath(a, now_us, name);
         }
         // The enemies' brain path: a plain copy whose own brain asked for another phase than its owner's wants
         // to act on our Link (issue 101; no play to give back: its brain is let run instead).
@@ -4953,7 +5516,7 @@ private:
             const auto where = [this](std::uint64_t a) { return Where(a); };
             CoopGuard::Skip(removes, local, where, [](u64 a) { return a; });
             // Row 98(2): an event's last enemy is not removed by another game before our game played it.
-            std::erase_if(removes, [this](u64 a) { return keeper_addresses_.contains(a); });
+            std::erase_if(removes, [this](u64 a) { return keeper_addresses_.contains(a) || landed_hold_.contains(a); });
             // Issue 194: a world object another game moves (coop_world: a falling ladder,
             // a block and its base anchor) is no event's partner: it follows at once, else
             // it jumped after.
@@ -5036,11 +5599,11 @@ private:
                          "coop: objects: share placed {} copies; off from where we put them "
                          "avg {:.3f} max {:.3f} over {}; game calls: {} moves, {} deletes, {} "
                          "plays, {} frame sets; hurts taken {} missed {} (boss hits to its Life step {}, dying copies "
-                         "finished {}); own hits kept while a replay waited {}",
+                         "finished {}); own hits kept while a replay waited {}; boss copies kept in the room {}",
                          placed_.size(), drift_count_ ? drift_sum_ / drift_count_ : 0.0f,
                          drift_max_, drift_count_, moved, deleted, played, framed, sync_.HurtsTaken(),
                          sync_.HurtsMissed(), sync_.BossHitsStepped(), sync_.DyingFinished(),
-                         sync_.OwnHitsKept());
+                         sync_.OwnHitsKept(), sync_.BossCopiesKept());
             }
             // Issue 101: which copy was furthest from where we put it, so
             // one run tells a copy the setter does not hold (a flying or
@@ -5262,6 +5825,7 @@ private:
     std::size_t refused_logged_ = 0;
     std::uint8_t decider_logged_ = 0;
     std::unordered_map<u64, std::pair<std::string, u64>> names_;  // name, hash by actor
+    std::unordered_map<u64, ActorStamp> stamps_;  // what each cached name was read with (row 172)
     // Row 138(8): townspeople and animals (by actor, its placement hash) whose live logic has no area input.
     std::unordered_map<u64, u64> no_area_;
     static constexpr std::size_t kNoAreaMax = 4096;
@@ -5357,6 +5921,10 @@ std::optional<LinkHearts> OurLife() {
 
 void SetMaxLife(std::optional<std::int32_t> quarters) {
     TheMaxLife().store(quarters.value_or(-1));
+}
+
+void AskRefill() {
+    TheRefillAsked().store(true);
 }
 
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters) {
@@ -5488,6 +6056,18 @@ std::optional<std::array<float, 3>> TestPlatformPlace(const std::string& name) {
     return it->second;
 }
 
+void QueueTestAim(float x, float y, float z) {
+    TheMover().ArmAim({x, y, z}, SteadyNowMs() + 10000);
+    LOG_INFO(Core, "coop: test aim {:.2f} {:.2f} {:.2f}: waits for our next arrow (10 s)", x, y, z);
+}
+
+void QueueTestDrop(std::string name, float metres) {
+    std::lock_guard lock(KeyRefundMutex());
+    if (TestDropQueue().size() < 16 && metres > 0.0f) {
+        TestDropQueue().emplace_back(std::move(name), metres);
+    }
+}
+
 void QueueTestKill(std::string name) {
     std::lock_guard lock(KeyRefundMutex());
     if (TestKillQueue().size() < 16) {
@@ -5593,11 +6173,11 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
     }
     for (const Seen& s : g_bosses) {
         // Every boss body's death as our walk reads it (the LANE1 checks look for this line in each game).
-        const auto was = g_boss_lives.find(s.name);
-        if (s.life && s.life->life <= 0 && (was == g_boss_lives.end() || was->second.life > 0)) {
+        // Once per body: by its own last reading (row 191: several eggs share the name).
+        const BossLifeSeen* was = BossLifeOf(g_boss_lives, s.name, s.address);
+        if (s.life && s.life->life <= 0 && (was == nullptr || was->life > 0)) {
             LOG_INFO(Core, "coop: bosses: {} {:#x} read at life 0 here ({}): its death", s.name, s.address,
-                     was == g_boss_lives.end() ? std::string("first reading")
-                                               : "from " + std::to_string(was->second.life));
+                     was == nullptr ? std::string("first reading") : "from " + std::to_string(was->life));
         }
     }
     NoteBossLives(g_bosses, g_boss_lives);

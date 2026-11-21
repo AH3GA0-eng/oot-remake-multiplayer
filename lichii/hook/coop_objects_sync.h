@@ -81,6 +81,9 @@ struct Seen {
     // our game last set them (sent in its samples).
     std::uint64_t bsa_component = 0;
     std::optional<coop::protocol::BossBsa> bsa;
+    // Boss turns (0.11.8): an enemy's attack as its own game says (CoopBossNative::AttackFlagsAt: its BSA's current
+    // action verb attribute Attack). nullopt: not read (no BSA, not an enemy).
+    std::optional<bool> attacking;
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
@@ -140,6 +143,11 @@ struct PlayWish {
     bool alias = false;
     float loop = 0.0f;
     float run = -1.0f;
+    // Row 175: never played over the copy's own death (`keep_own_death`) or a boss copy's own stun
+    // (`keep_own_stun`) in slot 0. We read those from its own animation (PictureDeathHere, LifelessKillHere,
+    // row 169's own stun), and a play put over it at once erased it before any walk saw it (CoversOwnReaction).
+    bool keep_own_death = false;
+    bool keep_own_stun = false;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -161,6 +169,14 @@ bool IsWeb(std::string_view actor);
 // PlayWish::only_over: true when `only_over` is empty or one of its
 // '|'-separated parts is in `slot_name`.
 bool PlaysOver(std::string_view slot_name, std::string_view only_over);
+
+// Row 175: this play would put the owner's animation over the copy's own death or stun that its own AI put in
+// slot 0 (PlayWish keep_own_death / keep_own_stun). Not played; the Mover tells Sync of a death (NoteOwnDeath).
+bool CoversOwnReaction(const PlayWish& wish, std::string_view slot_name);
+
+// Row 175: a copy whose death here we read from its own animation, not from a life: a Poe sister's painting
+// (PictureDeathHere) and a lifeless enemy that reacts (LifelessKillHere, issue 133).
+bool DeathReadFromAnimation(std::string_view name, bool reacts, bool life_read);
 
 using Mat3 = std::array<float, 9>;
 
@@ -280,8 +296,13 @@ struct BossLifeSeen {
     std::int32_t life = 0;
     bool removed = false;  // a delete request for `address` came after that reading
 };
-using BossLives = std::map<std::string, BossLifeSeen, std::less<>>;
+// One reading per body: a name may have several bodies at once (Gohma's eggs, a boss's two hands), each read by
+// its own address. (Row 191: kept by name alone, two eggs took turns in the one reading, and the dead one logged
+// "read at life 0 here (from 1): its death" on every walk until it was deleted, as if it had been revived.)
+using BossLives = std::map<std::string, std::vector<BossLifeSeen>, std::less<>>;
 void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
+// The last reading of the body `name` at `address`; nullptr: never read.
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address);
 void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
                                   const BossLives& last);
@@ -349,6 +370,15 @@ bool IsHatchling(std::string_view name);
 // animation in its AS), the Littles jump out, and a Little that is not killed in time grows it back
 // (FloormasterGrow). Its life 0 is read as a death only once every Little linked to it (its group) died too.
 bool SplitsAtZero(std::string_view name);
+// Row 172 (dungeon-sweep-0118-2): what such an enemy splits into (Enemy_Floormaster_Little, _Little_Truth). Only
+// a game whose own Floormaster's life read 0 splits (a copy is held at life 1 or more and runs none of it), and
+// the Littles have no placement hash, so nothing shared them: every other game had none, saw only the regrow, and
+// the Floormaster could be finished only in that one game. Now the game that split shares its Littles (OBJECT_SPAWN
+// of a made id, whoever owns the root; the group link then gives them the root's owner), and the others make
+// copies. A game that splits while another player's Littles are near deletes its own; two splits at once keep the
+// lower player number's (its spawn reaches the other, which removes its own: OBJECT_REMOVE gone).
+bool IsSplitPart(std::string_view name);
+inline constexpr float kSplitReachM = 30.0f;  // a brood's reach (its GroupPart's)
 
 // Boss minions (native boss sync, docs/dungeons-boss.md): an enemy a boss makes
 // in the fight (King Dodongo's babies, Big Octo's children). With native boss
@@ -389,6 +419,22 @@ bool IsAnnounced(std::string_view name);
 bool IsLateEncounter(std::string_view name);
 inline constexpr float kEncounterNearM = 40.0f;
 inline constexpr std::uint64_t kEncounterWaitUs = 1'500'000;
+// Player report 200 (Gerudo Fortress): an encounter is the game's whose logic made it. A copy of it in another game
+// stands for the owner's enemy; its death there runs that game's own consequences of an encounter that game never
+// began. The jail guard (Enemy_MiddleBoss_GerudoThief*) is the case: the cell's logic
+// (GerudoFortress_Common_Level_CarpenterSet_0N, its Dead and Logic_Alive plugs) answers the guard's death with the
+// defeat event (SageOfSpirit_RescueCarpenter GerudoFortress_DestroyGerudoThief0N: Player_Event
+// EventPlayerWarpToTargetActor, GerudoThiefDropKey, the cell's camera), with the Player of that game as its
+// performer. The owner's killing blow was replayed on every copy (row 177: with that game's Link as the attacker), so
+// a player in the outdoor prison had their Link warped into the cell's room below (under the map), and a player
+// standing in the room was warped to the defeat spot too. So outside a dungeon such a copy never dies by its own
+// death (CopyGoesWithoutDeath): when its owner says it died it is deleted, as a copy its owner deleted, and the
+// encounter's result comes by the shared flags (DestroyGerudoThief_*, the cell key, the rescue: report 99); its look
+// follows the owner's own death animation until then. Of every event flow in the romfs, the defeat and rescue
+// entries that warp the Player are the Gerudo rescue's (above, its appear, lose and prison entries) and the boss
+// fights' (Get_Stone*_DefeatBoss, SageOf*_DefeatBoss, Defeat_Ganon: the boss sync's). In a dungeon nothing changes:
+// its rooms keep their own kill counters and shutters, which may count a copy's death (not checked).
+bool CopyGoesWithoutDeath(std::string_view name, bool dungeon);
 inline constexpr std::uint64_t kEncounterStaleUs = 5'000'000;
 
 // An enemy animation that plays as it dies ("Die", "Dead_Fall",
@@ -471,6 +517,9 @@ bool IsBossPart(std::string_view name);
 // A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
 // (its life, its hits, its slots and animations, its own native boss sync entry).
 bool IsBossOrPart(std::string_view name);
+// Boss turns (0.11.8): a sample's object_state bits for an enemy's attack as its game read it (Seen::attacking):
+// attack_read whenever it was read, attacking with it while the attack runs; 0 when not read.
+std::uint8_t AttackBits(std::optional<bool> attacking);
 // Row 149: the root a boss part follows in a walk (PartOf's roots in order, the nearest in reach; on a tie the
 // the first in the walk), as GroupsOf picks it; nothing for no boss part or no root in the walk. `names` and `places`
 // are the walk's, one per actor.
@@ -636,6 +685,13 @@ public:
     }
     static constexpr std::uint64_t kExtrapolateUs = 150'000;
     static constexpr std::uint64_t kPoseStaleUs = 2'500'000;  // no sample this long: let it be
+    // Row 178 (the Forest playtest): Phantom Ganon fell ~3 km in his owner's game, and our copy followed him
+    // there, so the next owner (the hand-over after a down, then 'left') had no boss in the room either. A boss
+    // copy (IsBoss: a group's root) is not put where its owner's samples say once that is this far below where
+    // we first saw it (CoopBossNative::Table::kFallBelowStart, the owner's fall guard): it keeps its last place
+    // in the room until the owner's are back up.
+    static constexpr float kBossFallBelowStartM = 40.0f;
+    mutable std::uint64_t boss_copies_kept_ = 0;  // (BossCopiesKept: counted where Poses skips one)
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
     // Protocol 14: how long the owner's samples carry its newest hit (a few samples: one may be lost).
     static constexpr std::uint64_t kHitShowUs = 500'000;
@@ -951,6 +1007,9 @@ public:
     // Neither a put-back of it nor a walk that sees it starts a chase or an
     // own wake (OwnWake held the owner's play back and gave 'Wait' back).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
+    // Row 175: the Mover did not put the owner's animation over this copy's own death in slot 0
+    // (CoversOwnReaction): the same marks as a walk that sees it (own_death_at, a painting's death here), at once.
+    void NoteOwnDeath(std::uint64_t address, std::uint64_t now_us, std::string_view name);
     // Issue 101 on the enemies' brain path (CoopBossNative::Table::TakeOwnWants): a plain enemy copy whose own
     // brain asked for another phase than its owner's (skipped: the copy plays the owner's, so neither its
     // animation nor a pull towards our Link shows it). Near our Link (kWakeM) it chases us as a put-back one
@@ -1103,6 +1162,8 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // Row 178: boss copies' places not taken so far because the owner's was kBossFallBelowStartM below (Poses).
+    std::uint64_t BossCopiesKept() const { return boss_copies_kept_; }
     // Our own player number (0: not known yet).
     std::uint8_t Self() const { return self_; }
     // review-dc-0118: the owner of the object at `address`, or, once its owner's dead ObjectRemove forgot that, the
@@ -1113,9 +1174,17 @@ public:
     bool InOurScene(std::uint8_t player, std::uint64_t now_us) const;
     // The lowest player number in our scene by fresh samples, `self` included (DeciderOf).
     std::uint8_t SceneDecider(std::uint8_t self, std::uint64_t now_us) const { return DeciderOf(self, now_us); }
+    // Row 160: the other players in our scene by fresh samples (InOurScene for each), `self` left out.
+    std::vector<std::uint8_t> PlayersInOurScene(std::uint8_t self, std::uint64_t now_us) const;
     // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
     // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
     bool OwnerSaysDead(std::uint64_t address) const;
+    // Report 200: the copy at `address` (a director's copy of another player's late encounter) is to die now, and
+    // it is one that never dies by its own death here (CopyGoesWithoutDeath): it goes so from now on (deleted
+    // with the dead ones, never given its killing life, left out of the boss sync; its kill stays remembered for an
+    // own one of ours, report 99). True for one that goes so.
+    bool GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us);
+    bool GoneWithoutDeath(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;
     std::size_t HurtsTaken() const { return hurt_taken_; }
     // Falls counted as our own hit while a replay waited (Seen::own_hit), not as the replay landing.
@@ -1150,6 +1219,7 @@ private:
         std::optional<coop::protocol::Animation> animation;
         std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
         std::optional<coop::protocol::BossBsa> bsa;         // native boss sync: ours, as last read
+        std::optional<bool> attacking;                       // boss turns: its game's Attack attribute (Seen)
         std::optional<coop::protocol::BossBsa> bsa_in;      // native boss sync: a copy's, the owner's latest
         bool boss_native = false;  // a bsa came for it once: its AI runs (never held), across owners
         coop::protocol::Vec3 velocity{};
@@ -1278,9 +1348,11 @@ private:
         // named to us). The dead ObjectRemove forgets the owner, and a room event's kept last kill still needs it.
         std::uint8_t death_owner = 0;
         bool owner_life_zero = false;  // its owner's samples said life 0 (OwnerSaysDead)
+        std::int32_t boss_stand_in_life = 0;   // a boss copy: the owner's life its stand-in hit was replayed for (once each)
         std::optional<std::int32_t> owner_life;  // its owner's last life, from the owner's samples (KeepBossLives)
         bool death_given = false;      // a dying copy boss's remaining life went to its own Life step (once)
         bool dead_now = false;  // a kill from before we came: deleted at once
+        bool quiet_gone = false;  // report 200: its owner killed it away from our Link's fight: deleted, no death
         // enemy-sync-3 (issue 133): our enemy, killed by another game's hit
         // that our game did not take, already said dead (OBJECT_REMOVE).
         bool dead_said = false;
@@ -1332,6 +1404,9 @@ private:
     bool BroodDone(const coop::protocol::ObjectId& root) const;
     // Row 172: the members of a split enemy's group that leave this walk dead, counted before any leave is judged.
     void NoteBroodDeaths(const std::map<std::uint64_t, const Seen*>& now_seen);
+    // Row 175: `own` (its own animation, seen in a walk or by the Mover) is its own death here (o.own_death_at),
+    // and a painting's death here goes to its owner (PictureDeathHere).
+    void MarkOwnDeath(Object& o, std::string_view own, std::uint64_t now_us, std::uint8_t self);
     void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
                      std::vector<coop::protocol::Message>& send, const char* why);
 

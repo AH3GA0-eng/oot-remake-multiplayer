@@ -52,8 +52,9 @@ LifeGuard& TheGuard();
 void SetOurLifeComponent(std::uint64_t component);
 std::uint64_t OurLifeComponent();
 // The objects walk: our Link's BSA and PerceptionEmitter components (0:
-// none), for the crawl and unseen (coop_dbno_body.h). Any thread.
-void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter);
+// none), for the crawl and unseen (coop_dbno_body.h), and whether our Link
+// is Player_Adult (no crawl animations: Body::DownVerb). Any thread.
+void SetOurComponents(std::uint64_t bsa, std::uint64_t emitter, bool adult);
 
 // The Life step hook (any game thread): the sum to take off `component`,
 // whose life is `life`, when the frame's own sum is `sum`. Our Link's goes
@@ -86,6 +87,10 @@ struct View {
 
 // What to draw now; nothing when there is nothing. Any thread.
 std::optional<View> Shown();
+
+// Any thread: `number`'s DBNO state now (ours from the last frame, the others' from their DBNO_STATE); up when not
+// known or DBNO is off. Row 160: a downed, spectating or out owner cannot play a room event (CoopEventResult).
+State StateOfPlayer(std::uint8_t number);
 
 // --- Spectating ---
 

@@ -269,6 +269,7 @@ void FlagWatcher::reset() {
   // Row 140: what was left to the game was the old session's group's.
   game_owned_.clear();
   put_back_.clear();
+  hud_given_.clear();
   owed_.clear();
   owed_due_ = false;
   // Another session, or the same server started again: what the group had
@@ -302,6 +303,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
   // Writes that failed before go first, so newer incoming values win. One
   // whose flag the game has changed by itself since is dropped instead: the
   // game's change is newer, and the diff below sends it.
+  std::erase_if(unwritten_exact_, [this](const FlagKey& key) { return !unwritten_.contains(key); });
   const Table retry = unwritten_;
   for (const auto& [key, entry] : retry) {
     // A count total is written on top of the game's own change (write()),
@@ -316,7 +318,11 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
         }
       }
     }
-    write(store, entry);
+    if (unwritten_exact_.contains(key)) {
+      write_exact(store, entry);
+    } else {
+      write(store, entry);
+    }
   }
   const auto deltas = std::move(unadded_);
   unadded_.clear();
@@ -374,6 +380,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     // screen's floors): a value left to the game may take a put-back again (owed_, when the window ends).
     game_owned_.clear();
     put_back_.clear();
+    hud_given_.clear();  // row 183: the load reads the HUD's copy in again
     window_since_ = frames_;
     old_counted_ = false;
     window_retry_ = false;
@@ -591,8 +598,11 @@ void FlagWatcher::apply_reset(FlagStore& store, const std::vector<FlagEntry>& fl
     const std::optional<FlagEntry> had = entry.kind == protocol::FlagKind::int32 && store.is_max(key)
                                              ? store.read(key)
                                              : std::nullopt;
-    if (write_exact(store, entry)) {
-      ++stats_.reset_applied;
+    const bool written = write_exact(store, entry);
+    if (written) ++stats_.reset_applied;
+    // Also when the write waits (unwritten_exact_, row 159): the lowered value lands later, and our game's write-back
+    // of its higher one after that is still not progress.
+    if (written || unwritten_.contains(key)) {
       if (had && had->kind == protocol::FlagKind::int32 && as_int(had->value) > as_int(entry.value)) {
         reset_holds_[key] = ResetHold{static_cast<std::int32_t>(as_int(entry.value)),
                                       static_cast<std::int32_t>(as_int(had->value))};
@@ -641,6 +651,7 @@ bool FlagWatcher::write_exact(FlagStore& store, const FlagEntry& entry) {
   if (!store.write_exact(entry)) {
     note_write_failure(store, key, "write_exact", entry.value != 0);
     unwritten_[key] = entry;
+    unwritten_exact_.insert(key);
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();
     }
@@ -952,6 +963,7 @@ bool FlagWatcher::write(FlagStore& store, const FlagEntry& entry) {
   if (!store.write(to_write)) {
     note_write_failure(store, key, "write");
     unwritten_[key] = entry;
+    unwritten_exact_.erase(key);
     if (!written_for_others_.empty() && written_for_others_.back() == key) {
       written_for_others_.pop_back();  // not written: tried again later
     }
@@ -1068,8 +1080,16 @@ void FlagWatcher::put_owed(FlagStore& store) {
     ++stats_.one_way_restores;
     ++stats_.one_way_owed;
     ++stats_.applied;
-    if (is_hud_dungeon_item(key)) hud_refresh_ = true;
+    ask_hud(key, back.value);
   }
+}
+
+void FlagWatcher::ask_hud(FlagKey key, std::uint32_t value) {
+  if (!is_hud_dungeon_item(key)) return;
+  const auto [it, fresh] = hud_given_.try_emplace(key, value);
+  if (!fresh && it->second == value) return;  // row 183: given this value already in this window
+  it->second = value;
+  hud_refresh_ = true;
 }
 
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
@@ -1215,7 +1235,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         leave();
         continue;
       }
-      if (auto& pb = put_back_[key]; pb.pass != 0 && diff_pass_ - pb.pass <= kUndoPasses) {
+      if (auto& pb = put_back_[key]; pb.pass != 0) {  // row 183: every drop after a put-back, however long after
         if (++pb.undone >= kMaxQuickUndos) {
           // Row 140: the game lowers it again at once from its own copy: putting it back every frame never sticks.
           game_owned_.insert(key);
@@ -1225,15 +1245,13 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
           leave();
           continue;
         }
-      } else {
-        pb.undone = 0;
       }
       const MapDropBecause because("the flag watcher: one-way restore (issue 146)");
       FlagEntry back = before;
       if (bits_drop) back.value = before.value | now->value;
       if (store.write(back)) {
         put_back_[key].pass = diff_pass_;
-        if (is_hud_dungeon_item(key)) hud_refresh_ = true;  // row 140: every put-back, so the HUD copy takes it
+        ask_hud(key, back.value);  // row 140: so the HUD copy takes it (row 183: a value it has not had yet)
         ++stats_.one_way_restores;
         ++stats_.applied;
         it->second = before;  // a new floor in `back` goes out next frame as a change

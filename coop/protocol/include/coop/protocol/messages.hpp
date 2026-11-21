@@ -30,6 +30,11 @@ namespace coop::protocol {
 // 15: PLATFORM_CLOCK keys in a mover's GroundControl node (regions 0xfffe / 0xfffd, #196, 0.11.6): a protocol 14
 // reader refuses them as bad_value and drops the whole message, so a 0.11.5 game must be refused at HELLO.
 inline constexpr std::uint16_t kProtocolVersion = 15;
+// A public game (anyone joins without typing a password) lists itself on the relay's room list with this bit
+// on top of kProtocolVersion; the relay repeats the version as given. A listing without it is a private game
+// (or an older kit's): the joiner asks for the host's password and never tries the public one on it.
+inline constexpr std::uint16_t kPublicListingBit = 0x8000;
+constexpr std::uint16_t public_listing_version() { return kPublicListingBit | kProtocolVersion; }
 inline constexpr std::uint16_t kDefaultPort = 27510;
 inline constexpr std::uint8_t kMaxPlayers = 16;  // protocol 11; 4 before
 
@@ -54,6 +59,31 @@ inline std::string clamp_build_id(std::string_view id) {
     }
   }
   return std::string(id);
+}
+// The co-op release a HELLO's build_id names (docs/crossplay.md): its first word that is a version, "v0.11.7" or
+// "0.11.7" (at least two numbers with dots), without a `git describe` tail ("-86-gab12cd34", "-dirty"); "" when it names
+// none (a launcher's own name, a commit alone, a test tool). Two games of different releases are not let play together.
+inline std::string coop_release(std::string_view id) {
+  std::size_t at = 0;
+  while (at < id.size()) {
+    const std::size_t end = (std::min)(id.find(' ', at), id.size());   // (parenthesised: windows.h's min macro)
+    std::string_view word = id.substr(at, end - at);
+    at = end + 1;
+    if (word.starts_with('v') || word.starts_with('V')) word.remove_prefix(1);
+    word = word.substr(0, word.find('-'));
+    std::size_t dots = 0;
+    bool ok = !word.empty() && word.front() != '.' && word.back() != '.';
+    for (std::size_t i = 0; ok && i < word.size(); ++i) {
+      if (word[i] == '.') {
+        ok = word[i - 1] != '.';
+        ++dots;
+      } else {
+        ok = word[i] >= '0' && word[i] <= '9';
+      }
+    }
+    if (ok && dots >= 1) return "v" + std::string(word);
+  }
+  return {};
 }
 inline constexpr std::size_t kMaxGameBuildIdChars = 32;
 inline constexpr std::size_t kMaxGameVersionChars = 16;
@@ -282,6 +312,9 @@ enum class RefuseReason : std::uint8_t {
   // Protocol 13, host approval (docs/protocol.md "Host approval"): the host
   // did not let this player in (it said no, did not answer in time, or left).
   not_let_in = 9,
+  // The game runs another co-op release than the host's (coop_release of the HELLO's build_id against the session's
+  // first player's; a build that names none is let in). Older games show it as an unknown reason.
+  wrong_coop_version = 10,
   // Never sent: the game's own refusal of a server that did not encrypt
   // although the game has a join password (docs/protocol.md "Encrypted
   // traffic"), so nobody on the path can stand in for a no-password server.
@@ -680,6 +713,20 @@ struct Host {
 // accessory (kind 14), not as hand armor (docs/puppet.md).
 inline constexpr std::string_view kChildBraceletPrefix = "Armor_Child_Gauntlet_";
 
+// The only head pieces a puppet wears: the masks, `Armor_Child_Mask_*` (the
+// game's ten; there are no adult masks, and the base `Armor_Mask_Base` is none).
+// PlayerStatus.EquipHeadArmor also names the Lens of Truth once a player has
+// it: `Armor_GlassTruth`, the age-less base actor whose model is the ADULT
+// glasses with no animation or physics for their hanging lenses. The game
+// never draws that name on Link (it wears Armor_Child_/Adult_GlassTruth only
+// while the Lens is in use). Worn and shown on a puppet it drew the adult
+// glasses' unposed mesh as orange spikes from the head and shoulders and a
+// long streak along the ground on every puppet (row 197; 0.11.6 to 0.11.8).
+constexpr bool is_drawn_head(std::string_view name) {
+  constexpr std::string_view kPrefix = "Armor_Child_Mask_";
+  return name.size() > kPrefix.size() && name.starts_with(kPrefix);
+}
+
 // What a player wears and holds (docs/puppet.md, "Equipment"). Each name is
 // the game's actor name of that piece, for example "Weapon_Sword_Kokiri" or
 // "Armor_Adult_Goron"; an empty name is nothing in that slot. A field that is
@@ -824,6 +871,13 @@ inline constexpr std::uint8_t asleep = 1u << 2;
 // game logic (an Enemy_: a Deku Scrub) then keeps that logic; only the
 // event's result reaches it (its flags). An older build ignores the bit.
 inline constexpr std::uint8_t in_event = 1u << 3;
+// Boss turns (0.11.8): the owner's enemy is in an attack, read from its game's own action verb attribute Attack
+// (the attributes of its BSA's current action verbs, as the game's own method main+0x507be0 reads them). The server
+// hands the enemy to the next player at an attack end (Session::next_turn). An older build ignores the bit.
+inline constexpr std::uint8_t attacking = 1u << 4;
+// The sender reads attacks (the bit above means something): set on every sample of an enemy whose BSA it reads.
+// Turns only for enemies whose owner sets it, so an older owner's boss keeps its one owner.
+inline constexpr std::uint8_t attack_read = 1u << 5;
 }  // namespace object_state
 
 // Issue 150 (protocol 10): one more AS slot of the owner's actor than slot 0

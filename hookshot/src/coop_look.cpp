@@ -16,6 +16,9 @@ const std::array<PartInfo, kParts>& Parts() {
         {Part::tunic, "tunic", "Tunic", "Kokiri Tunic"},
         {Part::goron_tunic, "goron_tunic", "Tunic", "Goron Tunic"},
         {Part::zora_tunic, "zora_tunic", "Tunic", "Zora Tunic"},
+        {Part::cap_trim, "cap_trim", "Tunic", "Cap trim"},
+        {Part::eyes, "eyes", "Eyes", "Colour"},
+        {Part::hair, "hair", "Hair", "Colour"},
         {Part::hylian_frame, "hylian_frame", "Hylian Shield", "Frame"},
         {Part::hylian_face, "hylian_face", "Hylian Shield", "Face"},
         {Part::hylian_emblem, "hylian_emblem", "Hylian Shield", "Emblem"},
@@ -92,6 +95,12 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
         return std::nullopt;
     }
     return coop::protocol::slot_color(number);
+}
+
+bool NucleusWrote(std::string_view coop_ini) {
+    if (coop_ini.substr(0, 3) == "\xef\xbb\xbf") coop_ini.remove_prefix(3);   // (a BOM)
+    const std::string_view first = coop_ini.substr(0, coop_ini.find_first_of("\r\n"));
+    return first.substr(0, 38) == "# Written by the Nucleus Co-op handler";
 }
 
 std::string PackStartTunic(const std::optional<std::vector<std::uint8_t>>& tile, const FileFn& self_tile,

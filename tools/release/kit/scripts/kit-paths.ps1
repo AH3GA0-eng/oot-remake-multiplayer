@@ -213,7 +213,7 @@ function Read-KitOptions([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         $t = $line.Trim()
-        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_port|server_password|max_players|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|relay_room|approve_joins|pvp)\s*=') { continue }
+        if (-not $t -or $t.StartsWith('#') -or $t.StartsWith(';') -or $t -match '^(auto_update|verify_signature|server_allow|server_bind|server_port|server_password|max_players|public_address_lookup|upnp|invite|stun_servers|relay|relay_key|relay_room|approve_joins|pvp|character_select)\s*=') { continue }
         if ($t -match '^color\s*=\s*(.*?)\s*$') {
             $c = $Matches[1] -replace '\s+[#;].*$', ''  # a comment after it: 'color = blue  # mine'
             if (-not $c) { continue }  # none chosen: the player number's colour
@@ -277,9 +277,27 @@ function Read-KitHostSession([string]$Kit, $Servers) {
 # no), Stun (stun_servers), Relay (relay = address[:port]), RelayKey (relay_key) and RelayRoom (relay_room, a
 # room name on the relay) are the router forward, the invite code and the relay (docs/play-online.md). ApproveJoins:
 # $true for 'approve_joins = on': each new player waits for the host's /allow or /deny (issue 261). Pvp: $true
-# only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off.
+# only for 'pvp = on' (or yes, 1, true); anything else, or no line, is off. Relay: the project's own
+# ($script:KitDefaultRelay, as the game's CoopTitleMenu::kDefaultRelay) without a relay line, or with an empty one: it is
+# never removed. SameNetworkOpen: players on this network join without the password, unless 'same_network_password =
+# on' (docs/protocol.md, "Same network").
+$script:KitDefaultRelay = '159.54.182.85:27530'
+# A public game (coop-options.ini public_game = on, the in-game Host page's Game row): anyone with the room name joins
+# with no password (coop_server --public; the traffic is still encrypted). Its join password is made from the room,
+# as the game's coop::protocol::public_join_password: the tag and the room in lower case.
+function Get-KitPublicPassword([string]$Room) { return 'squadala-public-game:' + $Room.ToLowerInvariant() }
+# The public game's room, in lower case as the relay keeps it (normalize_room): $Override (OOT_COOP_PUBLIC_ROOM, the
+# host's own game is told the room Host.bat picked) when it is a room name, else relay_room when it is one, else a
+# ready one ('forest-4821'), as the game's CoopTitleMenu::Options::RandomRoomName offers. A bad override is skipped.
+function Get-KitPublicRoom($Access, [string]$Override = '') {
+    foreach ($room in "$Override".Trim(), "$($Access.RelayRoom)".Trim()) {
+        if ($room -match '^[A-Za-z0-9_-]{3,24}$') { return $room.ToLowerInvariant() }
+    }
+    $words = 'forest', 'lake', 'field', 'river', 'valley', 'meadow', 'canyon', 'grove', 'cliff', 'marsh', 'harbor', 'summit'
+    return '{0}-{1}' -f ($words | Get-Random), (Get-Random -Minimum 1000 -Maximum 10000)
+}
 function Read-KitServerAccess([string]$Path) {
-    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = ''; RelayKey = ''; RelayRoom = ''; ApproveJoins = $false; Pvp = $false }
+    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = $script:KitDefaultRelay; RelayKey = ''; RelayRoom = ''; ApproveJoins = $false; Pvp = $false; SameNetworkOpen = $true; PublicGame = $false }
     if (-not (Test-Path -LiteralPath $Path)) { return $access }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
@@ -288,11 +306,13 @@ function Read-KitServerAccess([string]$Path) {
         elseif ($line -match '^\s*upnp\s*=\s*(.*?)\s*$') { $access.Upnp = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*invite\s*=\s*(.*?)\s*$') { $access.Invite = $Matches[1] -notmatch '^(no|off|false|0)$' }
         elseif ($line -match '^\s*stun_servers\s*=\s*(.*?)\s*$') { $access.Stun = $Matches[1] }
-        elseif ($line -match '^\s*relay\s*=\s*(.*?)\s*$') { $access.Relay = $Matches[1] }
+        elseif ($line -match '^\s*relay\s*=\s*(.*?)\s*$') { $access.Relay = $(if ($Matches[1]) { $Matches[1] } else { $script:KitDefaultRelay }) }
+        elseif ($line -match '^\s*same_network_password\s*=\s*(.*?)\s*$') { $access.SameNetworkOpen = $Matches[1] -notmatch '^(on|yes|1|true)$' }
         elseif ($line -match '^\s*relay_key\s*=\s*(.*?)\s*$') { $access.RelayKey = $Matches[1] }
         elseif ($line -match '^\s*relay_room\s*=\s*(.*?)\s*$') { $access.RelayRoom = $Matches[1] }
         elseif ($line -match '^\s*approve_joins\s*=\s*(.*?)\s*$') { $access.ApproveJoins = $Matches[1] -match '^(on|yes|1|true)$' }
         elseif ($line -match '^\s*pvp\s*=\s*(.*?)\s*$') { $access.Pvp = $Matches[1] -match '^(on|yes|1|true)$' }
+        elseif ($line -match '^\s*public_game\s*=\s*(.*?)\s*$') { $access.PublicGame = $Matches[1] -match '^(on|yes|1|true)$' }
     }
     return $access
 }
@@ -368,6 +388,24 @@ function Get-GpuSpeedHint([scriptblock]$Query = { Get-CimInstance Win32_VideoCon
     return "Only built-in graphics found ($($builtIn -join ', ')). If the game runs slowly, click the 60 FPS button at the bottom of the emulator window to switch to 30 FPS (SETUP.md, `"Low frame rate`")."
 }
 
+# Steam Input outside Steam (player report 202, docs/setup.md "If something goes wrong"): with Steam open and the game
+# not started by Steam, Steam gives a Steam Controller (or any pad Steam Input runs) its Desktop layout, a mouse and
+# keyboard, so the menus seem to work and play does not. Steam sets SteamGameId, SteamAppId, SteamClientLaunch or
+# SteamOverlayGameId for what it starts, a non-Steam game too, and Start Squadala.bat's windows inherit them. Returns
+# the warning lines, or nothing (started by Steam, Steam not running, or a check that fails). Never blocks.
+# $Env: the environment's names (tests); $SteamRunning: $true while Steam runs (tests).
+function Get-KitSteamInputHint([hashtable]$Env = $null, [scriptblock]$SteamRunning = {
+        [bool](Get-Process -Name 'steam' -ErrorAction SilentlyContinue) }) {
+    foreach ($n in 'SteamGameId', 'SteamAppId', 'SteamClientLaunch', 'SteamOverlayGameId') {
+        $v = if ($null -ne $Env) { $Env[$n] } else { [Environment]::GetEnvironmentVariable($n) }
+        if ("$v".Trim()) { return }
+    }
+    try { if (-not (& $SteamRunning)) { return } } catch { return }
+    return @(
+        'Steam is open, but this game was not started from Steam. A Steam Controller (or a pad Steam Input runs) then works as a mouse and keyboard, not as a controller.',
+        '  To play with it: start Start Squadala.bat from Steam (add it as a non-Steam game) with a gamepad controller layout, or turn Steam Input off for that pad (SETUP.md, "If something goes wrong").')
+}
+
 # The pack tool's own hash, as tools\puppet_pack\build.py (tool_hash) writes it into
 # coop_puppet.json: SHA-256 over "<name>:<sha256 of the file>`n" for each *.py in the folder
 # (not tests\), names in ordinal order. Nothing when the folder is not there.
@@ -435,7 +473,12 @@ function Get-KitTunic([string]$Color) {
 # tools/puppet_pack/self_tunic.py, the same steps. Green, no colour or a
 # pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
 # Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
-function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
+# -Painted (Longshot): the co-op module paints your exact colour on green's files while the game
+# runs (hookshot/src/coop_look_live.cpp, from the pack's coop_look/green.bin), so a pack that has
+# green's own files and coop_look/green.bin gets green's whatever the colour: what the game's memory
+# holds is then always the texels the module paints from. Without -Painted (the emulator, which has
+# no such module) or with an older pack: your colour's files, the nearest preset.
+function Set-KitSelfTunic([string]$PackDir, [string]$Color, [switch]$Painted) {
     $romfs = Join-Path $PackDir 'romfs'
     $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
     $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
@@ -446,6 +489,12 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     $json = $null
     try {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+    } catch { }
+    try {
+        if ($Painted -and $json -and $json.self_files -and $json.self_files.green -and $json.look_files -and
+            $json.look_files.green -and (Test-Path -LiteralPath (Join-Path $PackDir $json.look_files.green) -PathType Leaf)) {
+            $tunic = 'green'
+        }
     } catch { }
     $ok = { param($rel) $rel -is [string] -and ($rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' -or
             $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$') }
@@ -519,8 +568,9 @@ function Set-KitDefaultColor([string]$Mode, [string]$Server) {
 # no pack the puppets off. $Manifest: the pack's coop_puppet.json (the emulator's load\<title>\coop-puppet,
 # Hookshot's mods\contents\<title>\coop-puppet). $Missing: the lines to say when there is no pack.
 # Hookshot indexes its mod files once at start, so this runs before Start-Process there too.
-# Returns $true when the pack is there.
-function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing) {
+# Returns $true when the pack is there. -Painted: Longshot's co-op module paints your colour on green's
+# tunic files (Set-KitSelfTunic -Painted).
+function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing, [switch]$Painted) {
     if (Test-Path -LiteralPath $Manifest) {
         Write-Host 'Puppet pack: found.'
         # Made before sound or before the kit's pack tool changed: say so, start anyway.
@@ -528,10 +578,14 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         if ($hint) { Write-Host $hint }
         # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
         $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
-        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want
+        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want -Painted:$Painted
         if ($self) {
             $env:LICHII_COOP_SELF_TUNIC = $self
-            Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            if ($self -eq 'green' -and $want -and (Get-KitTunic $want) -and (Get-KitTunic $want) -ne 'green') {
+                Write-Host "Your Link: your tunic colour ($want) is painted on in the game (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            } else {
+                Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            }
         }
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
@@ -1166,7 +1220,7 @@ function Install-KitOotrr([string]$Kit, [string]$ExeDir, [string]$Downloads = ''
         if (-not $why) {
             if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction Stop }
             New-Item -ItemType Directory -Force -Path $new | Out-Null
-            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
+            # (the zip holds one folder, OOTRR-<version>-windows-x64\, since 0.8.1 ...-windows-x64-portable\: ootrr.exe, LICENSE, NOTICE, README.md)
             & "$env:SystemRoot\System32\tar.exe" -x -f $zip -C $new --strip-components=1 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) { $why = "unpacking $($op.windows) failed (tar $LASTEXITCODE)" }
             else { $why = Test-KitOotrrRuns (Join-Path $new 'ootrr.exe') }
@@ -1207,6 +1261,510 @@ function Install-KitOotrr([string]$Kit, [string]$ExeDir, [string]$Downloads = ''
         Write-KitOotrrStatus $ExeDir "ok $($op.release)"
     }
     return $r
+}
+
+# --- OoT Character Select (snaildev99), fetched on the player's PC (hookshot\CHARACTER-SELECT.txt) ----------------
+# The kit carries none of the mod's files: Snail is its author and distributor, and its release holds the game's
+# characters rebuilt from the game's own files (Nintendo's). At a start the kit asks once (Invoke-KitCharacterSelectStep);
+# on yes it downloads his release zip and his characters.json from his GitHub pages, checks each SHA-256 the pin names,
+# unpacks the mod's one folder into the game's mods folder and stamps it (coop-charsel.txt). It is on: a mod the Mods
+# tab's list does not name is on, and the list is never written here, so a player's Off in the tab stays (also over
+# Update.bat, which leaves the game folder alone). Its code patch (exefs) is built into the game by our patches
+# 0034/0035: the folder's .ips changes the game's stamp (Get-KitExefsStampLine), so the start's next check asks for
+# that build ('mods'), and the puppet pack is made again with the characters (Get-PuppetPackHint).
+
+# The first line of a small file, trimmed ('' when it cannot be read). File.ReadAllLines closes the file at once:
+# Get-Content -TotalCount can leave it open for a while, and Windows then refuses to move its folder (CI, f0509dfc).
+function Read-KitFirstLine([string]$Path) {
+    try { $l = @([System.IO.File]::ReadAllLines($Path)); if ($l.Count) { return "$($l[0])".Trim() } } catch { }
+    return ''
+}
+
+# The pin's keys, or $null when the kit has no pin (a kit without Character Select) or it is incomplete.
+function Get-KitCharacterSelectPin([string]$Kit) {
+    $pin = Join-Path $Kit 'hookshot\CHARACTER-SELECT.txt'
+    if (-not (Test-Path -LiteralPath $pin)) { return $null }
+    $op = @{}
+    foreach ($line in @(Get-Content -LiteralPath $pin -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$') { $op[$Matches[1]] = $Matches[2] }
+    }
+    if (-not ($op.release -match '^[A-Za-z0-9._-]+$' -and $op.url -match '^https://' -and $op.zip -match '^[A-Za-z0-9._-]+$' -and
+              $op.zip_sha256 -match '^[0-9a-fA-F]{64}$' -and $op.zip_folder -and $op.zip_folder -notmatch '\.\.' -and
+              $op.folder -match '^[A-Za-z0-9][^\\/:*?"<>|]*$' -and
+              $op.overlay_url -match '^https://' -and $op.overlay_sha256 -match '^[0-9a-fA-F]{64}$')) { return $null }
+    if ($op.ips_url -and ($op.ips_url -notmatch '^https://' -or $op.ips_sha256 -notmatch '^[0-9a-fA-F]{64}$')) { $op.ips_url = '' }
+    return $op
+}
+
+# The player's answer: coop-options.ini 'character_select = yes|no|ask' wins (ask: the question again); else the answer
+# kept in hookshot\character-select-answer.txt (written at the question; no kit file has that name, so Update.bat keeps it;
+# not character-select.txt: Windows names ignore case, and that is the pin CHARACTER-SELECT.txt);
+# else 'ask'.
+function Get-KitCharacterSelectChoice([string]$Kit) {
+    foreach ($line in @(Get-Content -LiteralPath (Join-Path $Kit 'coop-options.ini') -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*character_select\s*=\s*(yes|no|ask)\s*([#;].*)?$') {
+            $v = $Matches[1].ToLowerInvariant()
+            if ($v -eq 'ask') { Remove-Item -LiteralPath (Join-Path $Kit 'hookshot\character-select-answer.txt') -Force -ErrorAction SilentlyContinue }
+            return $v
+        }
+    }
+    $kept = Join-Path $Kit 'hookshot\character-select-answer.txt'
+    if (Test-Path -LiteralPath $kept) {
+        $v = (Read-KitFirstLine $kept).ToLowerInvariant()
+        if ($v -eq 'yes' -or $v -eq 'no') { return $v }
+    }
+    return 'ask'
+}
+
+function Set-KitCharacterSelectChoice([string]$Kit, [string]$Value) {
+    try { [System.IO.File]::WriteAllText((Join-Path $Kit 'hookshot\character-select-answer.txt'), "$Value`n") } catch { }
+}
+
+# The question at a start (owner, 0.11.9: the NPC characters are an opt-in download): Y is yes; Enter, N or no key in
+# $Seconds is no. No console (input redirected: a scripted or unattended start) is no. $ReadKey: tests (a scriptblock
+# giving a key object or $null). The Characters page itself comes with every kit either way.
+function Read-KitCharacterSelectAnswer([int]$Seconds = 15, [scriptblock]$ReadKey = $null) {
+    $q = 'Download the NPC characters for the Characters page? [y/N]'
+    Write-Host ''
+    Write-Host 'The Characters page (in the - menu) comes with the kit: Character Select by Snail (snaildev99).'
+    Write-Host '  Its NPC characters (Saria, Sheik, Darunia and over a hundred more) are an extra download from Snail''s own'
+    Write-Host '  GitHub page (about 1 GB, once). Without them you play as Link, and the page tells you when a character is not'
+    Write-Host '  downloaded. The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.'
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected -and -not $ReadKey) { Write-Host "$q n (no console: no)"; return $false }
+    if (-not $ReadKey) { try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { } }
+    $end = (Get-Date).AddSeconds($Seconds)
+    $left = -1
+    while ((Get-Date) -lt $end) {
+        $now = [int][Math]::Ceiling(($end - (Get-Date)).TotalSeconds)
+        if ($now -ne $left) { $left = $now; Write-Host -NoNewline "`r$q (no in $left s)  " }
+        $key = if ($ReadKey) { & $ReadKey } elseif ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null }
+        if ($key) {
+            if ("$($key.Key)" -eq 'Y') { Write-Host 'y'; return $true }
+            if ("$($key.Key)" -eq 'N' -or "$($key.Key)" -eq 'Enter') { Write-Host 'n'; return $false }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host 'n'
+    return $false
+}
+
+# The two parts of Snail's mod folder (owner, 0.11.9). A file of the NPC part (the opt-in download): the characters'
+# models (Model/Player_<age>_C<nnn>.*), their textures, cloth and voices (Tex, Phive, Sound), and his Dark Link
+# (Pack/Actor/Enemy_MiddleBoss_DarkLink names his cloth file Phive/Cloth/Player_Adult_Dark, so it goes with Phive;
+# Model/Player_Dark_* is its skeleton). Everything else is the default part every kit gets: the Characters page and
+# Customize screen (UI, Sequence, Mals, RSDB, GameData, SLink2, the size table), Link's own models and packs, and
+# the code patch (exefs) without his customizer. No file of the default part names a file of the NPC part except
+# through the stored character, which the module keeps on an installed one (coop_char_slots.h). $Rel: '/' or '\'.
+function Test-KitCharacterSelectNpcFile([string]$Rel) {
+    $r = $Rel.Replace('\', '/')
+    return [bool]($r -match '^romfs/(Tex|Phive|Sound)/' -or $r -match '^romfs/Model/Player_(Adult|Child)_C\d{3}\.' -or
+                   $r -match '^romfs/Model/Player_Dark_' -or $r -eq 'romfs/Pack/Actor/Enemy_MiddleBoss_DarkLink.pack.zs')
+}
+
+# Snail's customizer in his code patch, left out (owner, 0.11.9: co-op's customization is the one; his customizer code is
+# not used at all). From his MIT source, mods/customize.py of the pinned release: the two places that call it (cz_head
+# in place of the head gear update's call, every player-like actor each frame; cz_frame at the 3D UI camera update's
+# way out, which puts a model's own colours back while CharacterMenu_Customize is set) and the routine and table
+# bodies it fills (CZ_PLACES and COLOUR_DATA). Everything else of the patch (the picker, the model / cloth / voice
+# hooks, the page's view slide, the texture count patches the characters' models are built for) is kept as it is.
+# Addresses as his source gives them; the patch's records are at address - 0x8001FF00 (main's text at 0x80020000,
+# behind the 0x100 bytes of the NSO header), checked on his v0.2.1 patch (each region below has its records there).
+$script:KitCharselCustomizer = @(
+    @('cz_head (HEAD_CALL)', 0x804D756CL, 0x804D7570L), @('cz_frame (FRAME_SITE)', 0x8289D600L, 0x8289D604L),
+    @('COLOUR_CODE', 0x832E1620L, 0x832E19F0L), @('COLOUR_DATA', 0x832E39D0L, 0x832E3C00L),
+    @('COLOUR_MORE', 0x8103AE80L, 0x8103B160L), @('COLOUR_KEEP', 0x83BCDC10L, 0x83BCDDE0L),
+    @('COLOUR_TEX', 0x83BCCE70L, 0x83BCD000L))
+$script:KitCharselIpsShift = 0x8001FF00L
+$script:KitCharselStrip = 'cz1'   # (in the stamp: another list of regions makes the kit strip his patch again)
+
+# An IPS32 file's records: @{ At (offset); Size (bytes it changes); From; To (the record's bytes in the file) }, or a
+# throw when it is not one. IPS32: 'IPS32', records (u32 BE offset, u16 BE size, the bytes; size 0: u16 BE run length
+# and one byte), 'EEOF'.
+function Get-KitIpsRecords([byte[]]$Data) {
+    if ($Data.Length -lt 9 -or [System.Text.Encoding]::ASCII.GetString($Data, 0, 5) -ne 'IPS32') { throw 'not an IPS32 file' }
+    $o = 5
+    $out = New-Object System.Collections.Generic.List[object]
+    while ($true) {
+        if ($o + 4 -gt $Data.Length) { throw 'no EEOF at its end' }
+        if ([System.Text.Encoding]::ASCII.GetString($Data, $o, 4) -eq 'EEOF') { break }
+        if ($o + 6 -gt $Data.Length) { throw 'a record is cut short' }
+        $at = ([long]$Data[$o] -shl 24) -bor ([long]$Data[$o + 1] -shl 16) -bor ([long]$Data[$o + 2] -shl 8) -bor [long]$Data[$o + 3]
+        $n = ([int]$Data[$o + 4] -shl 8) -bor [int]$Data[$o + 5]
+        $from = $o
+        if ($n -eq 0) {
+            if ($o + 9 -gt $Data.Length) { throw 'a run record is cut short' }
+            $size = ([int]$Data[$o + 6] -shl 8) -bor [int]$Data[$o + 7]
+            $o += 9
+        } else {
+            if ($o + 6 + $n -gt $Data.Length) { throw 'a record is cut short' }
+            $size = $n
+            $o += 6 + $n
+        }
+        $out.Add(@{ At = $at; Size = $size; From = $from; To = $o })
+    }
+    if ($o + 4 -ne $Data.Length) { throw 'bytes after EEOF' }
+    return $out.ToArray()
+}
+
+# His code patch without his customizer: @{ Bytes; Dropped (one line per record left out: region, offset, size);
+# Kept (records kept); Why ('' or what is wrong) }. Each record wholly inside a region is left out; one across a
+# region's edge, a region with no record (another release laid out otherwise) or a file that is not IPS32 is a Why:
+# the kit then puts nothing in (the old copy stays) rather than a patch it cannot vouch for.
+function Get-KitCharselStrippedIps([byte[]]$Data) {
+    $r = @{ Bytes = $null; Dropped = @(); Kept = 0; Why = '' }
+    try { $recs = @(Get-KitIpsRecords $Data) } catch { $r.Why = "his code patch cannot be read ($($_.Exception.Message))"; return $r }
+    $hit = @{}
+    $ms = New-Object System.IO.MemoryStream
+    $ms.Write($Data, 0, 5)
+    foreach ($rec in $recs) {
+        $lo = $rec.At; $hi = $rec.At + $rec.Size; $name = $null
+        foreach ($g in $script:KitCharselCustomizer) {
+            $glo = $g[1] - $script:KitCharselIpsShift; $ghi = $g[2] - $script:KitCharselIpsShift
+            if ($lo -ge $glo -and $hi -le $ghi) { $name = $g[0]; break }
+            if ($lo -lt $ghi -and $glo -lt $hi) { $r.Why = ('his code patch changes {0:x8}-{1:x8} across the edge of {2}: not the layout his source names' -f $lo, $hi, $g[0]); return $r }
+        }
+        if ($name) { $hit[$name] = $true; $r.Dropped += ('{0} {1:x8} {2}' -f $name, $lo, $rec.Size) }
+        else { $ms.Write($Data, $rec.From, $rec.To - $rec.From); $r.Kept++ }
+    }
+    foreach ($g in $script:KitCharselCustomizer) {
+        if (-not $hit[$g[0]]) { $r.Why = "his code patch has nothing at $($g[0]): not the layout his source names"; return $r }
+    }
+    $ms.Write([System.Text.Encoding]::ASCII.GetBytes('EEOF'), 0, 4)
+    $r.Bytes = $ms.ToArray()
+    return $r
+}
+
+# A file written fresh: what was at $Path goes first, so a hard link to the kept copy (_<folder>.prev) is never
+# written through.
+function Write-KitFreshFile([string]$Path, [byte[]]$Bytes) {
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    [System.IO.File]::WriteAllBytes($Path, $Bytes)
+}
+
+# The files of $Src under $Dst, as hard links (the same disk: no second gigabyte; a copy where a link cannot be made),
+# but those $Skip ({ param($rel) }) names.
+function Copy-KitTreeLinked([string]$Src, [string]$Dst, [scriptblock]$Skip) {
+    $root = ([System.IO.Path]::GetFullPath($Src)).TrimEnd('\') + '\'
+    foreach ($f in @(Get-ChildItem -LiteralPath $Src -Recurse -File -Force -ErrorAction Stop)) {
+        $rel = $f.FullName.Substring($root.Length)
+        if (& $Skip $rel) { continue }
+        $to = Join-Path $Dst $rel
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+        $linked = $false
+        try { New-Item -ItemType HardLink -Path $to -Value $f.FullName -ErrorAction Stop | Out-Null; $linked = $true } catch { }
+        if (-not $linked) { Copy-Item -LiteralPath $f.FullName -Destination $to -Force -ErrorAction Stop }
+    }
+}
+
+# What an install stamps (coop-charsel.txt): release, the three SHA-256 (no newer .ips: '-'), the part (full: with
+# the NPC characters; ui: the default part alone) and the customizer strip. A 0.11.8 stamp has the first four alone
+# (a full copy, his patch as it came).
+function Get-KitCharacterSelectWant($Op, [string]$Part = 'full') {
+    $ips = if ($Op.ips_url) { $Op.ips_sha256.ToLowerInvariant() } else { '-' }
+    return "$($Op.release) $($Op.zip_sha256.ToLowerInvariant()) $($Op.overlay_sha256.ToLowerInvariant()) $ips $Part $script:KitCharselStrip"
+}
+
+# The folder $New made ready (unpacked or linked from the copy there): the NPC part out for 'ui', his code patch
+# without his customizer (his own kept beside the folder's files as coop-charsel-code.ips, outside exefs, so the
+# build never takes it in and a later change strips it again), characters.json, the stamp and the credits. '' or why not.
+function Complete-KitCharacterSelectFolder([string]$New, $Op, [string]$Part, [string]$Json, [string]$Ips, [string]$Want) {
+    if ($Part -eq 'ui') {
+        $root = ([System.IO.Path]::GetFullPath($New)).TrimEnd('\') + '\'
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $New 'romfs') -Recurse -File -Force -ErrorAction Stop)) {
+            if (Test-KitCharacterSelectNpcFile $f.FullName.Substring($root.Length)) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop }
+        }
+        foreach ($d in 'Tex', 'Phive', 'Sound') { Remove-Item -LiteralPath (Join-Path $New "romfs\$d") -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    $code = @(Get-ChildItem -LiteralPath (Join-Path $New 'exefs') -Filter '*.ips' -File -ErrorAction SilentlyContinue)
+    if ($code.Count -ne 1) { return "the release has $($code.Count) code patches, not one" }
+    $mine = Join-Path $New 'coop-charsel-code.ips'
+    if ($Ips) { $his = [System.IO.File]::ReadAllBytes($Ips) }                       # (the pin's newer patch of his)
+    elseif (Test-Path -LiteralPath $mine) { $his = [System.IO.File]::ReadAllBytes($mine) }   # (a copy stripped before)
+    else { $his = [System.IO.File]::ReadAllBytes($code[0].FullName) }                # (as his release has it)
+    $s = Get-KitCharselStrippedIps $his
+    if ($s.Why) { return $s.Why }
+    Write-KitFreshFile $mine $his
+    Write-KitFreshFile $code[0].FullName $s.Bytes
+    Write-KitFreshFile (Join-Path $New 'characters.json') ([System.IO.File]::ReadAllBytes($Json))
+    Write-KitFreshFile (Join-Path $New 'coop-charsel.txt') ([System.Text.Encoding]::ASCII.GetBytes("$Want`n"))
+    $npc = if ($Part -eq 'full') { 'with its NPC characters' } else { 'without its NPC characters (character_select = yes in coop-options.ini gets them)' }
+    Write-KitFreshFile (Join-Path $New 'CREDITS-coop.txt') ([System.Text.Encoding]::UTF8.GetBytes(((@(
+        "OoT Character Select $($Op.release) by snaildev99 (Snail): https://github.com/snaildev99/OoT-Character-Select",
+        "Downloaded by the Squadala co-op kit from his own release page onto this PC, $npc; the kit carries none of its files.",
+        'His Customize code is left out of its code patch (co-op''s own Customize fills his Customize screen); the patch as he made it is coop-charsel-code.ips.',
+        'Its code is under the MIT licence (Copyright (c) 2026 snaildev99; LICENSE.txt here when it could be fetched).',
+        'The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.',
+        'Switch it off in the game''s Mods tab.') -join "`r`n") + "`r`n")))
+    return ''
+}
+
+# Puts the mod in, or changes its part: @{ Ok; Changed (the folder was put in or replaced); Why; Lines }. $ModsDir: the
+# game's mods folder (<game>\mods, beside longshot.exe). $Part: 'full' (the player said yes to the NPC characters) or
+# 'ui' (every other kit). A Character Select folder the player put in by hand (no stamp) is never touched. The kit's
+# copy of the same release is changed in place (hard links, no download): a full one to its default part, or (a
+# 0.11.8 copy, or another strip) to the same part with his patch stripped. Else his release zip is downloaded. A
+# failure (offline, a download or SHA-256 mismatch, too little disk) is said in one line and leaves what was there.
+function Install-KitCharacterSelect([string]$Kit, [string]$ModsDir, [string]$Downloads = '', [string]$Part = 'full') {
+    $r = @{ Ok = $false; Changed = $false; Why = ''; Lines = @() }
+    $op = Get-KitCharacterSelectPin $Kit
+    if (-not $op) { $r.Ok = $true; return $r }
+    $dir = Join-Path $ModsDir $op.folder
+    $stamp = Join-Path $dir 'coop-charsel.txt'
+    $want = Get-KitCharacterSelectWant $op $Part
+    $what = if ($Part -eq 'full') { 'with its NPC characters' } else { 'the Characters page (NPC characters not downloaded)' }
+    if ((Test-Path -LiteralPath $dir) -and -not (Test-Path -LiteralPath $stamp)) {
+        $r.Ok = $true
+        $r.Lines += "Character Select: your own copy in $dir is used as it is."
+        return $r
+    }
+    $have = if (Test-Path -LiteralPath $stamp) { (Read-KitFirstLine $stamp) } else { '' }
+    if ($have -eq $want -and (Test-Path -LiteralPath (Join-Path $dir 'romfs'))) {
+        $r.Ok = $true
+        $r.Lines += "Character Select $($op.release) -> $dir, $what (there already)"
+        return $r
+    }
+    # The copy there, of this release: its part (a 0.11.8 stamp: full) decides whether it can give the one wanted.
+    $haveF = @($have -split ' ')
+    $wantF = @($want -split ' ')
+    $havePart = if ($haveF.Count -ge 5) { $haveF[4] } else { 'full' }
+    $derive = $have -and (Test-Path -LiteralPath (Join-Path $dir 'romfs')) -and ($haveF[0..3] -join ' ') -eq ($wantF[0..3] -join ' ') -and
+              ($Part -eq 'ui' -or $havePart -eq 'full')
+    if (-not $Downloads) { $Downloads = Join-Path $Kit 'hookshot\downloads' }
+    $zip = Join-Path $Downloads $op.zip
+    $json = Join-Path $Downloads 'charsel-characters.json'
+    $ips = Join-Path $Downloads 'charsel-code.ips'
+    $new = Join-Path $ModsDir "_$($op.folder).new"   # ('_' first: the game and the build skip such a folder)
+    $why = ''
+    try {
+        New-Item -ItemType Directory -Force -Path $Downloads, $ModsDir | Out-Null
+        if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction Stop }
+        if ($derive) {
+            # (its characters.json and, with a newer patch pinned, that patch come from the folder there)
+            New-Item -ItemType Directory -Force -Path $new | Out-Null
+            $skip = if ($Part -eq 'ui') { { param($rel) Test-KitCharacterSelectNpcFile $rel } } else { { param($rel) $false } }
+            Copy-KitTreeLinked $dir $new $skip
+            $json = Join-Path $dir 'characters.json'
+            $ips = ''
+        } else {
+            $zipOk = (Test-Path -LiteralPath $zip) -and (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -eq $op.zip_sha256.ToUpperInvariant()
+            # (a 1 GB zip and 1.1 GB unpacked; the swap keeps the old folder until the new one is in place)
+            $root = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($ModsDir))
+            $free = try { (New-Object System.IO.DriveInfo $root).AvailableFreeSpace } catch { [long]::MaxValue }
+            if ($free -lt $(if ($zipOk) { 2GB } else { 3GB })) { $why = "too little disk space (about 3 GB free needed on $root)" }
+            elseif (-not $zipOk -and (Test-KitOffline)) { $why = 'offline' }
+            if (-not $why) { $why = Get-KitDownload @("$($op.url)/$($op.zip)") $zip $op.zip_sha256 @() 2; if ($why) { $why = "the download of Snail's release failed ($why)" } }
+            if (-not $why) { $why = Get-KitDownload @($op.overlay_url) $json $op.overlay_sha256 @() 2; if ($why) { $why = "the download of characters.json failed ($why)" } }
+            if (-not $why -and $op.ips_url) { $why = Get-KitDownload @($op.ips_url) $ips $op.ips_sha256 @() 2; if ($why) { $why = "the download of the newer code patch failed ($why)" } }
+            if (-not $op.ips_url) { $ips = '' }
+            if (-not $why) {
+                New-Item -ItemType Directory -Force -Path $new | Out-Null
+                # (the zip: <release>/mods/OoT Character Select/{romfs,exefs}, INSTALL.txt, SHA256SUMS.txt, patch-listings)
+                $depth = @($op.zip_folder -split '/').Count
+                & "$env:SystemRoot\System32\tar.exe" -x -f $zip -C $new "--strip-components=$depth" "$($op.zip_folder)" 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { $why = "unpacking $($op.zip) failed (tar $LASTEXITCODE)" }
+                elseif (-not (Test-Path -LiteralPath (Join-Path $new 'romfs'))) { $why = "$($op.zip) has no $($op.zip_folder)/romfs" }
+            }
+        }
+        if (-not $why) { $why = Complete-KitCharacterSelectFolder $new $op $Part $json $ips $want }
+        if (-not $why) {
+            if (-not $derive) {
+                $lic = Join-Path $Downloads 'charsel-LICENSE.txt'
+                try { Invoke-KitFetch "https://raw.githubusercontent.com/snaildev99/OoT-Character-Select/$($op.release)/LICENSE" $lic 'web'; Copy-Item -LiteralPath $lic -Destination (Join-Path $new 'LICENSE.txt') -Force } catch { }
+            }
+            # (what was there is kept until the game is built with the new one: Undo-/Confirm-KitCharacterSelect)
+            Save-KitCharacterSelectPrevious $ModsDir $op.folder
+            try { [System.IO.Directory]::Move($new, $dir) }
+            catch { [void](Undo-KitCharacterSelect $Kit $ModsDir); throw }
+            if (-not $derive) { Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue }   # (1 GB on disk; a new pin downloads its own)
+            $r.Changed = $true
+        }
+    } catch {
+        $msg = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
+        $why = "it could not be put in place ($("$msg".Trim())): close the game and start again"
+    }
+    if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction SilentlyContinue }
+    $r.Why = $why
+    if ($why -eq 'offline') { $r.Lines += 'offline: Character Select is downloaded at the next start with internet; the game starts without it.' }
+    elseif ($why) { $r.Lines += "Character Select was not installed: $why. The game and co-op work without it; start again to retry." }
+    else { $r.Ok = $true; $r.Lines += "Character Select $($op.release) by Snail -> $dir, $what (on; the Mods tab switches it off)" }
+    return $r
+}
+
+# Before the kit changes mods\<folder>: what the game was last built with is kept as mods\_<folder>.prev (the folder)
+# or mods\_<folder>.none (nothing was there), both skipped by the game and the build ('_'). Kept once: a change before
+# the last one was confirmed (a start that stopped in its build) keeps the older state, the one the game has. The
+# current folder is moved there or, when an older state is kept already, removed.
+function Save-KitCharacterSelectPrevious([string]$ModsDir, [string]$Folder) {
+    $dir = Join-Path $ModsDir $Folder
+    $prev = Join-Path $ModsDir "_$Folder.prev"
+    $none = Join-Path $ModsDir "_$Folder.none"
+    if (-not (Test-Path -LiteralPath $prev) -and -not (Test-Path -LiteralPath $none)) {
+        if (Test-Path -LiteralPath $dir) { [System.IO.Directory]::Move($dir, $prev) }
+        else { [System.IO.File]::WriteAllText($none, "no $Folder before the kit's change`n") }
+    } elseif (Test-Path -LiteralPath $dir) {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+    }
+}
+
+# The game could not be built with the change (the build failed or was declined: review-geno-0118): the mods folder
+# goes back to what the game was built with, so the game starts as it was. $true when something was put back. The
+# player's answer stays: the next start tries again.
+function Undo-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
+    $op = Get-KitCharacterSelectPin $Kit
+    if (-not $op) { return $false }
+    $dir = Join-Path $ModsDir $op.folder
+    $prev = Join-Path $ModsDir "_$($op.folder).prev"
+    $none = Join-Path $ModsDir "_$($op.folder).none"
+    if (-not (Test-Path -LiteralPath $prev) -and -not (Test-Path -LiteralPath $none)) { return $false }
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop }
+    if (Test-Path -LiteralPath $prev) { [System.IO.Directory]::Move($prev, $dir) }
+    Remove-Item -LiteralPath $none -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+# The game was built (or needed no build) with the change: the kept state goes.
+function Confirm-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
+    $op = Get-KitCharacterSelectPin $Kit
+    if (-not $op) { return }
+    Remove-Item -LiteralPath (Join-Path $ModsDir "_$($op.folder).prev") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $ModsDir "_$($op.folder).none") -Force -ErrorAction SilentlyContinue
+}
+
+# The Mods tab's list (<mods>\coop-mods.list, "coop-mods 1") names $Name (the path under mods with '/') off: the first
+# row for it, as the game reads it. No list, another version, or no row: on.
+function Test-KitModListOff([string]$ModsDir, [string]$Name) {
+    $list = Join-Path $ModsDir 'coop-mods.list'
+    if (-not (Test-Path -LiteralPath $list -PathType Leaf)) { return $false }
+    try {
+        $lines = @(([System.IO.File]::ReadAllText($list, [System.Text.UTF8Encoding]::new($false))) -split "`n")
+        if ($lines[0].TrimEnd("`r") -cne 'coop-mods 1') { return $false }
+        $want = ConvertTo-KitModFold $Name
+        foreach ($line in @($lines | Select-Object -Skip 1)) {
+            if ($line.TrimEnd("`r") -cmatch '^(on|off) (.+)$' -and (ConvertTo-KitModFold $Matches[2]) -ceq $want) { return $Matches[1] -ceq 'off' }
+        }
+    } catch { }
+    return $false
+}
+
+# The model files a Character Select folder has, as find_characters counts them: "<file>=<stored number>:<variants>"
+# for each characters.json row whose Player_<variant>_C<file> model is in romfs\Model, sorted; '' when none.
+function Get-KitCharacterSelectModels([string]$Dir, $Doc) {
+    $out = @()
+    foreach ($row in @($Doc.characters)) {
+        if ($null -eq $row -or $null -eq $row.file) { continue }
+        $n = [int]$row.file
+        $have = @(foreach ($v in 'Child', 'Adult') {   # (build.py's VARIANTS order)
+            if (Test-Path -LiteralPath (Join-Path $Dir ('romfs\Model\Player_{0}_C{1:D3}.Player_{0}.bfres.zs' -f $v, $n)) -PathType Leaf) { $v }
+        })
+        if ($have.Count) { $out += ('{0}={1}:{2}' -f $n, [int]$row.number, ($have -join '+')) }
+    }
+    return (@($out | Sort-Object { [int]($_ -split '=')[0] }) -join ',')
+}
+
+# The Character Select mod the pack tool would find for the pack at $Manifest, as the pack records it
+# ("<mod folder>|<colours offset>|<colours head>|<models>", or "<mod folder>||<models>" without colours; models:
+# Get-KitCharacterSelectModels): '' when there is none, $null when the pack is not in a mods\contents\<title>\<pack>
+# folder (nothing to compare). Mirrors find_characters: the folders beside the pack's title folder and the mods folder,
+# a characters.json of format 1 for "OoT Character Select" with at least one model in romfs\Model, not switched off in
+# the Mods tab. The models are in the key (C #58, lane 051234): the NPC part taken out (a UI-only kit) or put in, or a
+# release that renumbers its characters, makes the pack again, so its puppets and the pick guard never name a model
+# that is not there; the mod switched off in the Mods tab makes it again without the characters.
+function Get-KitCharacterSelectSeen([string]$Manifest) {
+    $pack = Split-Path -Parent $Manifest
+    $title = Split-Path -Parent $pack
+    $contents = Split-Path -Parent $title
+    if (-not $contents -or (Split-Path -Leaf $contents) -ine 'contents') { return $null }
+    $mods = Split-Path -Parent $contents
+    foreach ($root in $title, $mods) {
+        foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
+            if ($d.Name -match '^[-_.]') { continue }
+            $file = Join-Path $d.FullName 'characters.json'
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $d.FullName 'romfs\Model'))) { continue }
+            try { $doc = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+            if ($doc.mod -ne 'OoT Character Select' -or $doc.format -ne 1) { continue }
+            $listName = if ($root -eq $title) { "contents/$(Split-Path -Leaf $title)/$($d.Name)" } else { $d.Name }
+            if (Test-KitModListOff $mods $listName) { continue }
+            $models = Get-KitCharacterSelectModels $d.FullName $doc
+            if (-not $models) { continue }
+            $c = $doc.puppet_colours
+            return "$($d.Name)|$(if ($c) { "$($c.offset)|$("$($c.head)".ToLowerInvariant())" } else { '|' })|$models"
+        }
+    }
+    return ''
+}
+
+# What a pack's coop_puppet.json records of its characters, in Get-KitCharacterSelectSeen's form ('' for none).
+function Get-KitPackCharactersKey($Json) {
+    $p = $Json.characters
+    if (-not $p) { return '' }
+    $rows = @()
+    if ($p.numbers) {
+        foreach ($q in $p.numbers.PSObject.Properties) {
+            $vs = @(if ($p.variants -and $p.variants.PSObject.Properties[$q.Name]) { @($p.variants.PSObject.Properties[$q.Name].Value) })
+            $rows += ('{0}={1}:{2}' -f [int]$q.Name, [int]$q.Value, ($vs -join '+'))
+        }
+    }
+    $models = @($rows | Sort-Object { [int]($_ -split '=')[0] }) -join ','
+    return "$($p.mod)|$(if ($p.colours) { "$($p.colours.offset)|$("$($p.colours.head)".ToLowerInvariant())" } else { '|' })|$models"
+}
+
+# Every start after the question (row 206: the NPC characters on or off without editing a file): one line, and N within
+# $Seconds changes it. $true when N was pressed. No console (a scripted start): no wait, no change. $ReadKey: tests.
+function Read-KitCharacterSelectToggle([string]$Choice, [int]$Seconds = 2, [scriptblock]$ReadKey = $null) {
+    $now = if ($Choice -eq 'yes') { 'on (press N to take them out)' } else { 'off (press N to download them, about 1 GB)' }
+    $redirected = $true
+    try { $redirected = [Console]::IsInputRedirected } catch { }
+    if ($redirected -and -not $ReadKey) { return $false }
+    Write-Host "Characters page, NPC characters: $now"
+    if (-not $ReadKey) { try { while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) } } catch { } }
+    $end = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $end) {
+        $key = if ($ReadKey) { & $ReadKey } elseif ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null }
+        if ($key -and "$($key.Key)" -eq 'N') { Write-Host '  changed.'; return $true }
+        if ($key) { return $false }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
+# A character_select line in coop-options.ini set to $Value (when there is one: it wins over the kept answer).
+function Set-KitOptionsCharacterSelect([string]$Kit, [string]$Value) {
+    $ini = Join-Path $Kit 'coop-options.ini'
+    if (-not (Test-Path -LiteralPath $ini)) { return }
+    try {
+        $lines = @([System.IO.File]::ReadAllLines($ini))
+        $hit = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*character_select\s*=') { $lines[$i] = "character_select = $Value"; $hit = $true }
+        }
+        if ($hit) { [System.IO.File]::WriteAllLines($ini, $lines) }
+    } catch { }
+}
+
+# The start's step (play.ps1, before Get-KitHookshotNeed): every kit with the pin gets the Characters page (Snail's
+# default part); the NPC characters only on the player's yes (asked once; character_select = yes|no in
+# coop-options.ini or NPC-characters.bat changes it). $true when the mods folder changed (the game build and the pack
+# then follow from their stamps). $GameDir: longshot.exe's folder.
+function Invoke-KitCharacterSelectStep([string]$Kit, [string]$GameDir, [int]$Seconds = 15) {
+    if (-not (Get-KitCharacterSelectPin $Kit)) { return $false }
+    $mods = Join-Path $GameDir 'mods'
+    $choice = Get-KitCharacterSelectChoice $Kit
+    if ($choice -eq 'ask') {
+        $choice = if (Read-KitCharacterSelectAnswer $Seconds) { 'yes' } else { 'no' }
+        Set-KitCharacterSelectChoice $Kit $choice
+        if ($choice -eq 'no') { Write-Host '  Not downloaded. To get them later: press N at the next start, while the kit shows the NPC line.' }
+    } elseif (Read-KitCharacterSelectToggle $choice 2) {
+        # (row 206: on or off from the kit itself, no file to edit; coop-options.ini's line, if any, would win again)
+        $choice = if ($choice -eq 'yes') { 'no' } else { 'yes' }
+        Set-KitCharacterSelectChoice $Kit $choice
+        Set-KitOptionsCharacterSelect $Kit $choice
+    }
+    $r = Install-KitCharacterSelect $Kit $mods '' $(if ($choice -eq 'yes') { 'full' } else { 'ui' })
+    foreach ($l in $r.Lines) { Write-Host $l -ForegroundColor $(if ($r.Ok -or $r.Why -eq 'offline') { 'Gray' } else { 'Yellow' }) }
+    return $r.Changed
 }
 
 # The resource size tables (romfs\System\Resource\*.rsizetable.zs) of the mods the game loads besides the randomizer's
@@ -1460,6 +2018,15 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
         $gaps = @(Get-KitPuppetPackGaps $Manifest $json)
         if ($gaps) {
             return "Puppet pack: incomplete ($($gaps[0]) is missing$(if ($gaps.Count -gt 1) { " and $($gaps.Count - 1) more" })). $script:KitPackRemake"
+        }
+        # The Character Select mod put in, replaced or taken out since the pack was made (Install-KitCharacterSelect):
+        # the pack's character puppets follow the mod's characters.json (tools/puppet_pack find_characters).
+        $cs = Get-KitCharacterSelectSeen $Manifest
+        if ($null -ne $cs) {
+            $packedKey = Get-KitPackCharactersKey $json
+            if ($packedKey -ne $cs) {
+                return "Puppet pack: made $(if ($cs) { 'without the Character Select characters now in mods' } else { 'with a Character Select mod that is not in mods any more' }). $script:KitPackRemake"
+            }
         }
         $tool = Get-PuppetToolHash $ToolDir
         if ($tool -and $json.tool_sha256 -and $json.tool_sha256 -ne $tool) {

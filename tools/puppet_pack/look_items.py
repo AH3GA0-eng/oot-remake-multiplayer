@@ -77,6 +77,41 @@ def blade_name(item, number):
     return f"{item}_Blade{number}"
 
 
+# Row 198 (0.11.9): a wearer copy's model named the game's own gear textures, so the puppet's sword was drawn with
+# the very texture your own Link's colour is drawn over (the game loads a texture once, by its name), and its texels
+# were the game's (your Link's wardrobe finds its textures by them). Each wearer copy now names gear textures of its
+# own, `Mt_` -> `W<a..p>_` (as long; one letter a player number), their texels marked BLADE_MARK_BASE + the number:
+# never a look copy's 1..8, a boots colour's letter, or the tunic's marks. Painted by nobody: the game's colours.
+BLADE_MARK_BASE = 0x80
+
+
+def blade_tex_name(name, number):
+    """A wearer copy's name of a gear texture: `Mt_` -> `W<letter>_` (as long), a for number 1 to p for 16."""
+    if not name.startswith(PREFIX) or not 1 <= number <= BLADE_COPIES:
+        raise TunicError(f"{name}: no wearer copy name for number {number}")
+    return f"W{chr(ord('a') + number - 1)}_" + name[len(PREFIX):]
+
+
+def blade_mark(number):
+    """The mark of a wearer copy's gear textures (look_live.mark): BLADE_MARK_BASE + its number."""
+    if not 1 <= number <= BLADE_COPIES:
+        raise TunicError(f"no wearer copy mark for number {number}")
+    return BLADE_MARK_BASE + number
+
+
+def blade_model_for(model, number):
+    """A wearer copy's model naming its own gear textures; (bytes, the gear names it names)."""
+    named = [g for g in GEAR if (g.encode() + b"\0") in model]
+    for g in named:
+        model = rename(model, g, blade_tex_name(g, number), at_least=1)
+    return model, named
+
+
+def blade_texture_for(bntx, name, number):
+    """The game's gear texture under a wearer copy's name, its texels marked with the copy's mark."""
+    return mark_bntx(rename(bntx, name, blade_tex_name(name, number), at_least=1), blade_mark(number))
+
+
 def actor_components(members, item):
     """The item's ActorParam components with its $parents (from its pack) merged in; None when
     the pack lacks its ActorParam or a parent."""
@@ -233,12 +268,53 @@ def copy_pack_as(members, item, actor, project_name=None):
     project it names, if not one of its own name (blade copies share one per model project)."""
     doc = byml.loads(members[actor_param_path(item)])
     doc["Components"]["ModelInfoRef"] = "?" + model_info_path(actor)
+    anim = copy_animation_param(members, item, actor)
+    if anim is not None:
+        doc["Components"]["AnimationRef"] = "?" + anim[0]
     info = byml.dumps(copy_model_info(members, item, actor, project_name))
     ap = byml.dumps(doc)
     files = {k: v for k, v in members.items() if k != actor_param_path(item)}
     files[actor_param_path(actor)] = ap
     files[model_info_path(actor)] = info
+    if anim is not None:
+        files[anim[0]] = anim[1]
     return sarc.write(files), ap, info
+
+
+def animation_param_path(actor):
+    return f"Component/AnimationParam/{actor}.engine__component__AnimationParam.bgyml"
+
+
+def item_animation_param(members, item):
+    """(member path, doc) of the item's AnimationParam (its ActorParam's AnimationRef, $parents of the
+    ActorParam merged in), or None when it names none or the pack lacks it."""
+    comps = actor_components(members, item) or {}
+    ref = comps.get("AnimationRef")
+    path = _member(ref) if isinstance(ref, str) else None
+    if path is None or path not in members:
+        return None
+    return path, byml.loads(members[path])
+
+
+def copy_animation_param(members, item, actor):
+    """Row 184: (member path, bytes) of a copy's own AnimationParam, or None when it needs none.
+    A copy names a model project of its own (`<item>_Look<k>`, a blade copy's), and the game binds an
+    animation project's clips to the model project they were made for: under another project they
+    play only when the resource is retargeted (IsRetarget, by bone name: the game's own child Epona
+    plays the adult's clips so). Without it the copy's own clips never move it (the child's Hylian
+    Shield hung turned on a puppet's back, 0.11.7). So the copy's AnimationParam is the item's with
+    IsRetarget true on every resource; the item's own file is not touched. An AnimationParam with no
+    resources (the swords') or with a `$parent` (not seen in the coloured items) gives None."""
+    found = item_animation_param(members, item)
+    if found is None:
+        return None
+    _, doc = found
+    res = doc.get("AnimationResources")
+    if "$parent" in doc or not isinstance(res, list) or not res:
+        return None
+    out = dict(doc)
+    out["AnimationResources"] = [dict(r, IsRetarget=True) if isinstance(r, dict) else r for r in res]
+    return animation_param_path(actor), byml.dumps(out)
 
 
 def info_row(row, item, slot):

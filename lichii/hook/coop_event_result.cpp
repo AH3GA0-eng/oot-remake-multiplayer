@@ -813,6 +813,84 @@ bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64
     return false;
 }
 
+bool AbleToPlay(bool in_our_scene, bool link_up, std::uint8_t status) {
+    constexpr std::uint8_t kCannot = coop::protocol::status::dead | coop::protocol::status::loading;
+    return in_our_scene && link_up && (status & kCannot) == 0;
+}
+
+std::uint8_t DeciderAmongAble(std::uint8_t self, std::span<const std::uint8_t> in_scene,
+                              const std::function<bool(std::uint8_t)>& able) {
+    std::uint8_t decider = 0;
+    const auto consider = [&](std::uint8_t p) {
+        if (p != 0 && (decider == 0 || p < decider) && able && able(p)) decider = p;
+    };
+    consider(self);
+    for (const std::uint8_t p : in_scene) consider(p);
+    return decider;
+}
+
+std::optional<std::string_view> KillEventOf(std::string_view scene, std::uint64_t hash) {
+    for (const auto& t : kTriggers) {
+        if (t.kind == Trigger::kill && t.scene == scene && t.id == hash) return t.event;
+    }
+    return std::nullopt;
+}
+
+std::set<std::uint64_t> KillsToRedo(std::string_view scene, const std::set<std::uint64_t>& dead,
+                                    const std::set<std::uint64_t>& kept,
+                                    const std::function<bool(const std::string&)>& played) {
+    std::map<std::string_view, bool> all_dead;  // event -> every kill actor of it is dead
+    std::set<std::string_view> others;          // events with another game's kill kept here
+    for (const auto& t : kTriggers) {
+        if (t.kind != Trigger::kill || !TriggerWaits(t, scene, played)) continue;
+        const auto it = all_dead.try_emplace(t.event, true).first;
+        it->second = it->second && (dead.contains(t.id) || kept.contains(t.id));
+        if (kept.contains(t.id)) others.insert(t.event);
+    }
+    std::erase_if(all_dead, [&](const auto& e) { return !others.contains(e.first); });
+    std::set<std::uint64_t> out;
+    for (const auto& t : kTriggers) {
+        if (t.kind != Trigger::kill || t.scene != scene) continue;
+        if (const auto it = all_dead.find(t.event); it != all_dead.end() && it->second) out.insert(t.id);
+    }
+    return out;
+}
+
+std::optional<KeptShield::Step> KeptShield::Next(const std::set<std::uint64_t>& want,
+                                                 const std::set<std::uint64_t>& live) {
+    for (auto it = on_.begin(); it != on_.end();) {
+        it = live.contains(*it) ? std::next(it) : on_.erase(it);  // gone, and our key with it
+    }
+    std::erase_if(tries_, [&](const auto& t) { return !live.contains(t.first.first); });
+    for (const std::uint64_t l : on_) {
+        const Step off{l, false};
+        if (!want.contains(l) && !GivenUp(off)) return off;  // off first: a landing kill waits for it
+    }
+    for (const std::uint64_t l : want) {
+        const Step on{l, true};
+        if (l != 0 && live.contains(l) && !on_.contains(l) && !GivenUp(on)) return on;
+    }
+    return std::nullopt;
+}
+
+void KeptShield::Called(const Step& s, bool ok) {
+    if (!ok) {
+        ++tries_[{s.life, s.on}];
+        return;
+    }
+    tries_.erase({s.life, s.on});
+    if (s.on) {
+        on_.insert(s.life);
+    } else {
+        on_.erase(s.life);
+    }
+}
+
+bool KeptShield::GivenUp(const Step& s) const {
+    const auto it = tries_.find({s.life, s.on});
+    return it != tries_.end() && it->second >= kKeptShieldTries;
+}
+
 std::set<std::uint64_t> FollowKeepers(std::string_view scene, const std::function<bool(const std::string&)>& played) {
     std::set<std::uint64_t> out;
     std::map<std::pair<std::string_view, std::uint64_t>, std::uint64_t> largest;  // (event, group) -> its keeper

@@ -54,6 +54,52 @@ What Host.bat does for this, by itself:
 - The game, the join password check, the 5-wrong-passwords block, the half-open limit and `server_allow` are unchanged: the punch only opens the way. A port scan finds nothing new: without the password the server answers no punch.
 - Tests: `tests/server/nat_test.cpp` (codes, STUN, punches, the host's rules: every mistyped letter, forged and stale codes, a stranger without the password gets nothing, rate limit, punches only toward the answer address), `tests/server/nat_loopback_test.cpp` (a real server, the join helper, a fake STUN server and an ENet game over 127.0.0.1: answer code, punches, the game reaches the server; a helper with another password never gets a punch back; the direct way), `tools/release/tests/hosting_test.ps1` (Join.bat's reader, the defaults, UPnP and the invite need a password). 127.0.0.1 has no routers: a real two-network test is still to do.
 
+## Public games: play with anyone, no password (0.11.8)
+
+Every game is **private** unless you choose otherwise: friends join with your code or room name and the password.
+
+**Host a public game.** On the Multiplayer page's **Host** page, set **Game** to **Public game**. A ready room name is
+offered (like `forest-4821`); change it if you like. Then **Start hosting**. Your game shows in **Public games** for
+everyone with the kit, and they join with one press, no password. Your choice is remembered (`public_game = on` in
+`coop-options.ini`, which Host.bat uses too). While you host, the Host page says which kind of game it is; a change
+applies at your next Host.
+
+**The official public game.** **Official public game** is always first in Public games: an always-on server
+with no host game (the first player in hosts its progress). The mark is signed: a room that only has the same name
+never shows it. See docs/official-game.md.
+
+**Join a public game.** Open **Browse games** (the Join page) or the **Lobby** tab while you are not in a game: **Public
+games** lists the games on the game list (the kit's relay). A public game says *Public game, Players 2/8*: press it to
+join. A private one says *Needs the host's password*: pressing it opens Join with the room typed in and the password
+field chosen. If nothing is listed it says *No public games right now*; if the list cannot be reached it says so and
+what to do.
+
+**What a public game keeps safe** (the host's side):
+
+- **Your address stays hidden.** A public game is reached only through the relay: no router forward, no invite code,
+  no answer codes, no same-network line and no same-network announce, and its game port listens on 127.0.0.1 only.
+  The list holds the room name, the players and the version, never an address. Every player through the relay comes
+  from the relay, so no player sees another's address either.
+- **The traffic is still encrypted.** The join password of a public game is made from its room name (anyone who sees
+  the list knows it), and the traffic keys still mix in a fresh key exchange per player. A private game can never use
+  a password of that shape, so a public game's password never opens a private one.
+- **Older kits are never sent the public password.** A public game is marked on the list (its version has the public
+  bit); a listing without the mark is treated as private, so an older host's wrong-password count is never touched.
+- **You stay in charge.** Kick, ban and mute (voice and chat) are in the Lobby tab. A ban follows the player's key,
+  not their name, and is **kept**: `coop-bans.txt` beside `coop.ini` lists the banned keys, and they stay out of every
+  game you host (delete a line to let one back in). **Ask me before letting players in** (`approve_joins = on`) and the
+  most players (Players) work as in a private game. The server limits each player's message rate.
+- **Guests cannot touch your files.** No player writes a file on your PC or runs a command there, and every message is
+  size- and bounds-checked before it is read (`tests/protocol/codec_test.cpp`, `tests/protocol/fuzz_test.cpp`). What
+  players *can* change is the shared progress co-op shares (flags, items, opened chests), as in any co-op game, and that
+  lands in the save you host from: host a public game from a multiplayer save you don't mind (see "Solo or
+  multiplayer saves" below).
+- **Nothing of your PC is shown.** The list shows the room name (Host.bat and the game list it under that, not your
+  player name or PC name); collect-logs masks user and PC names.
+
+Not there yet (said plainly): a ban made by name only (a player without a key) is not kept after the session; there is
+no server-wide block list or report button; chat has the per-player rate limit but no word filter.
+
 ## When the invite code does not work: a free VPN network
 
 1. **Everyone** installs [Radmin VPN](https://www.radmin-vpn.com) (free, no account). The host clicks **Network > Create network**, picks a name and a password, and sends both to the others; the others click **Network > Join network** and type them in. ([Hamachi](#hamachi) works the same way.)
@@ -109,7 +155,7 @@ Off, and not needed for most players: the invite code above does the same withou
 
 **A room name instead of a code** (issue 261): the host also writes `relay_room = forest-gang` in `coop-options.ini` (3 to 24 letters, digits, `-` or `_`), or sets it in the game: Co-op Settings, **Room name** (and the relay itself, **Relay**, which writes `relay =`). The server window then says `room "forest-gang" is yours` and copies `forest-gang@relay.example.net:27530`; friends type that into Join.bat, in any case, and it stays the same every session. The room is the host's while the server runs and is free again 30 seconds after it stops; if someone else holds it, the window says so and tries again every 30 seconds. Like the code, the name only finds the server: the join password is still the lock. A relay from before room names does not answer them (Join.bat says so); join codes still work there. In the game itself: the Multiplayer tab's Host uses the same `relay` and `relay_room` lines and shows `Room forest-gang@...` in its lines; friends type `forest-gang` in Join a game's **Room or address** (the relay set in their Settings, or the whole `forest-gang@relay.example.net`; with the host's join password), and the game asks the relay to let it in, then connects through it. A name that could also be a join code (8 code letters, like `lake-gang`) is tried as a code first, then as a room.
 
-**The relay's room list** (off unless the host asks): a host with a room name can also put the room on the relay's public list, so players can pick it from a list instead of typing its name. `coop_server --relay-list` (with `--relay-room`) lists it under the room name, or `--relay-list NAME` under a name the host picks (never their account or player name unless they type it), with the number of players, the most it takes and the co-op protocol version. Never the join password: a player who picks a room from the list still needs it from the host. The room leaves the list when its host stops or goes quiet. In the game, the pause menu's Multiplayer page has it under **Find a game**: **Online games** lists the rooms of the kit's `relay` (asked only while that list shows, every 10 seconds; the name shown, then the room name in brackets when that is another; a room picked there opens the Join view with its name typed in), and **List my room: On** (`list_room = on` in `coop-options.ini`) puts the host's own room on the list while it hosts with `relay_room`. `list_name = Saria's forest` in `coop-options.ini` picks the name shown; without it the list shows the room name. A game that never opens that list asks the relay nothing for it, and a host without `list_room` sends no listing.
+**The relay's room list** (off unless the host asks): a host with a room name can also put the room on the relay's public list, so players can pick it from a list instead of typing its name. `coop_server --relay-list` (with `--relay-room`) lists it under the room name, or `--relay-list NAME` under a name the host picks (never their account or player name unless they type it), with the number of players, the most it takes and the co-op protocol version. Never the join password: a player who picks a room from the list still needs it from the host. The room leaves the list when its host stops or goes quiet. In the game, the pause menu's Multiplayer page has it under **Browse games**: **Public games** lists the rooms of the kit's `relay` (asked only while that list shows, every 10 seconds; the name shown, then the room name in brackets when that is another; a room picked there opens the Join view with its name typed in), and **List my room: On** (`list_room = on` in `coop-options.ini`) puts the host's own room on the list while it hosts with `relay_room`. `list_name = Saria's forest` in `coop-options.ini` picks the name shown; without it the list shows the room name. A game that never opens that list asks the relay nothing for it, and a host without `list_room` sends no listing.
 
 **Trade-offs:** the relay owner sees every player's address and when and how much you send. The game traffic itself is encrypted with the join password, so the relay cannot read or change it (docs/protocol.md, "Encrypted traffic"). Each packet takes the detour through the relay, so the delay is the host-relay plus relay-player delay. Pick a relay near all of you, run by someone you trust. All relayed players share one address on the host's server (127.0.0.1), so its per-address limits are shared too: when one of them types a wrong join password 5 times, every new relayed player is turned away for 60 seconds (players already in stay in), and at most 4 can be connecting at the same moment.
 
@@ -229,7 +275,7 @@ Off unless the host turns it on. With PvP on, your sword, arrows, seeds and bomb
 
 On by default in co-op (the Longshot kit, whose game build has patch 0007). At no hearts you are not dead: you are **down**. You crawl slowly and can use nothing (no sword, items or roll; pause and the camera still work), nothing hurts you, and a clock counts down your bleed-out time (45 s by default) in a ring at the bottom of the screen. Enemies leave you alone and go after the nearest player still standing. With nobody else standing (or nobody else in the session) you are not downed: death is the game's own.
 - **A fairy in a bottle saves you first (0.11.8, tracker row 162).** While one of your bottles holds a fairy, a hit that would take your last heart is not held back: the game's own death runs and its fairy revives you, as in the solo game, and you are never downed. Down but not out takes over again once your bottles hold no fairy. How: each frame the hook reads your bottles with the game's own flag getters (`PlayerStatus.AssignableItem.BottleInfo.Bottle<A-E>.IsValid` and `.BottleItem` = `Fairy`, `coop::host::bottled_fairy`), and the life guard stays off while one holds a fairy (log `coop: dbno: a fairy in our bottle: ...`). If the game's death ends in its Game Over anyway, you are out, as before. Without a fairy nothing changed: the bleed-out clock, the revive and watching are as below.
-- **Crawling.** Down, your Link goes into the game's own crawl (the crawlspace crawl: its animation and its crawl camera), moved slowly with the stick. Getting up (revived, or the host turning it off) asks the game's own standing Wait and the normal camera. The others see your Link crawl (the crawl's animation, as any other). How: the player's AI enters a crawlspace by asking its action verb 234 (Crawl); co-op asks the same through the game's own function, and skips every other action the game asks for a downed Link (Hookshot/Longshot with the boss wraps of patch 0013).
+- **Crawling.** Down, your Link goes into the game's own crawl (the crawlspace crawl: its animation and its crawl camera), moved slowly with the stick. (Before row 190's fix the game never took that request, in any game: it takes one action request per slot a frame and answers 3 to a second one, and its own Walk or Wait always came first, so a downed Link stood and walked. Now the game's own request on that slot is skipped while the crawl is asked.) Getting up (revived, or the host turning it off) asks the game's own standing Wait and the normal camera. The others see your Link crawl (the crawl's animation, as any other). How: the player's AI enters a crawlspace by asking its action verb 234 (Crawl); co-op asks the same through the game's own function, and skips every other action the game asks for a downed Link (Hookshot/Longshot with the boss wraps of patch 0013).
 - **Hits while down.** You are shielded by the game's own invincibility (as its `OneShotLifeSetInvincible` gives it, with no reaction): hits take nothing and no reaction stands you up (0.11.0: a hit's knockback put a downed Link back on its feet, player report 34). Falls, slopes, water and the void still move you as the game does; you crawl again once you are back on the ground.
 - **Enemies ignore you.** Your Link's perception is switched off the game's own way (as its `OneShotPerceptionSetEnableOrDisable` does), so in your game no enemy or boss notices you, and your Link as the others see it is switched off the same way in their games; the enemies you were fighting are handed to the nearest player still standing, whose game they then chase. A PvP hit counts like any other: one that would take your last life downs you, and none goes past that (0.11.0 wrote the PvP hit's life directly after the game's own hit had downed you, which killed a downed Link: player report 34).
 
@@ -276,7 +322,7 @@ The invite code holds your internet address and the join password (no name). Sha
 
 Every player's Link wears that player's colours on every screen, so you can tell each other apart. In the Longshot kit pick them in the game: Multiplayer tab, **Customize Link**: the tunic and each part of the gear (shields, swords, boots, gauntlets), on your own Link and on the others' screens, saved for the next start ([puppet.md, The Link customizer](puppet.md#the-link-customizer)). With no colour picked, each player wears the colour of their player number.
 
-The tunic colour is also the `color =` line in `coop-options.ini` in the kit folder: one of red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray, or any colour as `#RRGGBB` (for example `color = #FF8020`). Two players may pick the same colour; nothing stops it, so agree on yours. The Goron and Zora tunics are other models. The kit makes the puppet pack (the textures the colours are drawn with) from your own game by itself, and again after an update that changes it.
+The tunic colour is also the `color =` line in `coop-options.ini` in the kit folder: one of red, orange, yellow, green, cyan, blue, purple, pink, white, black, brown, gray, or any colour as `#RRGGBB` (for example `color = #FF8020`). Your own Link wears that exact colour; the other players see your tunic in the nearest of ten tunic colours. Two players may pick the same colour; nothing stops it, so agree on yours. The Goron and Zora tunics are other models. The kit makes the puppet pack (the textures the colours are drawn with) from your own game by itself, and again after an update that changes it.
 
 ## On Longshot
 
@@ -309,7 +355,8 @@ Yes, once your game has saved. Shared progress means the items, songs, chests, k
 | What you see | What to check |
 |---|---|
 | The panel stays on `connecting` (Join.bat says "Not connected yet") | Wrong address: the host reads it again from the server window's "Give your friends ONE of these" box. Is the server window still open? The host runs `check-hosting.cmd` and does what it prints. With a VPN: are you both online in the same VPN network? With port forwarding: the router rule is UDP, not TCP, and points at the host's Same-house address. |
-| `refused: name taken` | Another player uses that name, or you restarted after a crash and the server still holds it: wait a few seconds, or run `play.cmd change` and pick another name. |
+| `refused: name taken` | Another player uses that name, or you restarted after a crash and the server still holds it: wait a few seconds, or run `play.cmd change` and pick another name. A join made in the game (the title, the Multiplayer tab, Nucleus's "Join a game on this network") asks again for 12 seconds, then joins as "Name (2)" for that session ("(3)" and on if that is taken too; the saved name stays). |
+| `refused: another co-op version` | You and the host run different co-op releases (older and newer are never let play together): the older kit runs `Update.bat` ([setup.md](setup.md#updating)). The host's server window says which release each side has. |
 | `refused: wrong protocol version` (or a game build mismatch) | Not everyone has the same release: everyone runs `Update.bat` in their kit, the host too ([setup.md](setup.md#updating)); the server's window says which side is older and which release that is (the host's kit names it). Everyone also needs the same game version (`coop: game build ...` in the log). |
 | `connection lost; reconnecting` | The host's connection dropped or the server window was closed. It reconnects on its own when the server is back. |
 | High ping (over about 150 ms) or the others jump around | Distance or a slow connection. With a virtual LAN, try port forwarding instead. Close downloads and streams. |

@@ -107,6 +107,16 @@ struct SessionConfig {
   // At most max_held_joins wait at once; one more is told the server is full.
   // Off: everyone with the password joins at once, as before.
   bool approve_joins = false;
+  // An always-on server with no hosting game (coop_server --dedicated, docs/official-game.md): the player who hosts
+  // the session's progress (the first in, then join order) gets no host powers: no kick, ban or mute, no join
+  // answers, no PvP, down-but-not-out or difficulty change. Moderation is the console's (admin) alone; the session
+  // keeps the server's settings. (MOD_SETTINGS stay the save host's: they belong to the save's mods.)
+  bool dedicated = false;
+  // Bans the host made in earlier sessions, kept by their player key (lobby
+  // ids "k:<hex>", the host's ban file): in force from the start and kept when
+  // the session empties. Names are never kept (one is easy to change, and
+  // someone else may have it).
+  std::vector<std::string> kept_bans;
   // Players on the host's own network join without the password
   // (docs/protocol.md "Same network"): a proof with the same-network key
   // (protocol::kSameNetworkPassword) is taken from a private address only
@@ -240,6 +250,26 @@ struct SessionConfig {
   float boss_near_m = 15.0f;
   float boss_near_margin_m = 4.0f;
   std::uint64_t boss_near_hold_us = 0;
+  // Boss turns (every player fights the boss): its AI fights only its
+  // owner's Link, so in a fight the boss takes turns. Once one owner has had
+  // it boss_turn_us (from the fight's start or the last change of owner), it
+  // goes to the next fit player by player number, round and round, who has it
+  // loaded, has played its intro and stands within boss_turn_m of it. Only at
+  // a calm moment: no hit on it for boss_turn_quiet_us (none passed on, and
+  // not the owner's own, boss_owner_hit_hold_us), its life above 0, and its
+  // owner's animation no death and no cutscene, and no shot of the owner's
+  // game flying in its scene (made within boss_turn_shot_us and not ended:
+  // Phantom Ganon's ball mid-rally). 0: off.
+  std::uint64_t boss_turn_us = 20'000'000;
+  std::uint64_t boss_turn_quiet_us = 3'000'000;
+  std::uint64_t boss_turn_shot_us = 10'000'000;
+  float boss_turn_m = 40.0f;
+  // ...and only right at the end of the boss's own attack (boss-turns-0119): its owner's samples say an attack
+  // ran (object_state::attacking, the hook's addr::InAttackSequence: after a reaction it stays on until the
+  // boss's own next attack ends) and the latest one says it ended, within boss_turn_edge_us. An owner whose
+  // samples read no attacks (no attack_read: an older build) keeps its boss, as before the turns. A boss in a
+  // phase with no attack (Phantom Ganon in his paintings, Gohma on the ceiling) is never handed over there.
+  std::uint64_t boss_turn_edge_us = 1'000'000;
   // Row 149 (King Dodongo rolling forever): a boss (a group's root) whose
   // owner's samples keep one animation, one action verb and one life this
   // long is stuck in that move. Its owner's game re-chooses after about 25 s
@@ -440,6 +470,8 @@ struct Stats {
   std::uint64_t damage_relayed = 0;     // DAMAGE passed on to an owner
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
+  std::uint64_t boss_turns = 0;          // a boss asked over to the next player's turn (boss_turn_us)
+  std::uint64_t boss_kept_from_unready = 0;  // row 189: ticks a ready, unfit owner's boss was not asked to an unready game
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
   std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link
@@ -536,6 +568,14 @@ class Session {
   std::size_t player_count() const;
   // The host's player number; none while the session is empty.
   std::optional<std::uint8_t> host() const;
+  // The bans by player key now (the kept ones and this session's), for the
+  // host's ban file; sorted.
+  std::vector<std::string> key_bans() const;
+  // The server console's moderation (coop_server --dedicated, docs/official-game.md): "/players" (number, name, a
+  // short key id, never an address), "/kick N", "/ban N", "/unban KEYID" (its first 8 or more hex digits),
+  // "/mute N voice|chat", "/unmute N voice|chat". Returns what to print. Acts as the host would, on anyone (the
+  // session's host player too); a ban by key is kept as the host's (key_bans()).
+  std::string admin(std::string_view line, std::uint64_t now_us);
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
   // Down but not out now (config.dbno, then the host's DBNO_MODE).
@@ -614,6 +654,9 @@ class Session {
     // one on a rejoin): what that game tries again when it drops.
     std::string proved_password;
     std::uint8_t number = 0;  // 1 to max_players once joined
+    // When it joined, in order (Session::joins_): the host passes to the
+    // earliest joiner still in (a number can be a newer player's, freed).
+    std::uint64_t joined_order = 0;
     std::string nickname;
     // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
     std::optional<protocol::ModList> mods;
@@ -746,6 +789,13 @@ class Session {
     std::string hold_key;
     std::uint64_t hold_since = 0;
     bool stalled = false;
+    // Boss turns (boss_turn_us): when its current fight began; 0: not in one.
+    std::uint64_t fight_began = 0;
+    // Boss turns, the attack edge (boss_turn_edge_us): as of its owner's latest sample of this epoch.
+    bool attack_read = false;         // the owner reads its attacks (object_state::attack_read)
+    bool attacking = false;           // in its attack sequence
+    std::uint16_t attack_epoch = 0;   // the epoch those two are of
+    std::uint64_t attack_ended_at = 0;  // its newest attack's end in that epoch; 0: none
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -805,6 +855,11 @@ class Session {
   void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
   // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
   void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
+  // A kick, ban or mute on player a.target, by the host (`actor`: its connection, which may not be its own target)
+  // or by the server's console (no actor); `by` names who in the log. Empty: nothing to answer.
+  std::optional<protocol::LobbyResultCode> apply_lobby(const protocol::LobbyAction& a,
+                                                       std::optional<ConnectionId> actor, std::uint64_t now_us,
+                                                       const char* by);
   std::uint8_t lobby_mutes_of(const Connection& c) const;
   // Who a player is to the Lobby: its player key (sealed in JOIN_PROOF, protocol 11) when it
   // sent one, a split-screen seat by its game's key and seat; the name only
@@ -812,6 +867,8 @@ class Session {
   std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
                        std::optional<ConnectionId> parent, std::uint8_t seat) const;
   std::string lobby_id(const Connection& c) const;
+  // Whether this player may use the host's powers over the session (SessionConfig::dedicated: nobody may).
+  bool hosts_rules(ConnectionId id) const { return !config_.dedicated && host_ && *host_ == id; }
   // A ban of a player known by name (no key, or a key another player had)
   // holds for that name whatever key comes with it.
   bool lobby_banned(const std::string& id, const std::string& nickname,
@@ -927,6 +984,11 @@ class Session {
   bool in_fight(const Object& o, std::uint64_t now_us) const;
   // The owner hit it itself within boss_owner_hit_hold_us (issue 150).
   bool owner_hit_lately(const Object& o, std::uint64_t now_us) const;
+  // Boss turns (boss_turn_us): the player whose turn it is now, if a boss
+  // root in its fight is due for one at a calm moment.
+  std::optional<ConnectionId> next_turn(Object& o, ConnectionId owner, std::uint64_t now_us);
+  // Boss turns: the owner's attack edge from a sample of `epoch` (Object::attack_*).
+  void note_attack(Object& o, std::uint16_t epoch, const protocol::ObjectState& sample, std::uint64_t now_us);
   // Not handed to `to` yet (counted): `to` gave `o` up less than
   // handover_back_us ago (any player who did, report 138), or `o` changed
   // owner that lately and its owner still stands within handover_chase_m of
@@ -972,8 +1034,10 @@ class Session {
  private:
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
+  std::string session_release_;     // the first player's co-op release (coop_release), "" none; while players are in
   std::map<ConnectionId, Connection> connections_;
   ConnectionId next_local_id_ = kLocalPlayerIds;
+  std::uint64_t joins_ = 0;   // players joined so far (Connection::joined_order)
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
   // The Lobby, by lobby_id (the player key; the name only without one), so a

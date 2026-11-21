@@ -29,6 +29,7 @@ struct Glue {
     std::vector<std::string> lines;                             // -> the chat box
     Knocks knocks;                                              // who asks to join (we host)
     std::uint32_t refusals = 0;                                 // Seen::refusals (never reset)
+    std::uint32_t names_taken = 0;                              // Seen::names_taken (never reset)
 
     void Line(std::string text) {
         if (lines.size() < 32) {
@@ -197,12 +198,16 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
         g.dbno.clear();
         g.knocks.Clear();  // the server turns away whoever waited for this game's answer
         g.Copy(client);
+        g.seen.held = false;   // (the wait for the host's answer, if any, ended here)
         g.seen.refused = event.kind == EventKind::refused
                              ? std::string(coop::net::refuse_text(event))
                              : std::string();
         g.seen.banned = event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::banned;
         if (event.kind == EventKind::refused && StopsRejoin(event.refuse_reason)) {
             ++g.refusals;   // (kept across the disconnect that clears `refused`: Seen::refusals)
+        }
+        if (event.kind == EventKind::refused && event.refuse_reason == proto::RefuseReason::name_taken) {
+            ++g.names_taken;
         }
         if (!g.seen.refused.empty()) {
             g.Line("refused: " + g.seen.refused);   // the full reason in the chat (the tabs show its first part)
@@ -227,6 +232,7 @@ void OnEvent(const coop::net::Event& event, coop::net::Client& client) {
     case EventKind::waiting_for_host:
         // Host approval: our own join waits for the host's answer.
         if (const auto* k = std::get_if<proto::JoinKnock>(&event.message)) {
+            g.seen.held = true;   // (the Lobby tab says so: row 208)
             g.Line(WaitingLine(k->wait_s));
             LOG_INFO(Core, "coop: lobby: waiting for the host to let this game in (up to {} s)", k->wait_s);
         }
@@ -351,6 +357,7 @@ Seen Now() {
     std::lock_guard lock(g.mutex);
     Seen s = g.seen;
     s.refusals = g.refusals;
+    s.names_taken = g.names_taken;
     return s;
 }
 

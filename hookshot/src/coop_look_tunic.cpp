@@ -134,6 +134,16 @@ std::pair<std::uint64_t, std::uint64_t> Sizes(const std::vector<std::shared_ptr<
     return {smallest, largest + kStorageSlack};
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> Repeated(const std::vector<Place>& places) {
+    std::map<std::size_t, std::size_t> n;
+    for (const Place& p : places) ++n[p.texture];
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    for (const auto& [texture, count] : n) {
+        if (count > 1) out.emplace_back(texture, count);
+    }
+    return out;
+}
+
 Search Find(const Textures& textures, const std::vector<std::shared_ptr<const Texels>>& colours,
             const std::function<bool(const Live&)>& skip) {
     const auto [lo, hi] = Sizes(colours);
@@ -271,6 +281,7 @@ std::shared_ptr<const Texels> Wardrobe::Load(const std::string& colour) {
 }
 
 void Wardrobe::Step(std::uint64_t now_ms) {
+    if (host_.textures == nullptr) return;   // (no game textures: nothing to look at)
     std::string want;
     {
         std::lock_guard lock(mutex_);
@@ -382,6 +393,15 @@ void Wardrobe::Step(std::uint64_t now_ms) {
                       " taken away: the game's memory there holds something else now");
         }
         places_ = std::move(found.places);
+        if (const auto twice = Repeated(places_); !twice.empty()) {
+            std::string line = "coop: look: row 198 guard: your Link's " + host_.what + " has textures found more than once "
+                               "among the game's (a copy with the game's own texels: your colour would show on it too):";
+            for (const auto& [texture, n] : twice) line += " #" + std::to_string(texture) + " x" + std::to_string(n);
+            if (line != said_repeated_) {
+                said_repeated_ = line;
+                host_.log(line);
+            }
+        }
         look_now_ = false, looked_ = true;
         generation_ = generation;
         if (!full) {
