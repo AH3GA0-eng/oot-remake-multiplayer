@@ -1319,7 +1319,6 @@ function Install-KitCharacterSelect([string]$Kit, [string]$ModsDir, [string]$Dow
     $json = Join-Path $Downloads 'charsel-characters.json'
     $ips = Join-Path $Downloads 'charsel-code.ips'
     $new = Join-Path $ModsDir "_$($op.folder).new"   # ('_' first: the game and the build skip such a folder)
-    $old = Join-Path $ModsDir "_$($op.folder).old"
     $why = ''
     try {
         New-Item -ItemType Directory -Force -Path $Downloads, $ModsDir | Out-Null
@@ -1359,14 +1358,10 @@ function Install-KitCharacterSelect([string]$Kit, [string]$ModsDir, [string]$Dow
                 'Switch it off in the game''s Mods tab, or set character_select = no in coop-options.ini to take it out.') -join "`r`n") + "`r`n"))
             $lic = Join-Path $Downloads 'charsel-LICENSE.txt'
             try { Invoke-KitFetch "https://raw.githubusercontent.com/snaildev99/OoT-Character-Select/$($op.release)/LICENSE" $lic 'web'; Copy-Item -LiteralPath $lic -Destination (Join-Path $new 'LICENSE.txt') -Force } catch { }
-            if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction Stop }
-            if (Test-Path -LiteralPath $dir) { [System.IO.Directory]::Move($dir, $old) }
+            # (what was there is kept until the game is built with the new one: Undo-/Confirm-KitCharacterSelect)
+            Save-KitCharacterSelectPrevious $ModsDir $op.folder
             try { [System.IO.Directory]::Move($new, $dir) }
-            catch {
-                if ((Test-Path -LiteralPath $old) -and -not (Test-Path -LiteralPath $dir)) { try { [System.IO.Directory]::Move($old, $dir) } catch { } }
-                throw
-            }
-            Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+            catch { [void](Undo-KitCharacterSelect $Kit $ModsDir); throw }
             Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue   # (1 GB on disk; a new pin downloads its own)
             $r.Changed = $true
         }
@@ -1382,13 +1377,54 @@ function Install-KitCharacterSelect([string]$Kit, [string]$ModsDir, [string]$Dow
     return $r
 }
 
-# Takes out the copy the kit put in (its stamp), for character_select = no. A copy of the player's own is left.
+# Takes out the copy the kit put in (its stamp), for character_select = no. A copy of the player's own is left. The
+# copy is kept aside until the game is built without it (Undo-/Confirm-KitCharacterSelect).
 function Remove-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
     $op = Get-KitCharacterSelectPin $Kit
     if (-not $op) { return $false }
     $dir = Join-Path $ModsDir $op.folder
     if (-not (Test-Path -LiteralPath (Join-Path $dir 'coop-charsel.txt'))) { return $false }
-    try { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop; return $true } catch { return $false }
+    try { Save-KitCharacterSelectPrevious $ModsDir $op.folder; return $true } catch { return $false }
+}
+
+# Before the kit changes mods\<folder>: what the game was last built with is kept as mods\_<folder>.prev (the folder)
+# or mods\_<folder>.none (nothing was there), both skipped by the game and the build ('_'). Kept once: a change before
+# the last one was confirmed (a start that stopped in its build) keeps the older state, the one the game has. The
+# current folder is moved there or, when an older state is kept already, removed.
+function Save-KitCharacterSelectPrevious([string]$ModsDir, [string]$Folder) {
+    $dir = Join-Path $ModsDir $Folder
+    $prev = Join-Path $ModsDir "_$Folder.prev"
+    $none = Join-Path $ModsDir "_$Folder.none"
+    if (-not (Test-Path -LiteralPath $prev) -and -not (Test-Path -LiteralPath $none)) {
+        if (Test-Path -LiteralPath $dir) { [System.IO.Directory]::Move($dir, $prev) }
+        else { [System.IO.File]::WriteAllText($none, "no $Folder before the kit's change`n") }
+    } elseif (Test-Path -LiteralPath $dir) {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+    }
+}
+
+# The game could not be built with the change (the build failed or was declined: review-geno-0118): the mods folder
+# goes back to what the game was built with, so the game starts as it was. $true when something was put back. The
+# player's answer stays: the next start tries again.
+function Undo-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
+    $op = Get-KitCharacterSelectPin $Kit
+    if (-not $op) { return $false }
+    $dir = Join-Path $ModsDir $op.folder
+    $prev = Join-Path $ModsDir "_$($op.folder).prev"
+    $none = Join-Path $ModsDir "_$($op.folder).none"
+    if (-not (Test-Path -LiteralPath $prev) -and -not (Test-Path -LiteralPath $none)) { return $false }
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop }
+    if (Test-Path -LiteralPath $prev) { [System.IO.Directory]::Move($prev, $dir) }
+    Remove-Item -LiteralPath $none -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+# The game was built (or needed no build) with the change: the kept state goes.
+function Confirm-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
+    $op = Get-KitCharacterSelectPin $Kit
+    if (-not $op) { return }
+    Remove-Item -LiteralPath (Join-Path $ModsDir "_$($op.folder).prev") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $ModsDir "_$($op.folder).none") -Force -ErrorAction SilentlyContinue
 }
 
 # The Character Select mod the pack tool would find for the pack at $Manifest, as the pack records it

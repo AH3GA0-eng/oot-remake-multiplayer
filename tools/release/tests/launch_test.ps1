@@ -942,6 +942,16 @@ try {
                -not (Test-Path -LiteralPath (Join-Path $csDir 'INSTALL.txt')) -and -not (Test-Path -LiteralPath (Join-Path $cDl 'CS-v1.zip')) -and
                -not (Test-Path -LiteralPath (Join-Path $cm 'coop-mods.list')) -and
                @(Get-ChildItem -LiteralPath $cm -Directory).Count -eq 1) "Character Select: the mod's folder alone, characters.json over it, stamped, credited, zip gone, the Mods list untouched (on) [$($r.Lines -join ' | ')]"
+        # review-geno-0118: what the game was built with is kept until its build: nothing there before -> _<folder>.none;
+        # a failed or declined build puts it back (play.ps1 Restore-KitCharacterSelectStart), a built one confirms it.
+        $csNone = Join-Path $cm '_OoT Character Select.none'; $csPrev = Join-Path $cm '_OoT Character Select.prev'
+        Check ((Test-Path -LiteralPath $csNone) -and -not (Test-Path -LiteralPath $csPrev)) 'Character Select undo: the state before (no mod) is kept until the build'
+        Check ((Undo-KitCharacterSelect $ck $cm) -and -not (Test-Path -LiteralPath $csDir) -and -not (Test-Path -LiteralPath $csNone)) 'Character Select undo: a failed build takes the new copy out (no mod, as the game was built)'
+        Check (-not (Undo-KitCharacterSelect $ck $cm)) 'Character Select undo: nothing kept -> nothing to undo'
+        $want = & $New_CsPin 'v1' $csJson
+        $r = Install-KitCharacterSelect $ck $cm
+        Confirm-KitCharacterSelect $ck $cm
+        Check ($r.Changed -and (Test-Path -LiteralPath $csDir) -and -not (Test-Path -LiteralPath $csNone)) 'Character Select confirm: a built game drops the kept state'
         # its code patch is in the game's stamp, so the start's check asks for the 'mods' build (patches 0034/0035)
         Check ((Get-KitExefsStampLine $cg) -match 'exefs=OoT Character Select/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348\.ips:') 'Character Select: its .ips is in the game stamp (the build takes it in)'
         $r = Install-KitCharacterSelect $ck $cm
@@ -953,7 +963,14 @@ try {
         Check ($r.Ok -and $r.Changed -and (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1).Trim() -eq $want -and
                [System.IO.File]::ReadAllText((Join-Path $cm 'coop-mods.list')) -eq "coop-mods 1`noff OoT Character Select`n" -and
                (Get-Content -LiteralPath (Join-Path $csDir 'romfs\Model\Player_Child_C000.Player_Child.bfres.zs') -Raw) -match 'model v2' -and
-               -not (Test-Path -LiteralPath (Join-Path $cm '_OoT Character Select.old'))) "Character Select: a new pin replaces it and keeps the player's Off [$($r.Lines -join ' | ')]"
+               -not (Test-Path -LiteralPath (Join-Path $cm '_OoT Character Select.new'))) "Character Select: a new pin replaces it and keeps the player's Off [$($r.Lines -join ' | ')]"
+        Check ((Get-Content -LiteralPath (Join-Path $csPrev 'coop-charsel.txt') -TotalCount 1) -match '^v1 ') 'Character Select undo: the copy the game was built with (v1) is kept'
+        Check ((Undo-KitCharacterSelect $ck $cm) -and (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1) -match '^v1 ' -and
+               -not (Test-Path -LiteralPath $csPrev)) 'Character Select undo: a failed build puts v1 back'
+        $want = & $New_CsPin 'v2' $csJson
+        $r = Install-KitCharacterSelect $ck $cm
+        Confirm-KitCharacterSelect $ck $cm
+        Check ($r.Changed -and -not (Test-Path -LiteralPath $csPrev)) 'Character Select confirm: v2 built, v1 dropped' 
         # A new pin whose download fails (his page unreachable here): the old copy stays, nothing half put in.
         Write-File (Join-Path $ck 'hookshot\CHARACTER-SELECT.txt') ((Get-Content -LiteralPath (Join-Path $ck 'hookshot\CHARACTER-SELECT.txt') -Raw) -replace 'release=v2', 'release=v3' -replace '(?m)^url=.*$', 'url=https://127.0.0.1:9/cs')
         $r = Install-KitCharacterSelect $ck $cm
@@ -994,6 +1011,9 @@ try {
         Check ((Read-KitOptions (Join-Path $ck 'coop-options.ini')).Count -eq 0) 'Character Select: coop-options.ini''s character_select is no game switch (not passed, not "skipped")'
         Write-File (Join-Path $ck 'coop-options.ini') "character_select = no`n"
         Check ((Invoke-KitCharacterSelectStep $ck $cg) -and -not (Test-Path -LiteralPath $csDir)) 'Character Select: character_select = no takes the kit''s copy out (the start then builds the game without its code)'
+        Check ((Undo-KitCharacterSelect $ck $cm) -and (Test-Path -LiteralPath (Join-Path $csDir 'coop-charsel.txt'))) 'Character Select undo: a failed build after taking it out puts the copy back (the game has its code)'
+        Check ((Invoke-KitCharacterSelectStep $ck $cg) -and -not (Test-Path -LiteralPath $csDir)) 'Character Select: taken out again'
+        Confirm-KitCharacterSelect $ck $cm
         # The puppet pack follows the mod: put in, colours changed, or taken out -> made again (Get-PuppetPackHint).
         $pm = Join-Path $cm 'contents\0400486024DEC000\coop-puppet\coop_puppet.json'
         Check ((Get-KitCharacterSelectSeen $pm) -eq '') 'Character Select seen: none in mods'

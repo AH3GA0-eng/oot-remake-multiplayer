@@ -153,6 +153,40 @@ make_game() {
 # characters.json are downloaded from his GitHub pages onto this PC, SHA-256 checked, and the mod's folder goes into
 # data/game/mods, on (the Mods tab switches it off; the list is never written here). The kit carries none of its
 # files. Before the game's stamp below: the build takes in its code patch (patches 0034/0035), the pack its characters.
+# Before the kit changes data/game/mods/<folder>: what the game was last built with is kept as mods/_<folder>.prev (the
+# folder) or mods/_<folder>.none (nothing was there), both skipped by the game and the build ('_'); kept once, so a
+# start that stopped in its build keeps the older state, the one the game has (kit-paths.ps1 Save-KitCharacterSelectPrevious).
+charsel_save_previous() {
+    local dir=$GAME/mods/$1 prev=$GAME/mods/_$1.prev none=$GAME/mods/_$1.none
+    if [[ ! -e $prev && ! -e $none ]]; then
+        if [[ -e $dir ]]; then mv "$dir" "$prev"; else printf 'no %s before the kit'"'"'s change
+' "$1" >"$none"; fi
+    elif [[ -e $dir ]]; then
+        rm -rf "$dir"
+    fi
+}
+charsel_folder() { [[ -f $LS/CHARACTER-SELECT.txt ]] && pin_get "$LS/CHARACTER-SELECT.txt" folder; }
+# The game could not be built with the change (review-geno-0118): the mods folder goes back to what the game was built
+# with, so the game starts as it was. 0 when something was put back. The player's answer stays: the next start tries again.
+charsel_undo() {
+    local folder dir prev none
+    folder=$(charsel_folder) || return 1
+    [[ -n $folder ]] || return 1
+    dir=$GAME/mods/$folder prev=$GAME/mods/_$folder.prev none=$GAME/mods/_$folder.none
+    [[ -e $prev || -e $none ]] || return 1
+    rm -rf "$dir"
+    [[ -e $prev ]] && mv "$prev" "$dir"
+    rm -f "$none"
+    return 0
+}
+# The game was built (or needed no build) with the change: the kept state goes.
+charsel_confirm() {
+    local folder
+    folder=$(charsel_folder) || return 0
+    [[ -n $folder ]] && rm -rf "$GAME/mods/_$folder.prev" "$GAME/mods/_$folder.none"
+    return 0
+}
+
 charsel_step() {
     local pin=$LS/CHARACTER-SELECT.txt choice='' line rel url zip zsha zfolder folder ourl osha iurl isha want dir new old dl why=''
     [[ -f $pin ]] || return 0
@@ -193,13 +227,13 @@ charsel_step() {
     fi
     dir=$GAME/mods/$folder
     if [[ $choice == no ]]; then
-        if [[ -f $dir/coop-charsel.txt ]]; then rm -rf "$dir" && say 'Character Select: taken out (character_select = no).'; fi
+        if [[ -f $dir/coop-charsel.txt ]] && charsel_save_previous "$folder"; then say 'Character Select: taken out (character_select = no).'; fi
         return 0
     fi
     want="$rel $zsha $osha ${isha:--}"
     if [[ -d $dir && ! -f $dir/coop-charsel.txt ]]; then say "Character Select: your own copy in $dir is used as it is."; return 0; fi
     if [[ -d $dir/romfs && $(head -n1 "$dir/coop-charsel.txt" 2>/dev/null) == "$want" ]]; then say "Character Select $rel -> $dir (there already)"; return 0; fi
-    dl=$B/charsel new=$GAME/mods/_$folder.new old=$GAME/mods/_$folder.old
+    dl=$B/charsel new=$GAME/mods/_$folder.new
     mkdir -p "$dl" "$GAME/mods"
     local free_kb
     free_kb=$(df -Pk "$GAME/mods" | awk 'NR == 2 { print $4 }')
@@ -250,11 +284,11 @@ with zipfile.ZipFile(z) as f:
                 'The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.' \
                 "Switch it off in the game's Mods tab, or set character_select = no in data/coop-options.ini to take it out." >"$new/CREDITS-coop.txt"
             curl -fsSL --max-time 30 -o "$new/LICENSE.txt" "https://raw.githubusercontent.com/snaildev99/OoT-Character-Select/$rel/LICENSE" 2>/dev/null || rm -f "$new/LICENSE.txt"
-            rm -rf "$old"
-            if { [[ ! -e $dir ]] || mv "$dir" "$old"; } && mv "$new" "$dir"; then
-                rm -rf "$old" "$dl/$zip"
+            # (what was there is kept until the game is built with the new one: charsel_undo / charsel_confirm)
+            if charsel_save_previous "$folder" && mv "$new" "$dir"; then
+                rm -f "$dl/$zip"
             else
-                [[ ! -e $dir && -d $old ]] && mv "$old" "$dir"
+                charsel_undo
                 why='it could not be put in place: close the game and start again'
             fi
         fi
@@ -389,33 +423,46 @@ if [[ -n $game ]]; then
     fi
 fi
 
+# The game's build; game_fail stops it with its reason. After charsel_step changed the mods folder, a build that fails
+# puts that folder back (charsel_undo) and the game starts as it was when that leaves it as built (review-geno-0118);
+# else the start stops as before.
+game_fail() { game_why=$*; return 1; }
+game_build() {
+        ((${#game_args[@]})) || { game_fail 'No game files given.'; return 1; }
+        step 'Checking your game files'
+        make_game "${game_args[@]}" --check ||
+            { game_fail 'Longshot cannot build from these files (it said why above). Co-op needs the game program 0400486024DEC000, update v131072, build e0f3ccfa: dump that version of your game and give its .nup.'; return 1; }
+        if ((check_only)); then say ''; say 'Your game files are right. Start again without --check-only to build.'; exit 0; fi
+        printf '%s\n' "$game" >"$remembered"
+        free_kb=$(df -Pk "$DATA" | awk 'NR == 2 { print $4 }')
+        if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
+            warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
+        fi
+        step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
+        build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
+        [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
+        # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
+        # renderer with it; the license was accepted above, data/dlss.txt)
+        ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
+        mkdir -p "$GAME"
+        ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
+        # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
+        no_dlss_hint=''
+        ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
+        make_game "${build_args[@]}" || { game_fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"; return 1; }
+        [[ -n $(kit_game_exe) ]] || { game_fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"; return 1; }
+        printf '%s' "$game_want" >"$game_stamp"
+}
 if ((ready && !rebuild && !check_only)); then
     step 'The game: built already'
+    charsel_confirm
+elif game_build; then
+    charsel_confirm
+elif charsel_undo && game_want="$src_stamp$(exefs_stamp)" && [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]]; then
+    warn "$game_why"
+    warn 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again; character_select = no in data/coop-options.ini stops it).'
 else
-    ((${#game_args[@]})) || fail 'No game files given.'
-    step 'Checking your game files'
-    make_game "${game_args[@]}" --check ||
-        fail 'Longshot cannot build from these files (it said why above). Co-op needs the game program 0400486024DEC000, update v131072, build e0f3ccfa: dump that version of your game and give its .nup.'
-    if ((check_only)); then say ''; say 'Your game files are right. Start again without --check-only to build.'; exit 0; fi
-    printf '%s\n' "$game" >"$remembered"
-    free_kb=$(df -Pk "$DATA" | awk 'NR == 2 { print $4 }')
-    if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
-        warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
-    fi
-    step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
-    build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
-    [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
-    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
-    # renderer with it; the license was accepted above, data/dlss.txt)
-    ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
-    mkdir -p "$GAME"
-    ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
-    # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
-    no_dlss_hint=''
-    ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
-    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"
-    [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
-    printf '%s' "$game_want" >"$game_stamp"
+    fail "$game_why"
 fi
 
 # --- 5: co-op into the game ---------------------------------------------------------------------
