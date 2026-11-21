@@ -392,3 +392,30 @@ TEST_CASE("char colours: the call budget stops a dressing, the next frame goes o
     // Mt_Vest keeps its own texture and only two are set)
     CHECK(f.textures.size() == 3);
 }
+
+TEST_CASE("char colours (0.11.9): co-op's exact eye colour as the iris parameter's three moves") {
+    using CoopCharColours::EyeParam;
+    // The common iris's own colour: no move.
+    const auto same = EyeParam(0x2E5BA8);   // (hue 0.608, about its saturation and brightness)
+    CHECK(same[0] == doctest::Approx(0.5f).epsilon(0.02));
+    // Green (hue 1/3): 0.5 + (0.333 - 0.608) / 2.
+    const auto green = EyeParam(0x00FF00);
+    CHECK(green[0] == doctest::Approx(0.5f + (1.0f / 3.0f - CoopCharColours::kIrisHue) / 2.0f));
+    CHECK(green[1] == doctest::Approx(0.5f + (1.0f - CoopCharColours::kIrisSaturation) / 2.0f));
+    CHECK(green[2] == doctest::Approx(0.5f + (1.0f - CoopCharColours::kIrisBrightness) / 2.0f));
+    // A grey keeps the iris's hue, less saturated; black and white stay within 0..1.
+    const auto grey = EyeParam(0x808080);
+    CHECK(grey[0] == 0.5f);
+    CHECK(grey[1] < 0.5f);
+    for (std::uint32_t c : {0x000000u, 0xFFFFFFu, 0xFF0000u, 0xFF00FFu}) {
+        for (float v : EyeParam(c)) {
+            CHECK(v >= 0.0f);
+            CHECK(v <= 1.0f);
+        }
+    }
+    // As options: an exact eye colour is a colour to put on (Colours), over the mod's eye option.
+    CoopCharColours::Options o;
+    CHECK_FALSE(o.Colours());
+    o.eyes_exact = EyeParam(0x00FF00);
+    CHECK(o.Colours());
+}

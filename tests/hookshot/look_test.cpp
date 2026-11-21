@@ -761,11 +761,12 @@ TEST_CASE("look parts: every gear part has a texture, every texture once") {
         for (const auto& r : g.rules) {
             CHECK(r.part != Part::tunic);   // the tunic has the pack's colours (coop_look_tunic.h)
             CHECK(r.part != Part::cap_trim);   // the Cap trim is painted with the tunic (TunicPainted)
+            CHECK(r.part != Part::eyes);       // the eyes are the model's parameter (CoopCharColours), no texture
             CHECK(r.tones != 0);
             parts.insert(r.part);
         }
     }
-    CHECK(parts.size() == CoopLook::kParts - 2);
+    CHECK(parts.size() == CoopLook::kParts - 3);
 }
 
 TEST_CASE("look parts: the gear painted in a look, a painting's name says its colours") {

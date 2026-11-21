@@ -196,9 +196,15 @@ std::vector<Director::DressView> Director::DressTargets() const {
         if (s.phase != Phase::live || s.actor == 0 || s.block == 0) continue;
         const Target* t = Wanted(s.number);
         const bool character = IsCharacterActor(s.actor_name);
+        std::optional<std::uint32_t> eyes;   // (0.11.9: the eyes part of their look, as received)
+        if (const auto parts = CoopLookShare::Of(s.number)) {
+            for (const auto& p : *parts) {
+                if (p.part == kEyesPart) eyes = p.colour & 0xFFFFFFu;
+            }
+        }
         out.push_back({s.number, s.actor, s.block + block::kDress,
                        t != nullptr && character ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
-                       character && character_apply_ != 0 && character_apply_state_ == 1, s.actor_name});
+                       character && character_apply_ != 0 && character_apply_state_ == 1, s.actor_name, eyes});
     }
     return out;
 }
