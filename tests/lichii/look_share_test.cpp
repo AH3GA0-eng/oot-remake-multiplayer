@@ -102,21 +102,24 @@ TEST_CASE("look share: a new session forgets the last one's looks and slots") {
     CHECK(s.SlotOf(2) == 1u);
 }
 
-TEST_CASE("look share: a puppet wears a copy only once it is painted, then the slot's other copy for a new look") {
+TEST_CASE("look share: a puppet wears its slot's copy from the start (row 198), then the other copy for a new look") {
     using Job = CoopLookShare::Share::Job;
     constexpr std::uint64_t later = CoopLookShare::kCopyDwellMs;
     CoopLookShare::Share s;
     s.EnableSlots(true);
     s.OnEvent(Look(3, {{11, 0xFF0000}}));
     s.OnEvent(Look(4, {{4, 0x00FF00}}));
-    CHECK_FALSE(s.CopyOf(3));                   // nothing painted yet: the game's items
+    // (row 198) Nothing painted yet: the copy the first job paints, marked; never the game's own items, whose
+    // textures your own Link's colours are drawn over.
+    CHECK(s.CopyOf(3) == 1u);
+    CHECK(s.CopyOf(4) == 3u);
     auto jobs = s.Jobs(0);
     REQUIRE(jobs.size() == 2);
     CHECK(jobs[0] == Job{1, 1, 3, {{11, 0xFF0000}}});   // slot 1: copies 1 and 2
     CHECK(jobs[1] == Job{2, 3, 4, {{4, 0x00FF00}}});    // slot 2: copies 3 and 4
     s.Done(jobs[0], 1000);
     CHECK(s.CopyOf(3) == 1u);
-    CHECK_FALSE(s.CopyOf(4));
+    CHECK(s.CopyOf(4) == 3u);                   // (still the copy its job paints)
     CHECK(s.Jobs(1000).size() == 1);            // painted once
     s.OnEvent(Look(3, {{11, 0x0000FF}}));       // a new colour: the other copy is painted...
     CHECK(s.Jobs(1500).size() == 1);            // ...but not while the puppet may still be moving onto copy 1
@@ -131,8 +134,9 @@ TEST_CASE("look share: a puppet wears a copy only once it is painted, then the s
 
     // Freed and given again: never the copy painted last (a puppet may still wear it).
     s.OnEvent(Kind(EventKind::player_left, 3));   // (no colours keeps the slot since held-sword)
-    CHECK_FALSE(s.CopyOf(3));
+    CHECK_FALSE(s.CopyOf(3));                     // (no slot: none)
     s.OnEvent(Look(3, {{11, 0x101010}}));
+    CHECK(s.CopyOf(3) == 1u);                     // (row 198: back at once, on the copy its job paints)
     CHECK(s.Jobs(1000 + 3 * later)[0] == Job{1, 1, 3, {{11, 0x101010}}});   // copy 2 was painted last
     s.OnEvent(Kind(EventKind::welcomed));       // a new session: the same, for every slot
     s.OnEvent(Look(6, {{3, 1}}));
@@ -147,12 +151,13 @@ TEST_CASE("look share: a puppet wears a copy only once it is painted, then the s
     s.OnEvent(Kind(EventKind::player_left, 7));
     s.OnEvent(Look(5, {{4, 1}}));
     s.Done(late, 100);                          // P7's job, done late
-    CHECK_FALSE(s.CopyOf(5));
+    CHECK(s.CopyOf(5) != late.copy);            // (not P7's colours)
     CHECK_FALSE(s.CopyOf(7));
     const auto next = s.Jobs(1000 + 5 * later);
     REQUIRE(next.size() == 2);
     CHECK(next[1].player == 5);
     CHECK(next[1].copy != late.copy);
+    CHECK(s.CopyOf(5) == next[1].copy);         // (the copy P5 wears is the one painted for them)
 }
 
 TEST_CASE("look items: the pack's item copies are read from its manifest") {
@@ -257,7 +262,7 @@ TEST_CASE("look share: a player with no gear colours wears their own copy, paint
     s.EnableSlots(true);
     s.OnEvent(Look(4, {}));
     CHECK(s.SlotOf(4) == 1u);
-    CHECK_FALSE(s.CopyOf(4));                   // not painted yet: the game's items for now
+    CHECK(s.CopyOf(4) == 1u);                   // not painted yet: its copy all the same (row 198), the game's colours
     const auto jobs = s.Jobs(0);
     REQUIRE(jobs.size() == 1);
     CHECK(jobs[0].player == 4);
@@ -510,4 +515,22 @@ TEST_CASE("character puppets: the pack's are read from its manifest, and a playe
     PlannerSettings no_map;
     no_map.character_actors = actors;
     CHECK(Planner(no_map).ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");   // puppets but no map: none
+}
+
+TEST_CASE("look share (row 198): a puppet never wears the game's own coloured items while it has a slot") {
+    // A player who leaves and joins again (the owner's log: P2's puppet made again wore 'Weapon_Shield_Hylian',
+    // the game's own, and showed the owner's shield colour): from its first look on, a copy.
+    CoopLookShare::Share s;
+    s.EnableSlots(true);
+    for (std::uint8_t p = 2; p <= 5; ++p) s.OnEvent(Look(p, {{4, 0x0000FF}}));
+    for (std::uint8_t p = 2; p <= 5; ++p) CHECK(s.CopyOf(p));
+    s.OnEvent(Kind(EventKind::player_left, 2));
+    s.OnEvent(Look(2, {{4, 0x0000FF}}));
+    CHECK(s.CopyOf(2));
+    // More players than slots (kSlots): the fifth has none (the game's items; the module logs it).
+    s.OnEvent(Look(6, {{4, 0x0000FF}}));
+    CHECK_FALSE(s.CopyOf(6));
+    // Slots off (no texture overrides in this Longshot: your own Link is not painted either): none.
+    s.EnableSlots(false);
+    CHECK_FALSE(s.CopyOf(3));
 }

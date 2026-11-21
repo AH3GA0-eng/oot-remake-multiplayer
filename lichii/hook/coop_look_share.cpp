@@ -230,10 +230,14 @@ std::optional<std::size_t> Share::CopyOf(std::uint8_t number) const {
         return std::nullopt;
     }
     const Ready& r = ready_[*slot - 1];
-    if (r.copy == 0 || r.player != number) {
-        return std::nullopt;
+    if (r.copy != 0 && r.player == number) {
+        return r.copy;
     }
-    return r.copy;
+    // (row 198) Not painted for them yet: the copy their first job paints (Jobs: never the one painted last), in
+    // the game's colours or an older look until then, but marked as a copy. Never nothing: the puppet would wear the
+    // game's own item, the very texture your own Link's colour is drawn over.
+    const std::size_t first = kCopiesPerSlot * (*slot - 1) + 1;
+    return r.copy == first ? first + 1 : first;
 }
 
 void Share::EnableSlots(bool on) {

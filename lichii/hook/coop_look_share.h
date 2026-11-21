@@ -110,7 +110,8 @@ public:
     // slot is still that player's.
     void Done(const Job& job, std::uint64_t now_ms);
     // The copy player `number`'s puppet wears (1 to kSlots * kCopiesPerSlot):
-    // nothing before one is painted for them.
+    // from the moment the slot is theirs (row 198: before its first paint, the
+    // copy that paint is for); nothing only without a slot.
     std::optional<std::size_t> CopyOf(std::uint8_t number) const;
     // Slots are given only where the puppets' copies are painted (Hookshot's
     // module): off, every slot is freed.
