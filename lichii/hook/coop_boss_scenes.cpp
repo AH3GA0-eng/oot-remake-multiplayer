@@ -277,6 +277,7 @@ void Director::Take(const proto::Message& m, const Local& local, std::uint64_t n
                               std::to_string(h->max_life));
             if (h->player_number != local.self) {
                 out.chat.push_back({h->player_number, "got the heart container for everyone"});
+                out.refill = true;
             }
         }
         f.heart = std::max(f.heart, h->max_life);
