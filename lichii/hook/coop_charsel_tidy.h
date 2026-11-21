@@ -15,12 +15,16 @@
 //
 // His page's exits all clear IsPageOpen: B and - (MinusMenuToMain, his close_page_with_menu), R and ZR (his exit to
 // Key Items). So the rule:
-// - IsPageOpen 0 (his page not shown, menu up or not): KeepUICamera, Slide and SlideOut not 0 are a swap cut short.
-//   They are put back to 0 at once, on that frame, before any later area load or menu step can delete the menu Link
-//   with them set;
-// - IsPageOpen itself left at 1 (a path that skipped his exits) with no game menu in front for kQuietFrames: all four
-//   are put back to 0;
+// - IsPageOpen 0 (his page not shown, menu up or not) with KeepUICamera still set: a swap cut short. KeepUICamera is
+//   put back to 0 at once, on that frame, before any later area load or swap can delete the menu Link with it set;
+// - IsPageOpen itself left at 1 (a path past his exits) with no game menu in front for kQuietFrames: KeepUICamera and
+//   IsPageOpen are put back to 0 (with IsPageOpen set his page view patch keeps acting on the Equipment page's view);
 // - IsPageOpen 1 while a menu is up (his page showing, a swap may be running): nothing is touched.
+// Slide and SlideOut are never written: his own steps put them right. A swap cut after step 1 has the old character
+// parked in menu slot 4, and only a "delete the menu Link" with Slide neither 0 nor its stash value deletes slot 4,
+// after which his page view patch sets both back to 0 (build.py, the slide's step 5: "a flag that is out of step
+// puts itself right"). Writing Slide to 0 here would turn that delete into a plain one of slot 0 and leave the
+// parked character in slot 4 (review-fixes-0119).
 // Each one found set is written back through the game's own setter, said once in the log. Without the mod the
 // flags do not exist: nothing.
 //
@@ -43,12 +47,11 @@ struct Flag {
     std::string_view name;
     bool is_bool;   // else an Int
 };
-// His page's flags that are 0 whenever no menu shows (build.py GAMEDATA_FLAGS, ResetTypeValue 0, SaveFileIndex -1).
-inline constexpr std::array<Flag, 4> kFlags{{
+// His page's flags this puts back (build.py GAMEDATA_FLAGS, ResetTypeValue 0, SaveFileIndex -1); Slide and SlideOut
+// are his own to put right (above).
+inline constexpr std::array<Flag, 2> kFlags{{
     {"CharacterMenu_KeepUICamera", true},
     {"CharacterMenu_IsPageOpen", true},
-    {"CharacterMenu_Slide", false},
-    {"CharacterMenu_SlideOut", false},
 }};
 // Frames with no menu in front before an IsPageOpen still at 1 counts as left set (half a second: a menu
 // closing has run its graph, MinusMenuToMain included).
@@ -71,7 +74,7 @@ public:
         const bool stuck_page = !page_left && quiet_ >= kQuietFrames;   // no menu for a while, still "open"
         if (!page_left && !stuck_page) return out;            // his page shows: his flags
         for (const Flag& f : kFlags) {
-            if (page_left && &f == &kFlags[1]) continue;      // (0 already)
+            if (page_left && &f == &kFlags[1]) continue;      // (0 already: only KeepUICamera)
             const auto v = read(f);
             if (!v || *v == 0) continue;
             if (!write(f, 0)) continue;   // tried again next frame
