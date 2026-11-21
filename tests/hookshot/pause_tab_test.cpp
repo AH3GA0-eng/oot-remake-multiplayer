@@ -2333,3 +2333,13 @@ TEST_CASE("census (the - menu research): screens first seen, state changes, gone
     CHECK(c.Seen(0x4bebaa8, 1, minus, 60 + CoopPauseTab::Census::kCensusGoneMs) ==
           std::vector<std::string>{"census: screen 0x4bebaa8 seen, state 1"});   // back: seen anew
 }
+
+TEST_CASE("pause tab (row 199): the menu is up while the tab strip is open or opening and fresh") {
+    CHECK(MenuUpFrom(2, 1000, 1000));
+    CHECK(MenuUpFrom(1, 1000, 1000 + kMenuUpMs - 1));       // (opening; a frame or a few later)
+    CHECK_FALSE(MenuUpFrom(2, 1000, 1000 + kMenuUpMs));     // (no update since: closed, or a load)
+    CHECK_FALSE(MenuUpFrom(3, 1000, 1000));                 // (closing: the marks come back with the game's HUD)
+    CHECK_FALSE(MenuUpFrom(0, 1000, 1000));
+    CHECK_FALSE(MenuUpFrom(2, 0, 50));                      // (never seen)
+    CHECK_FALSE(MenuUpFrom(2, 2000, 1000));                 // (a clock that went back)
+}

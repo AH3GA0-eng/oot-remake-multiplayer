@@ -102,6 +102,8 @@ std::array<std::atomic<int>, kMenuMost + 1> g_menu_line_row{};
 std::array<std::atomic<bool>, kMenuMost + 1> g_menu_line_pick{};
 // The page co-op's menu shows for this view (CoopPause::OpenNative; -1 none): FollowMenu's, on the pad's thread.
 std::atomic<int> g_menu_open{-1};
+std::atomic<int> g_strip_state{0};            // row 199: the tab strip's state at its last update
+std::atomic<std::uint64_t> g_strip_seen_ms{0};   // and when (GameMenuUp)
 // Co-op's menu types into its row (a name, a port, the relay): the list's rows are the typing keys then, as for the
 // page's own fields (TypingLines): the key picked, Letter's letter (its place in kMenuLetters) and the rows shown
 // (empty while it does not type). g_mutex.
@@ -2267,6 +2269,10 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         f.kind = KindOf(vtable - base);
         CensusUpdate(screen, vtable - base);   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
         if (f.kind == Kind::kOther) return;   // (most updates: the HUD's and the other screens', once a frame each)
+        if (f.kind == Kind::kStrip) {   // (row 199: any thread may ask whether the menu is up, GameMenuUp)
+            g_strip_state = Read<std::uint8_t>(screen + kScreenState);
+            g_strip_seen_ms = NowMs();
+        }
         f.screen = screen;
         f.state = Read<std::uint8_t>(screen + kScreenState);
         if (f.kind != Kind::kBlocker) f.layout = Read<std::uint64_t>(screen + kScreenLayout);
@@ -3282,6 +3288,10 @@ bool ClientCursor(float* fx, float* fy, bool* left) noexcept {
     } catch (...) {
         return false;
     }
+}
+
+bool GameMenuUp() noexcept {
+    return MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs());
 }
 
 int MousePage() noexcept {

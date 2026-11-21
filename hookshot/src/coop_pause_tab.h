@@ -735,6 +735,9 @@ int SettingNext(const SettingRow& r, int dir);
 // is the setting's place on its page (0 to kSettingsPerPage - 1; the list's row under the header is row + 1).
 void SettingMove(int count, int dy, int* page, int* row, int per_page = kSettingsPerPage);
 // The games the browser lists now (the chosen list's), and its pages.
+// Row 199: the strip's last update says the menu is up: open or opening (state 1, 2) and seen within kMenuUpMs.
+inline constexpr std::uint64_t kMenuUpMs = 200;
+bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
 int BrowseListed(const Session& s);
 int CellPages(int listed);
 // The list's index of a cell on the browser's page, -1 none.
@@ -819,6 +822,10 @@ std::string TestState();
 // The System page's question's screen (UISystemWindowScreen: "Return to the title screen?").
 inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).
+// Row 199: the game's pause menu is up (the + or the - menu, any page, a mod's page such as Character Select's
+// included: the tab strip shows on every one of them), as of the strip's last update. Any thread. Co-op's minimap
+// marks and player blocks wait while it is (the Map page draws its own).
+bool GameMenuUp() noexcept;
 int MousePage() noexcept;
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's mouse reads it too (coop_title.cpp).

@@ -812,7 +812,9 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
     const auto menu = CoopMapPage::MenuState();
     const auto page = CoopMapPage::Shown(capture->dungeon);
     m.minimap.reset();
-    if (camera && !(menu && menu->menu_open)) {
+    // (row 199: also while the pause menu's tab strip is up, any page: patch 0018's menu_open is a screen that had the
+    // mouse, which a mod's page such as Character Select's never has, so the marks drew over it. The Map page: m.page)
+    if (camera && !(menu && menu->menu_open) && !CoopPauseTab::GameMenuUp()) {
         m.minimap = CoopMapPage::Minimap(capture->dungeon);
     }
     m.minimap_floor = coop::overlay::map::floor_of(*capture, view.self[1]);
@@ -980,7 +982,7 @@ CoopDraw::Scene DrawScene() {
     // (the game's pause menu up: the other players' blocks wait; drawn over the pause menu's left rows they hid our
     // Multiplayer page's, a test run 2026-11-20)
     const auto menu_state = CoopMapPage::MenuState();
-    const bool game_menu_up = menu_state && menu_state->menu_open;
+    const bool game_menu_up = (menu_state && menu_state->menu_open) || CoopPauseTab::GameMenuUp();   // (row 199)
     std::optional<std::string> own_scene;
     for (const auto& row : rows) {
         if (row.self) own_scene = row.scene;

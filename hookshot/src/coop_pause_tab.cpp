@@ -529,6 +529,10 @@ std::pair<float, float> SlideOffsets(int dir, float p) {
     return {0.0f, 0.0f};
 }
 
+bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms) {
+    return (strip_state == 1 || strip_state == 2) && seen_ms != 0 && now_ms >= seen_ms && now_ms - seen_ms < kMenuUpMs;
+}
+
 int BrowseListed(const Session& s) {
     return s.online ? s.online_listed : s.lan_listed;
 }
