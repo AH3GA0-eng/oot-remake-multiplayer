@@ -311,7 +311,11 @@ struct MendClocks {
     std::array<std::uint64_t, CoopStory::kStepFloors> floors{};  // row 145
     std::uint64_t effects = 0;
     CoopStory::EffectsGiven given;  // once per flag per load (review of owl-time)
+    std::array<std::uint64_t, CoopStory::kGiftsMax> gifts{};  // rows 195/204: hold clocks
+    std::array<bool, CoopStory::kGiftsMax> gift_given{};      // once per load
     void NewLoad() {  // the title or a load: nothing to read yet
+        gifts = {};
+        gift_given = {};
         mends = {};
         mended = {};
         set_back_said = {};
@@ -327,6 +331,50 @@ std::string FlagKeyText(const coop::host::FlagKey& key, const coop::host::ItemFl
     if (key.index != 0) text += fmt::format("[{}]", key.index);
     if (item != nullptr) text += fmt::format(" {}", item->name);
     return text;
+}
+
+// Rows 195/204 (CoopStory::Gifts): a one-time gift whose scene is played here (the flag shared in, or set by a start
+// that never reached the gift) while the item is not in the pouch: Saria's bridge scene gone with no Fairy Ocarina.
+// Given as the gift's own get writes it: the count and IsGet, the ocarina's Bools and PlayerStatus.EquipOcarina (the
+// full set a playable ocarina holds, docs/items.md), each through the game's own setter; in a session the item mend
+// then asks the game to equip it (rows 93/103), alone it is in Link's hands from the next load. Only outside events
+// (`idle`), so the scene this game plays itself gives its own first, after the same hold, once per load.
+void MendGifts(EmulatorMemory& memory, coop::host::GameFlags& flags, MendClocks& clocks, bool idle,
+               std::uint64_t now_us, std::uint64_t hold_us) {
+    namespace oc = coop::host::ocarina;
+    const auto gifts = CoopStory::Gifts();
+    for (std::size_t i = 0; i < gifts.size() && i < CoopStory::kGiftsMax; ++i) {
+        const auto& gift = gifts[i];
+        auto& since = clocks.gifts[i];
+        const bool due = gift.mend && idle && !clocks.gift_given[i] &&
+                         CoopStory::GiftDue(gift, [&](std::uint32_t h) { return flags.get_bool(h); },
+                                            [&](std::uint32_t h) { return flags.get_int(h); });
+        if (!due) {
+            since = 0;
+            continue;
+        }
+        if (since == 0) {
+            since = now_us;
+            continue;
+        }
+        if (now_us - since < hold_us || !coop::host::GameFlags::set_int(memory, gift.count, 1)) continue;
+        since = 0;
+        clocks.gift_given[i] = true;
+        if (gift.count == oc::kFairy) {
+            for (const std::uint32_t hash : coop::host::ocarina_bools_mend(
+                     1, 0, [&](std::uint32_t h) { return flags.get_bool(h); })) {
+                coop::host::GameFlags::set_bool(memory, hash, true);
+            }
+            const auto current = flags.get_string64(oc::kEquip);
+            if (current) {
+                if (const auto want = coop::host::ocarina_equip_mend(1, 0, *current)) {
+                    coop::host::GameFlags::set_string64(memory, oc::kEquip, *want);
+                }
+            }
+        }
+        LOG_INFO(Core, "coop: story: {} was played here but {} was not in the pouch: given (rows 195/204)",
+                 gift.where, gift.item);
+    }
 }
 
 void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
@@ -387,6 +435,7 @@ void MendStory(EmulatorMemory& memory, MendClocks& clocks, bool idle) {
                      at.value_or(0), *raise, floor.what);
         }
     }
+    MendGifts(memory, flags, clocks, idle, now_us, kHoldUs);
     std::array<const CoopStory::Effect*, CoopStory::kEffectsMax> due{};
     const std::size_t n = idle ? CoopStory::EffectsDue([&](std::uint32_t h) { return flags.get_bool(h); }, due) : 0;
     if (n == 0) {
@@ -963,8 +1012,18 @@ public:
                 }
             }
             shop_view.emplace(*quests);
+            // Rows 195/204 (CoopStory::GiftHolds): Saria's played flags from others wait while no ocarina is ours.
+            std::array<bool, CoopStory::kGiftsMax> gifts_held{};
+            {
+                coop::host::GameFlags gflags(*memory);
+                const auto gifts = CoopStory::Gifts();
+                for (std::size_t g = 0; g < gifts.size() && g < CoopStory::kGiftsMax; ++g) {
+                    gifts_held[g] = CoopStory::GiftHeld(gifts[g], [&](std::uint32_t h) { return gflags.get_int(h); })
+                                        .value_or(false);
+                }
+            }
             hold.emplace(*shop_view, [link, scene, talk, near, sale_here, sale_scene, sale_on, shop_on, gift_on,
-                                   result_hold](coop::protocol::FlagKey key) {
+                                   result_hold, gifts_held](coop::protocol::FlagKey key) {
                 if (key.kind == coop::protocol::FlagKeyKind::key64) {
                     // Row 98(2) trigger guards: a shared key that would raise our asker's trigger (a silver rupee
                     // counter's key, its last token, an ice block) waits until our game has played the event.
@@ -972,6 +1031,9 @@ public:
                 }
                 if (key.kind != coop::protocol::FlagKeyKind::named || key.index != 0) {
                     return false;
+                }
+                if (CoopStory::On() && CoopStory::GiftHolds(key.hash, gifts_held)) {
+                    return true;  // rows 195/204: a gift scene played elsewhere lands once its item is ours
                 }
                 if (talk.Holds(key.hash) || CoopScrubTalk::NearHolds(near, key.hash)) {
                     return true;
