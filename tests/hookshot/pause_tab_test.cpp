@@ -2489,10 +2489,15 @@ TEST_CASE("pause tab (0.11.9): the - menu's own page: up and down among its rows
     // The - menu goes (closing: still up, no + yet), then its updates stop: one press of + (down, then let go).
     p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 70);
     CHECK(p.MinusTab() == -1);
-    CHECK(p.OnPad(0, now + 72) == 0);
-    CHECK(p.OnPad(0, now + 400) == 0);   // (stale now, the gap passed: the press is due)
-    CHECK(p.OnPad(0, now + 402) == kPadPlus);
-    CHECK(p.OnPad(0, now + 404) == 0);
+    // (the pad every frame, as in the game: a jump of more than the stale time with no call is a game stall, which
+    // Page::AfterStall carries the strip's last update over, so the closed - menu would still read up)
+    int pluses = 0;
+    std::uint64_t plus_at = 0;
+    for (std::uint64_t t = now + 72; t < now + 400; t += 16) {   // (the next step comes at now + 410)
+        if (p.OnPad(0, t) == kPadPlus) ++pluses, plus_at = t;
+    }
+    CHECK(pluses == 1);                    // (one press of +: down, then let go)
+    CHECK(plus_at >= now + 70 + 250);      // (only once the - menu's updates have stopped: its last at now + 70)
     CHECK_FALSE(p.GoingToPlus());
     CHECK(p.ViewKept());
     // The + menu opens on System: the Multiplayer page shows there.
