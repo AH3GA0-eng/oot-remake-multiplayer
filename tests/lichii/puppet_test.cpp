@@ -2206,6 +2206,10 @@ TEST_CASE("puppet gear: a PLAYER_EQUIP becomes the pieces, the sword hand's own 
     CHECK(GearOf(e)[kGearHead] == "");
     e.head = "Armor_Adult_Default_Head";
     CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Mask_Base";  // the masks' base actor is no mask
+    CHECK(GearOf(e)[kGearHead] == "");
+    e.head = "Armor_Child_Mask_";
+    CHECK(GearOf(e)[kGearHead] == "");
     e.head = "Armor_Child_Mask_Truth";
     CHECK(GearOf(e)[kGearHead] == "Armor_Child_Mask_Truth");
     e.head = "";
