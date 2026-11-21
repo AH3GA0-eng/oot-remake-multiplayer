@@ -567,13 +567,13 @@ bool Join(const std::string& text_in) {
     // A bare name ("mypc", "forest-gang"): a PC on the home network first, then a room on the relay.
     std::string text = text_in;
     std::string fallback;   // (a bare name joined as a PC: its room, should no game answer there)
-    const auto name = CoopTitleMenu::BareJoinName(text);
+    const auto bare = CoopTitleMenu::BareJoinName(text);
     const std::string relay(CoopTitleMenu::Trim(g_menu.options().relay));
-    if (name && !nat::looks_like_code(text) && PcFound(*name)) {
+    if (bare && !nat::looks_like_code(text) && PcFound(*bare)) {
         if (!relay.empty()) fallback = CoopTitleMenu::RoomJoinLine(text, relay);
-    } else if (name && !nat::looks_like_code(text)) {
+    } else if (bare && !nat::looks_like_code(text)) {
         if (relay.empty()) {
-            g_menu.SetNote({"No PC called " + *name + " was found. To join a room by its name, set a relay first: "
+            g_menu.SetNote({"No PC called " + *bare + " was found. To join a room by its name, set a relay first: "
                             "Co-op Settings, Relay. Or type the host's IP address."});
             LOG_INFO(Core, "coop: multiplayer tab: join: a bare name is no PC here and no relay is set");
             return false;
