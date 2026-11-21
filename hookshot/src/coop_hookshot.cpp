@@ -981,6 +981,7 @@ CoopDraw::Scene DrawScene() {
     }
     // (the game's pause menu up: the other players' blocks wait; drawn over the pause menu's left rows they hid our
     // Multiplayer page's, a test run 2026-11-20)
+    CoopPauseTab::CensusFromMenuState();   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
     const auto menu_state = CoopMapPage::MenuState();
     const bool game_menu_up = (menu_state && menu_state->menu_open) || CoopPauseTab::GameMenuUp();   // (row 199)
     std::optional<std::string> own_scene;

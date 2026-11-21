@@ -31,6 +31,7 @@
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_lan.h"
+#include "coop_map_page.h"
 #include "coop_lan_net.h"
 #include "coop_mod_screens.h"
 #include "coop_pause.h"
@@ -3287,6 +3288,28 @@ bool ClientCursor(float* fx, float* fy, bool* left) noexcept {
         return ReadClientCursor(fx, fy, left);
     } catch (...) {
         return false;
+    }
+}
+
+void CensusFromMenuState() noexcept {
+    try {
+        static const bool on = [] {
+            const char* v = std::getenv("COOP_TEST_SCREEN_PROBE");
+            return v != nullptr && v[0] == '1';
+        }();
+        if (!on) return;
+        static std::uint64_t next_ms = 0;
+        if (NowMs() < next_ms) return;
+        next_ms = NowMs() + 50;
+        const auto menu = CoopMapPage::MenuState();
+        if (!menu) return;
+        const std::uint64_t base = CoopRuntime::MainBase();
+        for (std::uint32_t i = 0; i < menu->screen_count && i < menu->screens.size(); ++i) {
+            const std::uint64_t screen = menu->screens[i];
+            const std::uint64_t vtable = screen != 0 ? Read<std::uint64_t>(screen) : 0;
+            if (vtable >= base) CensusUpdate(screen, vtable - base);
+        }
+    } catch (...) {
     }
 }
 

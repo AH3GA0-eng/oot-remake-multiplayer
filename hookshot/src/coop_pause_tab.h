@@ -825,6 +825,9 @@ inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // Row 199: the game's pause menu is up (the + or the - menu, any page, a mod's page such as Character Select's
 // included: the tab strip shows on every one of them), as of the strip's last update. Any thread. Co-op's minimap
 // marks and player blocks wait while it is (the Map page draws its own).
+// The - menu research with COOP_TEST_SCREEN_PROBE=1 on a game without patch 0030: the screens patch 0018 says ran in
+// the last 100 ms, through the same census (any thread; nothing without the variable).
+void CensusFromMenuState() noexcept;
 bool GameMenuUp() noexcept;
 int MousePage() noexcept;
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
