@@ -1779,6 +1779,8 @@ public:
                 for (const std::uint64_t key : fresh) {
                     gold_taken_.insert(key);
                     world_.TakenKey(key);
+                    sync_.Take(key);       // (its Skulltula is no longer shared or copied here, as a take from another
+                    sync_.Take(key + 2);   // game's flag does: an announcement of it made a copy, 2026-11-20)
                     char hex[24];
                     std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
                     LOG_INFO(Core, "coop: objects: Gold Skulltula {} is taken in this save: its token goes",
