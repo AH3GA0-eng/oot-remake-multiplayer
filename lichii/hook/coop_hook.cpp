@@ -1374,7 +1374,7 @@ public:
         for (const auto& k : session_->take_one_way_left()) {  // row 140 (flag-oneway-c)
             const auto* item = coop::host::find_item(k.hash);
             LOG_INFO(Core,
-                     "coop: flags: {} ({:#010x}): the game lowered it again right after our put-back ({} times): its "
+                     "coop: flags: {} ({:#010x}): the game lowered it again after our put-back ({} times): its "
                      "own value until the next load, not put back or sent (row 140)",
                      item != nullptr ? item->name : std::string_view("?"), k.hash,
                      coop::host::FlagWatcher::kMaxQuickUndos);
@@ -3312,7 +3312,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
     const auto restored = keeper.frame(flags, in_play, coop::host::view_of(scene));
     if (keeper.take_save_load()) coop::host::map_drop_log().note("save load (no scene for a while: the title)");
-    if (!restored.empty() && StartMapRefresh()) CoopMapRefresh::TheRefresher().WantNow(SteadyMs());  // row 140
+    if (keeper.take_hud_refresh() && StartMapRefresh()) CoopMapRefresh::TheRefresher().WantNow(SteadyMs());  // rows 140, 183
     for (const auto key : restored) {
         const auto* item = coop::host::find_item(key.hash);
         LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b guard; restores {})",
@@ -3320,7 +3320,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     }
     for (const auto key : keeper.take_left()) {  // row 140 (flag-oneway-c)
         const auto* item = coop::host::find_item(key.hash);
-        LOG_INFO(Core, "coop: items: {} went back to 0 right after each of {} write-backs with no session: left to the game "
+        LOG_INFO(Core, "coop: items: {} went back to 0 after each of {} write-backs with no session: left to the game "
                        "until it gives it again (row 140)",
                  item != nullptr ? item->name : std::string_view("?"), coop::host::OneWayKeeper::kMaxQuickUndos);
     }
