@@ -186,7 +186,7 @@ if ($Hookshot) {
     function Restore-KitCharacterSelectStart {
         if (-not $csMods) { return $false }
         try { if (-not (Undo-KitCharacterSelect $kit $csMods)) { return $false } } catch { return $false }
-        Write-Host 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again; character_select = no in coop-options.ini stops it).' -ForegroundColor Yellow
+        Write-Host 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again).' -ForegroundColor Yellow
         $n = Get-KitHookshotNeed $kit
         return (-not $n -or $n -eq 'offline')
     }
