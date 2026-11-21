@@ -656,7 +656,9 @@ void LookForAsk() {
     std::vector<std::string> pending = CoopProblemAsk::PendingNames(folder);
     const std::int64_t now_s =
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    const auto due = CoopProblemAsk::Due(pending, CoopProblemAsk::ReadAsked(folder), now_s);
+    // (the crashes the kit already sent to us are not asked about: coop_problem_ask.h)
+    const auto due = CoopProblemAsk::Due(
+        pending, CoopProblemAsk::ReadAsked(folder) + "\n" + CoopProblemAsk::ReadSent(folder), now_s);
     if (!due) return;
     {
         std::lock_guard lock(g_mutex);

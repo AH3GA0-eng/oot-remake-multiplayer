@@ -115,7 +115,7 @@ kit="$tmp/OoT Coop kit"   # (a space in the path, as players' folders have)
 mkdir -p "$kit/scripts" "$kit/data/longshot/patches" "$kit/data/server" "$kit/data/tools/puppet_pack"
 cp "$src/start-squadala.sh" "$src/README.txt" "$src/revert.sh" "$kit/"
 check "the kit has one start file (no start-oot-coop.sh from v0.11.4 on)" [ ! -e "$src/start-oot-coop.sh" ]
-cp "$src"/scripts/*.sh "$release/kit/scripts/apply_patch.py" "$kit/scripts/"
+cp "$src"/scripts/*.sh "$src/scripts/problem_report.py" "$release/kit/scripts/apply_patch.py" "$kit/scripts/"
 cp "$release/kit/coop.ini.template" "$kit/scripts/"
 cp "$release/kit/coop-options.ini" "$kit/data/coop-options.ini"
 printf 'server\n' >"$kit/data/server/coop_server"
@@ -524,6 +524,12 @@ if [[ $(uname -s) == Linux ]]; then
     bash "$kit/start-squadala.sh" --help </dev/null >"$tmp/start3.txt" 2>&1
     check 'start --help lists the options' has "$tmp/start3.txt" '--no-update'
     check 'start --help lists --pack' has "$tmp/start3.txt" '--pack'
+    check 'start --help lists --problem-reports' has "$tmp/start3.txt" '--problem-reports'
+    check 'start: no problem-report address in the kit: nothing asked, nothing sent' bash -c '! grep -q "Send problem reports" "$1" && [ ! -e "$2/logs/problem-send.json" ]' _ "$tmp/start1.txt" "$D"
+    bash "$kit/start-squadala.sh" --problem-reports nosend </dev/null >"$tmp/start4.txt" 2>&1
+    check 'start --problem-reports nosend: sending off, kept' bash -c 'grep -q "\"send\": \"off\"" "$1"' _ "$D/logs/problem-send.json"
+    bash "$kit/start-squadala.sh" --problem-reports maybe </dev/null >"$tmp/start5.txt" 2>&1; export CODE=$?
+    check 'start --problem-reports: an unknown answer is refused' bash -c '[ $CODE -ne 0 ]'
     # A menu entry made by a kit up to v0.11.3 (Exec= start-oot-coop.sh, Name=OoT Co-op), another on the desktop and a
     # Steam entry: the start (update.sh --tidy) points them at start-squadala.sh, which the kit has alone now.
     printf '[Desktop Entry]\nName=OoT Co-op\nExec=bash "%s/start-oot-coop.sh"\n' "$kit" >"$XDG_DATA_HOME/applications/oot-coop.desktop"
