@@ -38,6 +38,7 @@
 #include "coop_camera.h"
 #include "coop_cheats.h"
 #include "coop_cheats_panel.h"
+#include "coop_char_colours.h"
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop/host/map_drop_log.hpp"
@@ -1250,6 +1251,7 @@ bool Start(const HosCoopApi* api) {
 
 void LocalProbe();   // (below)
 void LocalLayer(void* ctx);   // (below)
+void DressCharacters(void* ctx);   // (below)
 
 void Frame(void* ctx, int site) {
     CoopWindowBrand::Tick(CoopRuntime::GameDir());  // the window's title and icon, co-op on or idle (solo too)
@@ -1263,6 +1265,7 @@ void Frame(void* ctx, int site) {
         CoopLook::Frame();   // a look chosen in the pause menu, once it closed
         LocalProbe();
         if (ctx != nullptr) LocalLayer(ctx);
+        if (ctx != nullptr) DressCharacters(ctx);
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -1783,6 +1786,37 @@ void LocalLayer(void* ctx) {
     std::optional<std::array<float, 3>> first;
     if (const auto p = CoopLocalGame::FirstLink()) first = std::array<float, 3>{(*p)[0], (*p)[1], (*p)[2]};
     second.Step(first);
+}
+
+// Character Select's Customize options on the puppets, co-op's own (coop_char_colours.h): each frame, the game's own
+// model calls for each live puppet that is due. Solo nothing is live, so nothing is done.
+void DressCharacters(void* ctx) {
+    if (g_api == nullptr || g_api->call == nullptr) return;
+    const auto views = CoopPuppet::DressTargets();
+    if (views.empty()) return;
+    static void* frame_ctx = nullptr;
+    frame_ctx = ctx;
+    static const CoopCharColours::Game game = [] {
+        CoopCharColours::Game g;
+        g.read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+        g.write = [](std::uint64_t a, const void* in, std::size_t n) { return CoopRuntime::Write(a, in, n); };
+        g.call = [](std::uint64_t f, const std::array<std::uint64_t, 8>& x) -> std::optional<std::uint64_t> {
+            HosCoopCall k{};
+            k.function = f;
+            for (std::size_t i = 0; i < 8; i++) k.x[i] = x[i];
+            std::uint64_t x0 = 0;
+            if (!g_api->call(frame_ctx, &k, &x0)) return std::nullopt;
+            return x0;
+        };
+        return g;
+    }();
+    CoopCharColours::Game g = game;
+    g.main_base = CoopRuntime::MainBase();
+    std::vector<CoopCharColours::Target> targets;
+    targets.reserve(views.size());
+    for (const auto& v : views) targets.push_back({v.actor, v.cell, v.custom, v.mods_routine, 0});
+    CoopCharColours::TheWardrobe().Frame(g, targets, SteadyMs(),
+                                         [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
 }
 
 // Local co-op (coop_local_game.h): the exe's pads (patch 0016, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.

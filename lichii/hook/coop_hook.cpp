@@ -107,6 +107,7 @@
 #include "coop_boss_native.h"
 #include "coop_objects.h"
 #include "coop_link_sound.h"
+#include "coop_char_colours.h"
 #include "coop_look_share.h"
 #include "coop_ocarina_sound.h"
 #include "coop_pose.h"
@@ -1661,6 +1662,8 @@ public:
                     custom |= static_cast<std::uint32_t>(*v) << (4 * i);
                 }
             }
+            // What the mod's own code puts on every player-like model, puppets too (coop_char_colours.h Wardrobe).
+            CoopCharColours::TheWardrobe().SetViewer(custom);
             // A guest on the host's save sends its own pick and options, not the host's (CoopLookShare::OwnPick).
             using CoopLookShare::OwnPick;
             static OwnPick own_pick;

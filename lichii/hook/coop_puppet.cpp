@@ -190,6 +190,19 @@ std::vector<Director::SlotView> Director::Slots() const {
     return out;
 }
 
+std::vector<Director::DressView> Director::DressTargets() const {
+    std::vector<DressView> out;
+    for (const auto& s : slots_) {
+        if (s.phase != Phase::live || s.actor == 0 || s.block == 0) continue;
+        const Target* t = Wanted(s.number);
+        const bool character = IsCharacterActor(s.actor_name);
+        out.push_back({s.number, s.actor, s.block + block::kDress,
+                       t != nullptr && character ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
+                       character && character_apply_ != 0 && character_apply_state_ == 1});
+    }
+    return out;
+}
+
 const Target* Director::Wanted(std::uint8_t number) const {
     for (const auto& t : input_.targets) {
         if (t.number == number) {
@@ -2879,6 +2892,10 @@ std::vector<GamePlace> GamePlaces() {
 
 std::uint32_t LivePuppets() {
     return g_configured && g_director ? g_director->LiveMask() : 0;
+}
+
+std::vector<Director::DressView> DressTargets() {
+    return g_configured && g_director ? g_director->DressTargets() : std::vector<Director::DressView>{};
 }
 
 std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_now_us) {

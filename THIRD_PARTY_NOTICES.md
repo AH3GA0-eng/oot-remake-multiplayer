@@ -13,6 +13,7 @@ No game files, keys or firmware are part of this repository or of any kit.
 | fmt 12.1.0 (Victor Zverovich and contributors) | The co-op hook's log lines in the Hookshot module (`hookshot_coop.dll`, `hookshot/compat/common/logging.h`) | MIT | https://github.com/fmtlib/fmt, fetched by CMake (`hookshot/CMakeLists.txt`) at a pinned commit |
 | Longshot (Team MagicBean and contributors; its changes are being merged into Hookshot by NotRexed and contributors) | `hookshot/patches/` changes it: the patches hold a few context lines of its files; they are applied to Longshot's source at the commit in `hookshot/PIN`, outside this repository | GPL-3.0 | https://git.magicbean.dev/MagicBeanDev/Longshot (Hookshot: https://git.notrexed.dev/Hookshot/Hookshot) |
 | Longshot's ExeFS patch builder (`nx2/exefs_patches.py`: HumanBean's draft as merged in Longshot 3653c9c5, #134; put onto v3.0.0 by snaildev99) | `hookshot/patches/0034-mods-exefs-patches-at-build.patch` (and 0035 on top): mods' code patches written into the game's code when it is built. Its parse of the three patch formats follows valentderah/totk-pc-recomp `tools/exefs_patches.py`, "Copyright (c) 2026 Valiantsin Dzerakh", MIT; the MIT text is in the file's own head inside the patch | GPL-3.0 (as Longshot), with that part MIT | https://git.magicbean.dev/MagicBeanDev/Longshot (commit 3653c9c5), https://github.com/valentderah/totk-pc-recomp |
+| OoT Character Select v0.2.1 (Copyright (c) 2026 snaildev99), its colour tables | The Customize colours on puppets (`lichii/hook/coop_char_colours.cpp`): the numbers of `HAIR_COLOURS`, `brow_colour` of `HAIR_TEXTURE` and `EYE_COLOURS` in its `mods/customize.py`, rounded to 255ths as the mod stores them; the material and parameter names the mod's palettes use. The code is ours; nothing of the mod's code patch or of its game-derived files is in this repository | MIT (text below) | https://github.com/snaildev99/OoT-Character-Select (tag v0.2.1) |
 | CityHash64 1.1 (Copyright (c) 2011 Google, Inc.) | The game's pane ids for the pack's copied UI parts (`tools/puppet_pack/ui_pack.py` `city_hash64`, written in Python from city.cc) | MIT | https://github.com/google/cityhash |
 | Monocypher 4.0.2 (Loup Vaillant, Michael Savage, Fabio Scotoni) | Traffic encryption: X25519, BLAKE2b, XChaCha20-Poly1305 (server, emulator hook, Hookshot module) | CC0-1.0 or BSD-2-Clause, the user's choice; we use it under CC0-1.0 | https://github.com/LoupVaillant/Monocypher, fetched by CMake at a pinned commit (cmake/monocypher.cmake) |
 
@@ -70,3 +71,29 @@ The C library, graphics drivers and other libraries every desktop Linux has (gli
 | linuxdeploy 1-alpha-20251107-1 | Makes the AppImage (`lichii/build-linux.sh --appimage`; the download is checked against a SHA-256 kept in the script) | MIT | https://github.com/linuxdeploy/linuxdeploy |
 | linuxdeploy-plugin-qt 1-alpha-20250213-1 | Puts Qt and its plugins into the AppImage (also SHA-256 checked) | MIT | https://github.com/linuxdeploy/linuxdeploy-plugin-qt |
 | Qt 6.8.3 for Linux, installed by `jurplel/install-qt-action` (aqtinstall) | The Qt the emulator is built with and that goes into the AppImage | LGPL-3.0 (the action and aqtinstall: MIT) | https://download.qt.io/archive/qt/6.8/6.8.3/, https://github.com/jurplel/install-qt-action |
+
+### OoT Character Select (MIT)
+
+```
+MIT License
+
+Copyright (c) 2026 snaildev99
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
