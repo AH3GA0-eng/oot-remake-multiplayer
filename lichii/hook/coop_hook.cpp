@@ -127,6 +127,8 @@
 #include "coop_testinput.h"
 #include "coop_boundary.h"
 #include "coop_world.h"
+#include "coop_char_slots.h"
+#include "coop_puppet_config.h"
 
 namespace CoopHook {
 bool StartMapRefresh();  // rows 63/76: the game's HUD refresh after co-op writes a dungeon item (below)
@@ -1642,6 +1644,35 @@ public:
                                 report.connected ? session_.get() : nullptr);
         // The character picked in the Character Select mod, when that mod is installed (coop_look_share.h): its
         // saved Int, read twice a second while a game runs. No such flag (no mod): Link.
+        // 0.11.9 (coop_char_slots.h): the pick read EVERY frame and one whose model is not installed (Snail's NPC
+        // characters not downloaded, or a save stored with one) put back at once, before the mod's model / cloth / voice
+        // hooks build a path from it; one chat line. Another player's such pick: their puppet is Link (Planner::ActorFor
+        // finds no file); one line per player number.
+        {
+            static CoopCharSlots::Own own_slot;
+            static CoopCharSlots::Others other_slots;
+            static std::map<std::uint16_t, std::uint16_t> slot_files;
+            static std::uint32_t slot_tick = 0;
+            if (view.game) {
+                if (slot_tick++ % 600 == 0) slot_files = CoopPuppetConfig::CharacterFiles();   // (the pack's, every 10 s)
+                static const std::uint32_t pick_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");
+                EmulatorMemory slot_memory(system.ApplicationMemory(), base_);
+                const auto pick = coop::host::GameFlags(slot_memory).get_int(pick_hash);
+                const auto step = own_slot.Check(pick, slot_files);
+                if (step.set && coop::host::GameFlags::set_int(slot_memory, pick_hash, *step.set) && step.say) {
+                    LOG_INFO(Core, "coop: characters: pick {} has no model here (NPC characters not downloaded): back to {}",
+                             pick.value_or(0), *step.set);
+                    chat_.Add(CoopCharSlots::MissingLine(true), true);
+                }
+                if (report.connected) {
+                    for (std::uint8_t n = 1; n < CoopCharSlots::Others::kNumbers; ++n) {
+                        if (other_slots.Tell(n, CoopLookShare::CharacterOf(n), slot_files)) {
+                            chat_.Add(CoopCharSlots::MissingLine(false, "Player " + std::to_string(n)), true);
+                        }
+                    }
+                }
+            }
+        }
         static std::uint32_t character_tick = 0;
         if (view.game && character_tick++ % 30 == 0) {
             static const std::uint32_t picked_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");

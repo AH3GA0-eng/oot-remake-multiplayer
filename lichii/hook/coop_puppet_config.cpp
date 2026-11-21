@@ -223,6 +223,8 @@ CoopPuppet::LookItems PackLook() {
 }  // namespace
 
 bool HasPack() { return !PackManifests().empty(); }
+// The stored character numbers the pack has models for (coop_char_slots.h: a pick outside them is put back).
+std::map<std::uint16_t, std::uint16_t> CharacterFiles() { return PackCharacterFiles(); }
 
 // A manifest of a pack built with --puppet-pvp (native puppets phase 4).
 bool PackPvp() {
