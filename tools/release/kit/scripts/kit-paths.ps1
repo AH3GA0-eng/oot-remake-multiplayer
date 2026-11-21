@@ -1615,28 +1615,82 @@ function Confirm-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
     Remove-Item -LiteralPath (Join-Path $ModsDir "_$($op.folder).none") -Force -ErrorAction SilentlyContinue
 }
 
+# The Mods tab's list (<mods>\coop-mods.list, "coop-mods 1") names $Name (the path under mods with '/') off: the first
+# row for it, as the game reads it. No list, another version, or no row: on.
+function Test-KitModListOff([string]$ModsDir, [string]$Name) {
+    $list = Join-Path $ModsDir 'coop-mods.list'
+    if (-not (Test-Path -LiteralPath $list -PathType Leaf)) { return $false }
+    try {
+        $lines = @(([System.IO.File]::ReadAllText($list, [System.Text.UTF8Encoding]::new($false))) -split "`n")
+        if ($lines[0].TrimEnd("`r") -cne 'coop-mods 1') { return $false }
+        $want = ConvertTo-KitModFold $Name
+        foreach ($line in @($lines | Select-Object -Skip 1)) {
+            if ($line.TrimEnd("`r") -cmatch '^(on|off) (.+)$' -and (ConvertTo-KitModFold $Matches[2]) -ceq $want) { return $Matches[1] -ceq 'off' }
+        }
+    } catch { }
+    return $false
+}
+
+# The model files a Character Select folder has, as find_characters counts them: "<file>=<stored number>:<variants>"
+# for each characters.json row whose Player_<variant>_C<file> model is in romfs\Model, sorted; '' when none.
+function Get-KitCharacterSelectModels([string]$Dir, $Doc) {
+    $out = @()
+    foreach ($row in @($Doc.characters)) {
+        if ($null -eq $row -or $null -eq $row.file) { continue }
+        $n = [int]$row.file
+        $have = @(foreach ($v in 'Child', 'Adult') {   # (build.py's VARIANTS order)
+            if (Test-Path -LiteralPath (Join-Path $Dir ('romfs\Model\Player_{0}_C{1:D3}.Player_{0}.bfres.zs' -f $v, $n)) -PathType Leaf) { $v }
+        })
+        if ($have.Count) { $out += ('{0}={1}:{2}' -f $n, [int]$row.number, ($have -join '+')) }
+    }
+    return (@($out | Sort-Object { [int]($_ -split '=')[0] }) -join ',')
+}
+
 # The Character Select mod the pack tool would find for the pack at $Manifest, as the pack records it
-# ("<mod folder>|<colours offset>|<colours head>", or "<mod folder>|" without colours): '' when there is none, $null when
-# the pack is not in a mods\contents\<title>\<pack> folder (nothing to compare). Mirrors find_characters: the folders
-# beside the pack's title folder and the mods folder, a characters.json of format 1 for "OoT Character Select", and
-# a romfs\Model folder (the models it counts).
+# ("<mod folder>|<colours offset>|<colours head>|<models>", or "<mod folder>||<models>" without colours; models:
+# Get-KitCharacterSelectModels): '' when there is none, $null when the pack is not in a mods\contents\<title>\<pack>
+# folder (nothing to compare). Mirrors find_characters: the folders beside the pack's title folder and the mods folder,
+# a characters.json of format 1 for "OoT Character Select" with at least one model in romfs\Model, not switched off in
+# the Mods tab. The models are in the key (C #58, lane 051234): the NPC part taken out (a UI-only kit) or put in, or a
+# release that renumbers its characters, makes the pack again, so its puppets and the pick guard never name a model
+# that is not there; the mod switched off in the Mods tab makes it again without the characters.
 function Get-KitCharacterSelectSeen([string]$Manifest) {
     $pack = Split-Path -Parent $Manifest
     $title = Split-Path -Parent $pack
     $contents = Split-Path -Parent $title
     if (-not $contents -or (Split-Path -Leaf $contents) -ine 'contents') { return $null }
-    foreach ($root in $title, (Split-Path -Parent $contents)) {
+    $mods = Split-Path -Parent $contents
+    foreach ($root in $title, $mods) {
         foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
             if ($d.Name -match '^[-_.]') { continue }
             $file = Join-Path $d.FullName 'characters.json'
             if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $d.FullName 'romfs\Model'))) { continue }
             try { $doc = [System.IO.File]::ReadAllText($file) | ConvertFrom-Json -ErrorAction Stop } catch { continue }
             if ($doc.mod -ne 'OoT Character Select' -or $doc.format -ne 1) { continue }
+            $listName = if ($root -eq $title) { "contents/$(Split-Path -Leaf $title)/$($d.Name)" } else { $d.Name }
+            if (Test-KitModListOff $mods $listName) { continue }
+            $models = Get-KitCharacterSelectModels $d.FullName $doc
+            if (-not $models) { continue }
             $c = $doc.puppet_colours
-            return "$($d.Name)|$(if ($c) { "$($c.offset)|$("$($c.head)".ToLowerInvariant())" })"
+            return "$($d.Name)|$(if ($c) { "$($c.offset)|$("$($c.head)".ToLowerInvariant())" } else { '|' })|$models"
         }
     }
     return ''
+}
+
+# What a pack's coop_puppet.json records of its characters, in Get-KitCharacterSelectSeen's form ('' for none).
+function Get-KitPackCharactersKey($Json) {
+    $p = $Json.characters
+    if (-not $p) { return '' }
+    $rows = @()
+    if ($p.numbers) {
+        foreach ($q in $p.numbers.PSObject.Properties) {
+            $vs = @(if ($p.variants -and $p.variants.PSObject.Properties[$q.Name]) { @($p.variants.PSObject.Properties[$q.Name].Value) })
+            $rows += ('{0}={1}:{2}' -f [int]$q.Name, [int]$q.Value, ($vs -join '+'))
+        }
+    }
+    $models = @($rows | Sort-Object { [int]($_ -split '=')[0] }) -join ','
+    return "$($p.mod)|$(if ($p.colours) { "$($p.colours.offset)|$("$($p.colours.head)".ToLowerInvariant())" } else { '|' })|$models"
 }
 
 # Every start after the question (row 206: the NPC characters on or off without editing a file): one line, and N within
@@ -1951,8 +2005,7 @@ function Get-PuppetPackHint([string]$Manifest, [string]$ToolDir) {
         # the pack's character puppets follow the mod's characters.json (tools/puppet_pack find_characters).
         $cs = Get-KitCharacterSelectSeen $Manifest
         if ($null -ne $cs) {
-            $packed = $json.characters
-            $packedKey = if ($packed) { "$($packed.mod)|$(if ($packed.colours) { "$($packed.colours.offset)|$($packed.colours.head)" })" } else { '' }
+            $packedKey = Get-KitPackCharactersKey $json
             if ($packedKey -ne $cs) {
                 return "Puppet pack: made $(if ($cs) { 'without the Character Select characters now in mods' } else { 'with a Character Select mod that is not in mods any more' }). $script:KitPackRemake"
             }

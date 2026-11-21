@@ -710,12 +710,18 @@ mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
 pack_stamp="$src_stamp menus:1 tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
-# (the Character Select mod's characters.json, which the pack's character puppets follow: put in, replaced or taken out
-# by charsel_step, it makes the pack again, as the Windows kit's Get-KitCharacterSelectSeen)
+# (the Character Select mod's characters.json, its NPC models there and its row in the Mods tab's list: the pack's
+# character puppets follow all three (tools/puppet_pack find_characters), so putting the mod in, replacing it, taking
+# its NPC part out or in (charsel_step: ui / full), or switching it in the Mods tab makes the pack again, as the Windows
+# kit's Get-KitCharacterSelectSeen. C #58, lane 051234: a pack made with the NPC models kept them after a UI-only switch)
 for cs_json in "$GAME"/mods/*/characters.json; do
     [[ -f $cs_json && -d ${cs_json%/*}/romfs/Model ]] || continue
-    [[ ${cs_json#"$GAME"/mods/} == [-_.]* ]] && continue
-    pack_stamp+=" characters:$(sha256_of "$cs_json")"; break
+    cs_name=${cs_json#"$GAME"/mods/}; cs_name=${cs_name%/characters.json}
+    [[ $cs_name == [-_.]* ]] && continue
+    cs_row=$(awk -v n="$cs_name" 'NR == 1 { sub(/\r$/, ""); if ($0 != "coop-mods 1") exit } NR > 1 { sub(/\r$/, ""); s = $1; r = substr($0, length(s) + 2)
+        if ((s == "on" || s == "off") && tolower(r) == tolower(n)) { print s; exit } }' "$GAME/mods/coop-mods.list" 2>/dev/null || true)
+    cs_models=$(cd "${cs_json%/*}/romfs/Model" && LC_ALL=C ls -1 | { grep -E '^Player_(Child|Adult)_C[0-9]{3}\.Player_(Child|Adult)\.bfres\.zs$' || true; } | sha256sum | cut -d' ' -f1)
+    pack_stamp+=" characters:$(sha256_of "$cs_json") models:$cs_models list:${cs_row:-on}"; break
 done
 # A file the pack's manifest names that is gone (a pack tool stopped half way, a hand-copied pack): the look files
 # (coop_look/gear.bin, a colour's .bin) and each tunic's files, as the Windows kit's Get-KitPuppetPackGaps (pack-retry).

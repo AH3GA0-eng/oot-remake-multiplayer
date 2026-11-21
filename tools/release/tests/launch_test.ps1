@@ -1122,13 +1122,40 @@ try {
         # The puppet pack follows the mod: put in, colours changed, or taken out -> made again (Get-PuppetPackHint).
         $pm = Join-Path $cm 'contents\0400486024DEC000\coop-puppet\coop_puppet.json'
         Check ((Get-KitCharacterSelectSeen $pm) -eq '') 'Character Select seen: none in mods'
-        Write-File (Join-Path $csDir 'characters.json') $csJson
-        Write-File (Join-Path $csDir 'romfs\Model\x.bfres.zs') 'm'
-        Check ((Get-KitCharacterSelectSeen $pm) -eq 'OoT Character Select|62574416|fd7bbfa9000100b40b2c40b96b1d0051') 'Character Select seen: the folder and its colour routine, as the pack records them'
+        Remove-Item -LiteralPath (Join-Path $cm 'coop-mods.list') -Force -ErrorAction SilentlyContinue   # (the Off above: on again)
+        # (characters.json with two NPC rows, files 5 and 6; the models there decide what counts, as find_characters)
+        $csJsonN = '{"format": 1, "mod": "OoT Character Select", "puppet_colours": {"offset": 62574416, "head": "FD7BBFA9000100B40B2C40B96B1D0051"}, "characters": [{"number": 0}, {"number": 7, "file": 5}, {"number": 8, "file": 6}]}'
+        Write-File (Join-Path $csDir 'characters.json') $csJsonN
+        Write-File (Join-Path $csDir 'romfs\Model\Player_Child.Player_Child.bfres.zs') 'link'
+        Check ((Get-KitCharacterSelectSeen $pm) -eq '') 'Character Select seen: the default part alone (no NPC model) counts as no characters, as the pack tool (no remake loop on a UI-only kit)'
+        Write-File (Join-Path $csDir 'romfs\Model\Player_Child_C005.Player_Child.bfres.zs') 'm'
+        Write-File (Join-Path $csDir 'romfs\Model\Player_Adult_C005.Player_Adult.bfres.zs') 'm'
+        $seenFull = 'OoT Character Select|62574416|fd7bbfa9000100b40b2c40b96b1d0051|5=7:Child+Adult'
+        Check ((Get-KitCharacterSelectSeen $pm) -eq $seenFull) "Character Select seen: the folder, its colour routine and the models there [$(Get-KitCharacterSelectSeen $pm)]"
+        # The pack's own record, as build.py writes it, gives the same key: nothing to make again.
+        $packFull = '{"characters": {"mod": "OoT Character Select", "numbers": {"5": 7}, "variants": {"5": ["Child", "Adult"]}, "colours": {"offset": 62574416, "head": "fd7bbfa9000100b40b2c40b96b1d0051"}}}' | ConvertFrom-Json
+        Check ((Get-KitPackCharactersKey $packFull) -eq $seenFull) "Character Select pack key: a pack made with these models matches [$(Get-KitPackCharactersKey $packFull)]"
+        Check ((Get-KitPackCharactersKey ('{"characters": null}' | ConvertFrom-Json)) -eq '') 'Character Select pack key: a pack without characters is empty'
+        # C #58 switch paths: each one changes the key, so Get-PuppetPackHint makes the pack again.
+        Remove-Item -LiteralPath (Join-Path $csDir 'romfs\Model\Player_Child_C005.Player_Child.bfres.zs'), (Join-Path $csDir 'romfs\Model\Player_Adult_C005.Player_Adult.bfres.zs') -Force
+        Check ((Get-KitCharacterSelectSeen $pm) -ne (Get-KitPackCharactersKey $packFull)) 'Character Select pack key: full -> UI-only (NPC models taken out) makes the pack again'
+        Write-File (Join-Path $csDir 'romfs\Model\Player_Child_C005.Player_Child.bfres.zs') 'm'
+        Write-File (Join-Path $csDir 'romfs\Model\Player_Adult_C005.Player_Adult.bfres.zs') 'm'
+        Write-File (Join-Path $csDir 'romfs\Model\Player_Adult_C006.Player_Adult.bfres.zs') 'm'
+        Check ((Get-KitCharacterSelectSeen $pm) -ne (Get-KitPackCharactersKey $packFull)) 'Character Select pack key: more NPC models there than the pack has (UI-only -> full) makes the pack again'
+        Remove-Item -LiteralPath (Join-Path $csDir 'romfs\Model\Player_Adult_C006.Player_Adult.bfres.zs') -Force
+        Write-File (Join-Path $csDir 'characters.json') ($csJsonN -replace '"number": 7', '"number": 9')
+        Check ((Get-KitCharacterSelectSeen $pm) -ne (Get-KitPackCharactersKey $packFull)) 'Character Select pack key: a release that numbers its characters otherwise makes the pack again'
+        Write-File (Join-Path $csDir 'characters.json') $csJsonN
+        Write-File (Join-Path $cm 'coop-mods.list') "coop-mods 1`r`noff oot character select`r`n"
+        Check ((Get-KitCharacterSelectSeen $pm) -eq '') 'Character Select pack key: the mod switched off in the Mods tab counts as none (the pack is made again without its characters)'
+        Write-File (Join-Path $cm 'coop-mods.list') "coop-mods 1`non OoT Character Select`n"
+        Check ((Get-KitCharacterSelectSeen $pm) -eq $seenFull) 'Character Select pack key: switched on again: the same key as the pack made with it'
+        Remove-Item -LiteralPath (Join-Path $cm 'coop-mods.list') -Force
         Check ($null -eq (Get-KitCharacterSelectSeen (Join-Path $ck 'elsewhere\coop_puppet.json'))) 'Character Select seen: a pack outside mods\contents has nothing to compare'
-        Write-File (Join-Path $cm '_off\characters.json') $csJson
-        Write-File (Join-Path $cm '_off\romfs\Model\x.bfres.zs') 'm'
-        Check ((Get-KitCharacterSelectSeen $pm) -eq 'OoT Character Select|62574416|fd7bbfa9000100b40b2c40b96b1d0051') 'Character Select seen: a folder starting with _ is skipped (the game skips it)'
+        Write-File (Join-Path $cm '_off\characters.json') $csJsonN
+        Write-File (Join-Path $cm '_off\romfs\Model\Player_Adult_C006.Player_Adult.bfres.zs') 'm'
+        Check ((Get-KitCharacterSelectSeen $pm) -eq $seenFull) 'Character Select seen: a folder starting with _ is skipped (the game skips it)'
     } finally { $env:OOT_COOP_OFFLINE = $onlineWas }
     Remove-Item -LiteralPath $ck -Recurse -Force -ErrorAction SilentlyContinue
     # A randomizer seed built before the puppet pack was made again: its size table lacks the pack's entries and the

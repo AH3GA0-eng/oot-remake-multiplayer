@@ -297,17 +297,29 @@ check 'Character Select: there already -> not asked again, nothing done' bash -c
 # Turned on later: the default part cannot give the NPC part, so his release is used again.
 printf 'character_select = yes\n' >>"$D/coop-options.ini"
 cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"
-OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs3.txt" 2>&1; export CODE=$?
+: >"$log"; OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs3.txt" 2>&1; export CODE=$?
 export CS_RECS=$(cs_recs "$CS/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips")
 check 'Character Select: character_select = yes gets the NPC part too, his patch still stripped' \
     bash -c '[ $CODE -eq 0 ] && [ -f "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ -f "$2/romfs/Tex/Npc_A.bntx.zs" ] && grep -q "^v1 .* full cz1$" "$2/coop-charsel.txt" &&
         [ "$CS_RECS" = 2 ]' _ "$tmp/build-cs3.txt" "$CS"
+check 'Character Select pack: UI-only -> full (NPC models put in) makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "models:" "$2/.coop-stamp"' _ "$log" "$P"
 # Off again: from the copy there (no zip here, nothing downloaded): the NPC part out, the Characters page kept.
 sed -i 's/^character_select = yes$/character_select = no/' "$D/coop-options.ini"
-OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs4.txt" 2>&1; export CODE=$?
+: >"$log"; OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs4.txt" 2>&1; export CODE=$?
 check 'Character Select: character_select = no keeps the Characters page, takes the NPC part out, no download' \
     bash -c '[ $CODE -eq 0 ] && [ ! -e "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ ! -e "$2/romfs/Tex" ] && [ -f "$2/romfs/UI/LayoutArchiveCategory.Product.100.byml.zs" ] &&
         grep -q "^v1 .* ui cz1$" "$2/coop-charsel.txt" && grep -q "exefs=OoT Character Select/exefs/" "$3/game/coop-built-from.txt" && ! grep -q downloading "$1"' _ "$tmp/build-cs4.txt" "$CS" "$D"
+check 'Character Select pack: full -> UI-only (NPC models taken out) makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1"' _ "$log"
+# The mod switched off in the Mods tab, then on again: the pack each time (its characters follow the list).
+printf 'coop-mods 1\noff OoT Character Select\n' >"$D/game/mods/coop-mods.list"; : >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+check 'Character Select pack: switched off in the Mods tab makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "list:off" "$2/.coop-stamp"' _ "$log" "$P"
+rm -f "$D/game/mods/coop-mods.list"; : >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+check 'Character Select pack: switched on again makes it again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "list:on" "$2/.coop-stamp"' _ "$log" "$P"
+: >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+check 'Character Select pack: nothing changed -> the pack is not made again' bash -c '! grep -q "^puppet_pack" "$1"' _ "$log"
 # A 0.11.8 copy (four-field stamp, his patch as it came): kept full, stripped in place, no download.
 sed -i 's/^character_select = no$/character_select = yes/' "$D/coop-options.ini"
 cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"

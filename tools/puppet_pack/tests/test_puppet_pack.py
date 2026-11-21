@@ -2914,6 +2914,30 @@ class FullBuildTest(unittest.TestCase):
             build.build(self.romfs, os.path.join(self.dir, "mod_x"), log=lambda *_: None,
                         skins=[("Mod", mod_src)], test_skin="Other", look_slots=0)
 
+    def test_find_characters_follows_models_and_mods_list(self):
+        # C #58 (lane 051234): only the models there count (a UI-only Character Select gives no characters), and a mod
+        # switched off in the Mods tab gives none (the game loads none of its models).
+        mods = os.path.join(self.dir, "mods_list")
+        cs = os.path.join(mods, "OoT Character Select")
+        os.makedirs(os.path.join(cs, "romfs", "Model"))
+        doc = {"format": 1, "mod": "OoT Character Select",
+               "actor_heaps": {v: {"InstanceHeapSize": 1, "PreActorRenderInfoHeapSize": 1} for v in build.VARIANTS},
+               "characters": [{"number": 7, "name": "Made Up", "file": 5}]}
+        with open(os.path.join(cs, build.CHARACTERS_FILE), "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        pack = os.path.join(mods, "contents", "0400486024DEC000", "coop-puppet")
+        os.makedirs(pack)
+        self.assertIsNone(build.find_characters(pack, log=lambda *_: None))   # UI-only: no models
+        with open(os.path.join(cs, "romfs", "Model", "Player_Child_C005.Player_Child.bfres.zs"), "wb") as f:
+            f.write(b"made up")
+        self.assertEqual(build.find_characters(pack, log=lambda *_: None)["files"], {5: ["Child"]})
+        with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8", newline="") as f:
+            f.write("coop-mods 1\r\non contents/0400486024DEC000/coop-puppet\r\noff oot character select\r\n")
+        self.assertIsNone(build.find_characters(pack, log=lambda *_: None))
+        with open(os.path.join(mods, "coop-mods.list"), "w", encoding="utf-8") as f:
+            f.write("coop-mods 1\non OoT Character Select\n")
+        self.assertEqual(build.find_characters(pack, log=lambda *_: None)["numbers"], {5: 7})
+
     def test_build_characters(self):
         # A Character Select mod beside the pack (made-up data): a puppet per character and age it has a
         # model file for, the plain puppet with that model project and the list's heap sizes.
