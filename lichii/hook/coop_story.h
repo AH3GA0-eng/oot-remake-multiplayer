@@ -12,6 +12,7 @@
 // on its own.
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -267,6 +268,18 @@ struct Gift {
 };
 std::span<const Gift> Gifts();
 inline constexpr std::size_t kGiftsMax = 4;  // Gifts().size() stays under it (story_test)
+// Whether the gift (or better) is in the pouch: any held count above 0 is
+// true, all read and 0 is false, otherwise not known (a load, the title).
+template <class ReadInt>
+std::optional<bool> GiftHeld(const Gift& gift, ReadInt&& read_int) {
+    bool all_read = true;
+    for (const std::uint32_t h : gift.held) {
+        const std::optional<std::int32_t> n = read_int(h);
+        if (n && *n > 0) return true;
+        all_read = all_read && n.has_value();
+    }
+    return all_read ? std::optional<bool>(false) : std::nullopt;
+}
 // Whether `gift` is due: one of its played flags reads 1 and every held count
 // reads 0. An unread flag or count is never due (a load, the title).
 template <class ReadBool, class ReadInt>
@@ -276,12 +289,17 @@ bool GiftDue(const Gift& gift, ReadBool&& read_bool, ReadInt&& read_int) {
         const std::optional<bool> v = read_bool(p);
         spent = spent || (v && *v);
     }
-    if (!spent) return false;
-    for (const std::uint32_t h : gift.held) {
-        const std::optional<std::int32_t> n = read_int(h);
-        if (!n || *n > 0) return false;
-    }
-    return true;
+    return spent && GiftHeld(gift, read_int) == std::optional<bool>(false);
 }
+// The cause (rows 195/204): a gift's played flag from another game is held
+// (coop_hook's HoldFlagStore) while our pouch is not known to hold the gift.
+// It lands once the item came (it is a shared item: the game that ran the gift
+// scene shares it), so a game where no gift ran keeps its own giver and plays
+// the scene itself; a 1 that comes with no gift anywhere never takes Saria
+// from the bridge. The index of the gift `hash` is a played flag of, or none.
+std::optional<std::size_t> GiftOf(std::uint32_t hash);
+// Holds `hash` now: a gift's played flag while that gift is not known held
+// (`held[i]`: GiftHeld of Gifts()[i] is true).
+bool GiftHolds(std::uint32_t hash, const std::array<bool, kGiftsMax>& held);
 
 } // namespace CoopStory

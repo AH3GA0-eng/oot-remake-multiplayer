@@ -542,6 +542,20 @@ std::span<const Gift> Gifts() {
     return kGifts;
 }
 
+std::optional<std::size_t> GiftOf(std::uint32_t hash) {
+    for (std::size_t i = 0; i < std::size(kGifts); ++i) {
+        for (const std::uint32_t p : kGifts[i].played) {
+            if (p == hash) return i;
+        }
+    }
+    return std::nullopt;
+}
+
+bool GiftHolds(std::uint32_t hash, const std::array<bool, kGiftsMax>& held) {
+    const auto i = GiftOf(hash);
+    return i && *i < kGiftsMax && !held[*i];
+}
+
 EffectsGiven::Verdict EffectsGiven::Take(const Effect& due) {
     const auto has = [&](const std::vector<std::uint32_t>& v) {
         return std::find(v.begin(), v.end(), due.flag) != v.end();
