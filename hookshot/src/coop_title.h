@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -26,6 +27,9 @@ void Init(const HosCoopApi* api);
 // set (the game started without Host.bat or play.cmd). Before co-op starts.
 // No kit above the game (FindKit): the coop-options.ini beside longshot.exe.
 void ApplyKitOptions();
+// The coop-options.ini ApplyKitOptions reads: the kit's, or the one beside longshot.exe (a game with no kit of its own);
+// none when neither is there.
+std::optional<std::filesystem::path> KitOptionsFile();
 // The look the player chose in the pause menu (coop_look.h), written to the
 // kit's coop-options.ini (else coop.ini) so the next start keeps it (the
 // title's Settings page reads the files when it opens). The calc thread.

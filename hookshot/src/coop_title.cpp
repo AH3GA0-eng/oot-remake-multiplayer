@@ -807,11 +807,11 @@ void Init(const HosCoopApi* api) {
 }
 
 void SaveLook(const CoopLook::Look& look) {
-    const auto kit = FindKit();
+    const auto kit = KitOptionsFile();   // (the one the game reads: the kit's, or beside longshot.exe, as Save)
     std::string coop = ReadText(CoopIni());
-    std::string options = kit ? ReadText(*kit / "coop-options.ini") : std::string();
+    std::string options = kit ? ReadText(*kit) : std::string();
     const bool ok = !CoopLook::WriteSettings(look, coop, kit ? &options : nullptr) ||
-                    (kit ? WriteText(*kit / "coop-options.ini", options) : WriteText(CoopIni(), coop));
+                    (kit ? WriteText(*kit, options) : WriteText(CoopIni(), coop));
     const std::string colour = CoopLook::ColourText(look[CoopLook::Part::tunic]);
     LOG_INFO(Core, "coop: look: colour {} saved to {}{}", colour.empty() ? std::string("by player number") : colour,
              kit ? "coop-options.ini" : "coop.ini", ok ? "" : " (the file could not be written)");
@@ -828,7 +828,7 @@ static bool OwnKit(const fs::path& kit) {
     return fs::equivalent(kit, game, ec) || fs::equivalent(kit, game.parent_path().parent_path(), ec);
 }
 
-void ApplyKitOptions() {
+std::optional<fs::path> KitOptionsFile() {
     // No kit of its own (a game folder copied out of its kit, Nucleus Co-op's instance folders, also with Nucleus
     // unzipped inside a kit: docs/play-lan.md, "Split-screen with Nucleus Co-op"): the coop-options.ini beside
     // longshot.exe, so each copy can have its own.
@@ -838,24 +838,34 @@ void ApplyKitOptions() {
     if (found && beside && !OwnKit(*found)) {
         found.reset();
     }
-    const std::optional<fs::path> kit = found ? *found : CoopRuntime::GameDir();
     if (!found && !beside) {
+        return std::nullopt;
+    }
+    return (found ? *found : CoopRuntime::GameDir()) / "coop-options.ini";
+}
+
+void ApplyKitOptions() {
+    const auto file = KitOptionsFile();
+    if (!file) {
         return;
     }
+    const fs::path kit = file->parent_path();
+    std::error_code same_ec;
+    const bool found = !fs::equivalent(kit, CoopRuntime::GameDir(), same_ec);   // (a kit above the game)
     int set = 0;
-    for (auto [k, v] : CoopTitleMenu::KitVariables(ReadText(*kit / "coop-options.ini"))) {
+    for (auto [k, v] : CoopTitleMenu::KitVariables(ReadText(*file))) {
         if (std::getenv(k.c_str()) != nullptr) {
             continue;   // the launcher set it (or the player did)
         }
         std::error_code ec;
-        if (!v.empty() && !PathOf(v).is_absolute() && fs::exists(*kit / PathOf(v), ec)) {
-            v = Utf8Path(fs::absolute(*kit / PathOf(v), ec));   // as play.ps1: a file of the kit
+        if (!v.empty() && !PathOf(v).is_absolute() && fs::exists(kit / PathOf(v), ec)) {
+            v = Utf8Path(fs::absolute(kit / PathOf(v), ec));   // as play.ps1: a file of the kit
         }
         SetEnv(k, v);
         ++set;
     }
     if (set != 0) {
-        LOG_INFO(Core, "coop: {} switch(es) from {}\\coop-options.ini ({})", set, Utf8Path(*kit),
+        LOG_INFO(Core, "coop: {} switch(es) from {}\\coop-options.ini ({})", set, Utf8Path(kit),
                  found ? "the game was started without the kit's launcher" : "beside the game: no kit above it");
     }
 }
