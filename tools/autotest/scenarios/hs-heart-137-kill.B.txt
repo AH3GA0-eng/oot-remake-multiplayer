@@ -32,5 +32,9 @@ wait 2400               # her death and its event
 goto 7.5 67.2 1.5 900   # the room's centre, where the heart container falls
 wait 600
 goto 17.3 67.6 1.0 600   # onto the container (0xf914fa367471a3e3)
-wait 900
+wait 300
+press A                  # 'Take' (run 20261120-150944 VOID: B stood on it with the prompt shown, never took it)
+wait 1200                # the get-item hold and its text
+press A                  # close the text
+wait 600
 mark b-pickup
