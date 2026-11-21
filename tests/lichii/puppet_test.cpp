@@ -3045,17 +3045,3 @@ TEST_CASE("puppet characters: a colour routine that cannot be called gives the p
           }) == 1);
     CHECK(Dresses(Frame(d, g, now + 20 + kAgainMs)) == 0);   // never asked of it again
 }
-
-TEST_CASE("puppet characters: Link's own Customize options go to the wardrobe for a Link puppet, never the mod's routine") {
-    Game g;
-    g.guest.Map(kBase + kDressAt, 16);
-    REQUIRE(g.guest.Write(kBase + kDressAt, kDressHead.data(), kDressHead.size()));
-    Director d;
-    d.SetCharacterApply(kDressAt, kDressHead);
-    LiveAs(d, g, Dressed("CoopPuppet_Adult_Red", 0x21u));   // Link (character 0): hair 1, eyes 2
-    CHECK(Dresses(Frame(d, g, 20)) == 0);                    // the mod's routine is a character's only
-    REQUIRE(d.DressTargets().size() == 1);
-    CHECK(d.DressTargets()[0].custom == 0x21u);              // co-op's own wardrobe dresses him (0.11.9)
-    CHECK_FALSE(d.DressTargets()[0].character);
-    CHECK_FALSE(d.DressTargets()[0].mods_routine);
-}

@@ -410,11 +410,9 @@ TEST_CASE("look share: a guest on the host's save sends its own pick, not the ho
 TEST_CASE("look share: a character's Customize options ride along as a part of their own") {
     CoopLookShare::Share s;
     s.SetCustom(0x123456);
-    auto sent = s.TakeSend();
-    REQUIRE(sent);                             // Link: his options go out too (0.11.9: hair and eyes on his puppet)
-    CHECK(sent->parts == CoopLookShare::Parts{{CoopLookShare::kCustomPart, 0x123456}});
+    CHECK_FALSE(s.TakeSend());                 // Link: nothing of it is sent
     s.SetCharacter(9);
-    sent = s.TakeSend();
+    auto sent = s.TakeSend();
     REQUIRE(sent);
     const LookPart nine{CoopLookShare::kCharacterPart, CoopLookShare::kCharacterMark | 9u};
     CHECK(sent->parts == CoopLookShare::Parts{nine, {CoopLookShare::kCustomPart, 0x123456}});
@@ -439,9 +437,8 @@ TEST_CASE("look share: a character's Customize options ride along as a part of t
     CHECK_FALSE(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654321}})));
     CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654320}})));   // an option changed
     CHECK(r.CustomOf(2) == 0x654320);
-    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCustomPart, 0x654320}})));         // Link: his options are kept (0.11.9)
-    CHECK(r.CustomOf(2) == 0x654320);
-    CHECK(r.CharacterOf(2) == 0);
+    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCustomPart, 0x654320}})));         // Link: the options go with the character
+    CHECK(r.CustomOf(2) == 0);
     CHECK(r.OnEvent(Look(2, {nine, {CoopLookShare::kCustomPart, 0x000002}})));
     r.OnEvent(Kind(EventKind::player_left, 2));
     CHECK(r.CustomOf(2) == 0);
@@ -513,29 +510,4 @@ TEST_CASE("character puppets: the pack's are read from its manifest, and a playe
     PlannerSettings no_map;
     no_map.character_actors = actors;
     CHECK(Planner(no_map).ActorFor(true, 0xFF3030u, 9) == "CoopPuppet_Adult_Red");   // puppets but no map: none
-}
-
-TEST_CASE("look share: Link's own Customize options reach the others and newcomers (0.11.9)") {
-    CoopLookShare::Share s;
-    CHECK_FALSE(s.TakeSend());                 // nothing set: nothing to say
-    s.SetCustom(0x000021);                     // hair 1, eyes 2
-    auto sent = s.TakeSend();
-    REQUIRE(sent);
-    CHECK(sent->parts == CoopLookShare::Parts{{CoopLookShare::kCustomPart, 0x000021}});
-    CHECK_FALSE(s.TakeSend());
-    s.OnEvent(Kind(EventKind::player_joined, 3));
-    sent = s.TakeSend();
-    REQUIRE(sent);                             // a newcomer gets them
-    CHECK(sent->parts == CoopLookShare::Parts{{CoopLookShare::kCustomPart, 0x000021}});
-    s.SetCustom(0);
-    sent = s.TakeSend();
-    REQUIRE(sent);                             // back to his own colours: said, without the part
-    CHECK(sent->parts.empty());
-
-    CoopLookShare::Share r;
-    r.EnableSlots(true);
-    CHECK(r.OnEvent(Look(2, {{0, 0x00FF00}, {CoopLookShare::kCustomPart, 0x000021}})));
-    CHECK(r.CharacterOf(2) == 0);
-    CHECK(r.CustomOf(2) == 0x000021);
-    CHECK(r.Of(2) == CoopLookShare::Parts{{0, 0x00FF00}});   // the tunic stays a part for the painters
 }
