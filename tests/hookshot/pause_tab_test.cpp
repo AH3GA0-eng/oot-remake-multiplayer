@@ -16,6 +16,8 @@ namespace {
 
 using namespace CoopPauseTab;
 
+constexpr int kMinusMode = 0;   // (the strip's mode in the - menu: any mode but kPlusMode; one for every case)
+
 Facts Strip(std::uint64_t screen, int tabs, int lit, int mode = kPlusMode, int state = 2) {
     Facts f;
     f.kind = Kind::kStrip;
@@ -2362,7 +2364,6 @@ TEST_CASE("pause tab: the fourth tab's place and fades taken one update ahead, n
 }
 
 TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R and L among ours, L back to Map") {
-    constexpr int kMinusMode = 0;
     Page p = UsablePage();
     std::uint64_t now = 1000;
     // Without the pack's tabs: the - menu's R and L stay the game's.
@@ -2433,7 +2434,6 @@ TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R a
 }
 
 TEST_CASE("pause tab (0.11.9): the - menu's own page: up and down among its rows shown, A picks one, then the + menu") {
-    constexpr int kMinusMode = 0;
     Page p = UsablePage();
     p.SetMinusTabsUsable(true);
     std::uint64_t now = 1000;
