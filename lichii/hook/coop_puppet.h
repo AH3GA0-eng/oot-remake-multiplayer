@@ -809,6 +809,9 @@ struct Remote {
     // PLAYER_EQUIP's colour; unset: the player chose none, and Plan gives the
     // player's slot colour (coop::protocol::slot_color).
     std::optional<std::uint32_t> color;
+    // 0.11.9: the tunic copy given to this player (SetTunicCopies: "Red".."Black", "" the plain puppet), repainted
+    // live in their exact colour; none: the copy nearest their colour, as before.
+    std::optional<std::string> tunic_copy;
     CoopPuppetSound::Wanted ocarina;                 // as Target::ocarina
     std::vector<CoopLinkSound::Sound> sounds;        // received since the last Collect
     // The item copy painted in the player's gear colours
@@ -973,7 +976,9 @@ public:
                std::optional<std::uint32_t> own_color = {});
     // The actor for a player of that age and colour: CoopPuppet_<Age>, or
     // CoopPuppet_<Age>_<Colour> (CoopColors::TunicOf) while tunics are on.
-    std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}, std::uint16_t character = 0) const;
+    // `tunic`: the tunic copy given to the player (Remote::tunic_copy); none: the one nearest `color`.
+    std::string ActorFor(bool adult, std::optional<std::uint32_t> color = {}, std::uint16_t character = 0,
+                         const std::optional<std::string>& tunic = std::nullopt) const;
     void SetTunics(bool on) { settings_.tunics = on; }
     void SetGreenPuppet(bool on) { settings_.green_puppet = on; }
     // Tunic actors that do not work here (Director::FailedTunics): the plain
@@ -1048,6 +1053,10 @@ void OnEvent(const coop::net::Event& event);
 // none or are not known; and ours (SetOwnColor, from the settings). For the
 // co-op window's names (coop_window.cpp). Any thread.
 std::optional<std::uint32_t> PlayerColor(std::uint8_t number);
+// 0.11.9: the tunic copies given out (CoopColors::AssignTunicCopies, by the look worker): each player's puppet wears
+// its copy, the one the worker repaints in their exact colour. Any thread.
+void SetTunicCopies(std::map<std::uint8_t, std::string> copies);
+std::optional<std::string> TunicCopyOf(std::uint8_t number);
 void SetOwnColor(std::optional<std::uint32_t> rgb);
 std::optional<std::uint32_t> OwnColor();
 // The colour to show player `number` in (we are `self`): theirs (ours), else

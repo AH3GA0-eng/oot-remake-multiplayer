@@ -1,6 +1,7 @@
 // Player colours: parsing, the tint written into a puppet's model, and the
 // planner giving each remote its colour (lichii/hook/coop_colors.*).
 
+#include <algorithm>
 #include <doctest/doctest.h>
 
 #include <cstring>
@@ -293,4 +294,54 @@ TEST_CASE("puppets: quiet everywhere when the runtime cannot make a perceived pu
     CHECK(plan("HyruleCastle") == "CoopPuppet_ChildQuiet_Red");
     p.SetTunics(false);
     CHECK(plan("Kokiri") == "CoopPuppet_ChildQuiet");
+}
+
+TEST_CASE("colors (0.11.9): each other player gets a tunic copy of their own, nearest free, never the plain one") {
+    using CoopColors::AssignTunicCopies;
+    // Two players in near the same orange: the first by number gets Orange, the next the nearest still free.
+    auto a = AssignTunicCopies({{5, 0xFF7020}, {2, 0xFF6820}});
+    REQUIRE(a.size() == 2);
+    CHECK(a[2].suffix == "Orange");
+    CHECK(a[2].exact);
+    CHECK(a[5].suffix != "Orange");
+    CHECK_FALSE(a[5].suffix.empty());          // never the plain puppet (the game's own tunic texture)
+    CHECK(a[5].exact);
+    // A green player also gets a coloured copy (repainted green), not the plain one.
+    a = AssignTunicCopies({{3, 0x30D040}});
+    CHECK_FALSE(a[3].suffix.empty());
+    CHECK(a[3].exact);
+    // Nine copies: the tenth player and later share the nearest, not exact.
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> many;
+    for (std::uint8_t n = 1; n <= 11; ++n) many.push_back({n, 0x123456});
+    a = AssignTunicCopies(many);
+    int exact = 0;
+    std::vector<std::string> suffixes;
+    for (const auto& [n, copy] : a) {
+        if (copy.exact) {
+            ++exact;
+            suffixes.push_back(copy.suffix);
+        }
+    }
+    CHECK(exact == 9);
+    std::sort(suffixes.begin(), suffixes.end());
+    CHECK(std::adjacent_find(suffixes.begin(), suffixes.end()) == suffixes.end());   // all different
+    CHECK_FALSE(a[10].exact);
+    CHECK(a[10].suffix == std::string(CoopColors::TunicOf(0x123456)));
+    CHECK(CoopColors::TunicColour("Red") == 0xFF3030u);
+    CHECK_FALSE(CoopColors::TunicColour(""));
+    CHECK_FALSE(CoopColors::TunicColour("Mauve"));
+}
+
+TEST_CASE("colors (0.11.9): a puppet wears the tunic copy given to its player, else the nearest") {
+    CoopPuppet::PlannerSettings settings;
+    settings.tunics = true;
+    CoopPuppet::Planner p(settings);
+    CHECK(p.ActorFor(false, 0xFF6820u) == "CoopPuppet_Child_Orange");
+    CHECK(p.ActorFor(false, 0xFF6820u, 0, std::string("Purple")) == "CoopPuppet_Child_Purple");   // (its own copy)
+    CHECK(p.ActorFor(true, std::nullopt, 0, std::string("Cyan")) == "CoopPuppet_Adult_Cyan");
+    CHECK(p.ActorFor(false, 0xFF6820u, 0, std::string("")) == "CoopPuppet_Child");   // (the plain one: shared, green)
+    CoopPuppet::SetTunicCopies({{3, "Pink"}});
+    CHECK(CoopPuppet::TunicCopyOf(3) == std::optional<std::string>("Pink"));
+    CHECK_FALSE(CoopPuppet::TunicCopyOf(4));
+    CoopPuppet::SetTunicCopies({});
 }

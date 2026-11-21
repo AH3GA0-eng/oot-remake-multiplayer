@@ -2300,7 +2300,7 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         Target t;
         t.number = r.number;
         t.color = r.color ? r.color : coop::protocol::slot_color(r.number);
-        t.actor = ActorFor(r.adult, t.color, r.character);
+        t.actor = ActorFor(r.adult, t.color, r.character, r.tunic_copy);
         if (r.number >= 1 && r.number < 32 && (PvpCopies() & (1u << r.number)) != 0) {
             t.actor = CoopPvpNative::PvpActor(t.actor);  // PvP on real bodies (phase 4)
         }
@@ -2657,7 +2657,8 @@ bool PackHasTunicPuppets(std::string_view manifest) {
            manifest.find("\"CoopPuppet_Adult_") != std::string_view::npos;
 }
 
-std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, std::uint16_t character) const {
+std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, std::uint16_t character,
+                              const std::optional<std::string>& tunic_copy) const {
     if (!settings_.actor.empty()) {
         return settings_.actor;
     }
@@ -2687,8 +2688,9 @@ std::string Planner::ActorFor(bool adult, std::optional<std::uint32_t> color, st
             return name;
         }
     }
-    if (settings_.tunics && color) {
-        const std::string_view tunic = CoopColors::TunicOf(*color);
+    if (settings_.tunics && (color || tunic_copy)) {
+        // (0.11.9: the copy given to this player, repainted in their exact colour; else the one nearest)
+        const std::string_view tunic = tunic_copy ? std::string_view(*tunic_copy) : CoopColors::TunicOf(*color);
         if (!tunic.empty()) {
             std::string name = named(plain + '_' + std::string(tunic));
             if (works(name)) {
@@ -2741,6 +2743,22 @@ std::array<CoopPuppetSound::Wanted, kNumbers> g_ocarina;  // the same; guarded (
 std::array<std::vector<CoopLinkSound::Sound>, kNumbers> g_sounds;  // the same; guarded (LINK_SOUND)
 
 } // namespace
+
+namespace {
+std::mutex g_tunic_copies_mutex;
+std::map<std::uint8_t, std::string> g_tunic_copies;   // guarded by g_tunic_copies_mutex
+}  // namespace
+
+void SetTunicCopies(std::map<std::uint8_t, std::string> copies) {
+    std::lock_guard lock(g_tunic_copies_mutex);
+    g_tunic_copies = std::move(copies);
+}
+
+std::optional<std::string> TunicCopyOf(std::uint8_t number) {
+    std::lock_guard lock(g_tunic_copies_mutex);
+    const auto it = g_tunic_copies.find(number);
+    return it == g_tunic_copies.end() ? std::nullopt : std::optional<std::string>(it->second);
+}
 
 std::optional<std::uint32_t> PlayerColor(std::uint8_t number) {
     std::lock_guard lock(g_anim_mutex);
@@ -2962,6 +2980,7 @@ std::vector<Remote> Collect(coop::host::Session* session, std::uint64_t server_n
                 r.drawn = g_drawn[r.number];
                 r.lit = g_lit[r.number];
                 r.color = g_color[r.number];
+                r.tunic_copy = TunicCopyOf(r.number);
                 r.ocarina = g_ocarina[r.number];
                 r.sounds = std::exchange(g_sounds[r.number], {});
             }
