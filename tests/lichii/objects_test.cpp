@@ -2683,6 +2683,50 @@ TEST_CASE("objects: skulltula-0118, a taken Gold Skulltula leaves no copy and is
     CHECK(other == 0);
 }
 
+TEST_CASE("objects: the copy of an announced Gold Skulltula seen before it is bound is not a new enemy of ours") {
+    // Four players, 2026-11-20: the copy was on the game's list before the director bound it, took a scene id, and its
+    // death never reached its copy's entry, so the director made it again after each kill.
+    constexpr std::uint64_t kHash = 0x32f42f523be6425ULL;
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    Sync b;
+    Tick(b, 0, {}, 2);
+    proto::ObjectSpawn relayed;
+    relayed.id = id;
+    relayed.actor = "Enemy_Skulltula_Gold";
+    relayed.player_number = 1;
+    relayed.state.position = proto::Vec3{9.0f, 0.0f, 0.0f};
+    b.Receive(relayed);
+    Tick(b, 100 * kMs, {}, 2);
+    const auto creates = b.Creates();
+    REQUIRE(creates.size() == 1);
+    // On the list, not bound yet: not ours, nothing sent for it.
+    const auto early = Tick(b, 150 * kMs, {Enemy(0x900, ~0ULL, 1, 9.0f, "Enemy_Skulltula_Gold")}, 2);
+    CHECK_FALSE(b.IdOf(0x900));
+    CHECK(All<proto::ObjectSpawn>(early).empty());
+    // Bound: the copy has the placed id.
+    b.Bind({{creates[0].key, 0x900}});
+    Tick(b, 200 * kMs, {Enemy(0x900, ~0ULL, 1, 9.0f, "Enemy_Skulltula_Gold")}, 2);
+    REQUIRE(b.IdOf(0x900));
+    CHECK(*b.IdOf(0x900) == id);
+}
+
+TEST_CASE("objects: an announced Gold Skulltula this save has already taken is not copied") {
+    constexpr std::uint64_t kHash = 0x32f42f523be6425ULL;
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, kHash};
+    Sync b;
+    Tick(b, 0, {}, 2);
+    b.Take(kHash);
+    Tick(b, 50 * kMs, {}, 2);
+    proto::ObjectSpawn relayed;
+    relayed.id = id;
+    relayed.actor = "Enemy_Skulltula_Gold";
+    relayed.player_number = 1;
+    relayed.state.position = proto::Vec3{9.0f, 0.0f, 0.0f};
+    b.Receive(relayed);
+    Tick(b, 100 * kMs, {}, 2);
+    CHECK(b.Creates().empty());
+}
+
 TEST_CASE("objects: report 99, which placed enemies a game's own logic makes later (late encounters)") {
     // The Gerudo Fortress jail guards (CarpenterSet logic) and mini-boss or
     // ambush enemies of the same kind.

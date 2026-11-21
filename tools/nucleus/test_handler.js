@@ -544,6 +544,31 @@ for (var bi = 0; bi < bads.length; bi++) {
 fso.DeleteFile(joinTxt);
 Context.Options = undefined;
 
+// What the player set in the game stays over a new start: the name typed in the game and the look in coop.ini, and the
+// settings the game saved beside it (coop-options.ini); the controller lines are the handler's again.
+var w = "# Written by the Nucleus Co-op handler (tools/nucleus/OoTCoop.js) at each start.\r\n";
+writeFile(fso.BuildPath(instances[0], "coop.ini"),
+          w + "server = 127.0.0.1\r\nport = 27510\r\nname = Kokiri Kid\r\npassword = x\r\nlook_boots = black\r\n");
+writeFile(fso.BuildPath(instances[0], "coop-options.ini"),
+          w + "LICHII_COOP_CHAT_KEY=Y\r\nlook_hylian_frame = red\r\nLICHII_COOP_PAD=4\r\n");
+newSession();
+var kept = playAs(0);
+check(kept.indexOf("name = Kokiri Kid\r\n") >= 0 && kept.indexOf("name = Saria") < 0, "the name typed in the game stays: " + kept);
+check(kept.indexOf("look_boots = black\r\n") >= 0, "the look in coop.ini stays: " + kept);
+check(kept.indexOf("server = 127.0.0.1\r\n") >= 0 && kept.indexOf("password = x") < 0, "the session's lines new: " + kept);
+var keptOptions = readFile(fso.BuildPath(instances[0], "coop-options.ini"));
+check(keptOptions.indexOf("LICHII_COOP_CHAT_KEY=Y") >= 0 && keptOptions.indexOf("look_hylian_frame = red") >= 0,
+      "the game's own settings stay: " + keptOptions);
+check(keptOptions.indexOf("LICHII_COOP_PAD=4") < 0 && keptOptions.indexOf("LICHII_COOP_PAD=") >= 0,
+      "the controller line is the handler's: " + keptOptions);
+check(keptOptions.split(w).length === 2, "one header line: " + keptOptions);
+// Removed, the next start takes the kit's switches again
+fso.DeleteFile(fso.BuildPath(instances[0], "coop-options.ini"));
+newSession();
+playAs(0);
+check(readFile(fso.BuildPath(instances[0], "coop-options.ini")).indexOf("LICHII_COOP_CHAT_KEY=Y") < 0,
+      "no coop-options.ini: the kit's again");
+
 // Clean up: the links first (rmdir removes a link, not what it names), then the rest.
 for (var r = 0; r < 3; r++) shell.Run("cmd /c rmdir \"" + fso.BuildPath(instances[r], "user") + "\"", 0, true);
 check(fso.FileExists(fso.BuildPath(game, "user\\save\\host.sav")), "removing the link left the saves");

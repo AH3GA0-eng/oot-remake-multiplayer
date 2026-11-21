@@ -676,13 +676,15 @@ void MicRows() {
 }
 
 void Save() {
-    const auto kit = FindKit();
+    // (the coop-options.ini the game reads at its start: the kit's, or the one beside longshot.exe in a game with no kit
+    // of its own, Nucleus Co-op's instances: before, those saved nothing but coop.ini, a tester's "not saving")
+    const auto kit = CoopTitle::KitOptionsFile();
     std::string coop = ReadText(CoopIni());
-    std::string options = kit ? ReadText(*kit / "coop-options.ini") : std::string();
+    std::string options = kit ? ReadText(*kit) : std::string();
     g_menu.options().Write(coop, options);
     bool ok = WriteText(CoopIni(), coop);
     if (kit) {
-        ok = WriteText(*kit / "coop-options.ini", options) && ok;
+        ok = WriteText(*kit, options) && ok;
     }
     const bool live = g_coop_on || g_doing == "hosting" || g_doing == "joined";
     if (!live) {

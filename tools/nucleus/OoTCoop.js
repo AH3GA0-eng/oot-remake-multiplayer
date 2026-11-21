@@ -411,6 +411,28 @@ function coopDropKeys(text, keys) {
     return out.join("\r\n");
 }
 
+// `text`'s lines whose key passes `keep` (the key in lower case), comments and other lines left out.
+function coopKeepKeys(text, keep) {
+    var lines = String(text).split(/\r?\n/), out = [];
+    for (var i = 0; i < lines.length; i++) {
+        var t = coopTrim(lines[i]), eq = t.indexOf("=");
+        if (eq > 0 && t.charAt(0) !== "#" && t.charAt(0) !== ";" && keep(coopTrim(t.substring(0, eq)).toLowerCase())) {
+            out.push(t);
+        }
+    }
+    return out.join("\r\n");
+}
+
+// What this handler wrote before (its first line says so), without that first line; "" for any other text.
+var COOP_WRITTEN = "# Written by the Nucleus Co-op handler (tools/nucleus/OoTCoop.js) at each start.";
+function coopOwnWritten(text) {
+    var t = String(text);
+    if (t.indexOf(COOP_WRITTEN) !== 0) {
+        return "";
+    }
+    return coopTrim(t.substring(COOP_WRITTEN.length).replace(/^\r?\n/, ""));
+}
+
 // `text` with key=value set (the line replaced, else added).
 function coopSetKey(text, key, value) {
     var t = coopDropKeys(text, [key]);
@@ -643,18 +665,29 @@ Game.Play = function () {
     }
     coopWrite(coopPath(inst, "player-key.txt"), coopRead(keyFile));
 
+    // What the player set in this game last time stays: the name typed in the game, and the look and settings the game
+    // saved (coop.ini's name and look, coop-options.ini). Before, each start wrote both anew and the name went back to
+    // Nucleus's nickname and the look to the kit's (a tester, 2026-11-20).
+    var before = coopRead(coopPath(inst, "coop.ini"));
+    var ownName = coopCleanName(coopGetKey(before, "name"));
+    var ownLook = coopKeepKeys(before, function (k) { return k === "color" || k.indexOf("look_") === 0; });
+
     // coop.ini: the server on this PC, the session's join password, the player's name. Join mode: join_lan instead of
     // the server, port and password.
-    var name = "name = " + coopName(Context.Nickname, player) + "\r\n";
+    var name = "name = " + (ownName !== "" ? ownName : coopName(Context.Nickname, player)) + "\r\n";
     coopWrite(coopPath(inst, "coop.ini"),
-              "# Written by the Nucleus Co-op handler (tools/nucleus/OoTCoop.js) at each start.\r\n" +
+              COOP_WRITTEN + "\r\n" +
               (coopSession.lan !== undefined ? "join_lan = " + coopSession.lan + "\r\n" + name
                   : "server = " + coopSession.server + "\r\nport = " + coopSession.port + "\r\n" + name +
-                    "password = " + coopSession.password + "\r\n"));
+                    "password = " + coopSession.password + "\r\n") +
+              (ownLook !== "" ? ownLook + "\r\n" : ""));
 
-    // coop-options.ini: the kit's (else the game's) switches, with this game's controller and keyboard. The game
-    // reads it beside longshot.exe, as no kit is above the instance folder (CoopTitle::ApplyKitOptions).
-    var options = coopDropKeys(kitOptions, ["LICHII_COOP_PAD", "LICHII_COOP_KEYBOARD"].concat(player === 1 ? [] : ["color"]));
+    // coop-options.ini: this game's own from last time (the settings and look the game saved there), else the kit's
+    // (else the game's) switches; with this game's controller and keyboard. The game reads it beside longshot.exe, as no
+    // kit is above the instance folder (CoopTitle::ApplyKitOptions). Removed, the next start takes the kit's again.
+    var ownOptions = coopOwnWritten(coopRead(coopPath(inst, "coop-options.ini")));
+    var options = ownOptions !== "" ? coopDropKeys(ownOptions, ["LICHII_COOP_PAD", "LICHII_COOP_KEYBOARD"])
+        : coopDropKeys(kitOptions, ["LICHII_COOP_PAD", "LICHII_COOP_KEYBOARD"].concat(player === 1 ? [] : ["color"]));
     if (Context.IsKeyboardPlayer) {
         options = coopSetKey(options, "LICHII_COOP_PAD", "none");
         options = coopSetKey(options, "LICHII_COOP_KEYBOARD", "focus");
@@ -665,8 +698,7 @@ Game.Play = function () {
         options = coopSetKey(options, "LICHII_COOP_PAD", String(pad));
         options = coopSetKey(options, "LICHII_COOP_KEYBOARD", "off");
     }
-    coopWrite(coopPath(inst, "coop-options.ini"),
-              "# Written by the Nucleus Co-op handler (tools/nucleus/OoTCoop.js) at each start.\r\n" + options + "\r\n");
+    coopWrite(coopPath(inst, "coop-options.ini"), COOP_WRITTEN + "\r\n" + options + "\r\n");
 
     // Longshot's own options: in a window (Nucleus places it), no Discord status from every copy. A controller
     // player's camera is its pad's: Mouse camera "As the stick" (0), not Native (1), whose last mouse angles would be

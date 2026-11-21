@@ -2573,6 +2573,16 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                               Distance(d.position, s->position) < kClaimDistance;
                    })) {
             continue;  // the copy of another game's hatchling, not yet bound
+        } else if (std::any_of(decided_.begin(), decided_.end(), [&](const auto& e) {
+                       const Decided& d = e.second;
+                       return d.address == 0 && !d.removed && d.name == s->name &&
+                              now_us - d.got_us < kCreateWaitUs && Distance(d.position, s->position) < kClaimDistance;
+                   })) {
+            // The copy of an enemy another game announced (a Gold Skulltula, a late encounter), made here but not yet
+            // bound to its id: taken as a new one of ours, it was shared under a scene id, its death never reached its
+            // copy's entry, and the director made it again after each kill (a Gold Skulltula three times, four
+            // players, 2026-11-20).
+            continue;
         } else {
             o.id = {proto::ObjectKind::placed, 0, SceneSpawnId(scene_, s->name, order_[s->name]++)};
             if (IsHatchling(s->name) && CopyHatch(self, *s, now_us)) {
@@ -3436,6 +3446,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 return e.second.id == spawn->id && !(encounter && e.second.removed);
             });
             if (known) {
+                continue;
+            }
+            // A Gold Skulltula (or any announced one-time placement) this save has already taken: never copied (its
+            // owner's game may still list it; a copy was made here though its token was taken, 2026-11-20).
+            if (!made && Taken(spawn->id.value)) {
                 continue;
             }
             // Report 99 re-review: a new OBJECT_SPAWN for an enemy whose copy
