@@ -534,7 +534,7 @@ function Update-KitStartLinks([string]$KitDir) {
     $deadline = [DateTime]::UtcNow.AddSeconds($(if ($env:OOT_COOP_LINKS_SECONDS) { [double]$env:OOT_COOP_LINKS_SECONDS } else { 8 }))
     foreach ($d in Get-KitShortcutDirs) {
         if ([DateTime]::UtcNow -gt $deadline) { break }
-        foreach ($f in @(Get-ChildItem -LiteralPath $d -Filter '*.lnk' -File -Recurse -Depth 2 -ErrorAction SilentlyContinue)) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $d -Filter '*.lnk' -File -Recurse -Depth 3 -ErrorAction SilentlyContinue)) {
             if ([DateTime]::UtcNow -gt $deadline) { break }
             try {
                 # (only a shortcut that names this kit's folder is opened: the Start menu holds hundreds)
