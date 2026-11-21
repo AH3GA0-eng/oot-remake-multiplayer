@@ -1082,6 +1082,10 @@ enum class DamageCause : std::uint8_t {
   // The hitter's copy of an enemy whose life cannot be read died in its game (its own death
   // animation as it left): no life drop to send, so the kill itself goes (amount 1).
   killed = 13,
+  // Row 177 (docs/objects.md, "Shots sent back"): the sender's Link sent the owner's shot (a made projectile,
+  // an enemy's light ball, rock or nut) back on its copy, by the hit the game sends that shot back with; the
+  // owner's game sends its real one back. Amount 0. Older modules take it as a hit of 0 on an unknown object.
+  reflected = 14,
 };
 
 // DAMAGE: life lost on a copy, for the owner to take off. Amount 0 or more.
