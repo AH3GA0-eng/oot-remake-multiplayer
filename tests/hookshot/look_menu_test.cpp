@@ -51,7 +51,7 @@ TEST_CASE("look menu: every part on the list, by item, under its heading") {
         headings += r.kind == 3;
     }
     CHECK(parts == static_cast<int>(CoopLook::kParts));
-    CHECK(headings == 9);    // Tunic, 3 shields, 3 swords, Boots, Gauntlets
+    CHECK(headings == 11);   // Tunic, 3 shields, 3 swords, Boots, Gauntlets, Eyes, Hair (0.11.9)
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].kind == 1);   // a part, not a heading
     CHECK(v.rows[static_cast<std::size_t>(RowOf(page, "Hylian Shield", "Frame"))].value == "Game's own");
     CHECK(v.back == "Back");

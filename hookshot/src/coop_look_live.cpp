@@ -729,6 +729,12 @@ void StartModule() {
     puppets.base = CoopLookParts::kCopiesBase;
     puppets.start.clear();
     puppets.what = "puppets' gear";
+    // (0.11.9: the puppets' tunic copies, a Host of their own taken here, before `puppets` is moved below: the
+    // lane crash of a178e8bd was a copy taken after that move, with no file and no log)
+    CoopLookTunic::Wardrobe::Host ptunics = puppets;
+    ptunics.file = PuppetTunicsFile;
+    ptunics.base = CoopLookParts::kPuppetTunicsBase;
+    ptunics.what = "puppets' tunics";
     CoopLookTunic::Wardrobe::Host boots = puppets;
     boots.file = BootsFile;
     boots.base = CoopLookParts::kBootsBase;
@@ -747,10 +753,6 @@ void StartModule() {
             have = have && fs::exists(LookDir() / ("puppet-" + colour + ".bin"), no_file);
         }
         if (have && g_textures->Known()) {
-            CoopLookTunic::Wardrobe::Host ptunics = puppets;
-            ptunics.file = PuppetTunicsFile;
-            ptunics.base = CoopLookParts::kPuppetTunicsBase;
-            ptunics.what = "puppets' tunics";
             g_ptunics = std::make_unique<CoopLookTunic::Wardrobe>(std::move(ptunics));
             g_ptunics_worn.clear();
         }

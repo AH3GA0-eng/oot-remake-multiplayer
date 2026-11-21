@@ -392,6 +392,25 @@ TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's
     CHECK(m.overrides() == 0);
 }
 
+TEST_CASE("look tunic (0.11.9 lane crash, a178e8bd): a Host with a part missing never throws out of the worker") {
+    // The puppets' tunics' Host was copied from one already moved from: no file, no log. The worker's first Step
+    // called the empty log (std::bad_function_call out of its thread: the game aborted, 0xc0000409, ~25 s in).
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    CoopLookTunic::Wardrobe::Host moved_from;   // (what a moved-from Host holds: no file, no log)
+    moved_from.textures = &m;
+    moved_from.base = "ptunics";
+    CoopLookTunic::Wardrobe w(moved_from);
+    w.Wear("ptunics|red=FF3030");   // (the lane's last line: "the puppets' tunics are ptunics|red=FF3030 now")
+    w.Kick();
+    CHECK_NOTHROW(w.Step(0));
+    CHECK_NOTHROW(w.Step(1000));
+    CHECK(Drawn(m, kBase + 0x1000 + kOffset, 1));   // (no file: nothing drawn, the game's own stays)
+    CoopLookTunic::Wardrobe none(CoopLookTunic::Wardrobe::Host{});   // (no textures at all)
+    none.Wear("red");
+    CHECK_NOTHROW(none.Step(0));
+}
+
 TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     FakeTextures m(kBase, 0x10000);
     PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));

@@ -292,7 +292,7 @@ TEST_CASE("char colours: the wardrobe dresses on a change, again after kAgainMs,
     const Game g = f.AsGame();
     std::vector<std::string> said;
     const auto say = [&](const std::string& l) { said.push_back(l); };
-    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, 1}};
+    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, std::nullopt, std::nullopt, 1}};
     CHECK(w.Frame(g, t, 1000, say) > 0);
     CHECK(said.size() == 1);
     CHECK(w.Frame(g, t, 1100, say) == 0);
@@ -334,7 +334,7 @@ TEST_CASE("char colours: a failed call waits kAgainMs and is said once (review M
     };
     std::vector<std::string> said;
     const auto say = [&](const std::string& l) { said.push_back(l); };
-    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, 1}};
+    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, std::nullopt, std::nullopt, 1}};
     w.SetViewer(Custom(5, 0, 0, 0));   // the viewer paints: due every frame, still held back after a failure
     CHECK(w.Frame(g, t, 1000, say) == 1);
     CHECK(w.Frame(g, t, 1016, say) == 0);
@@ -350,7 +350,7 @@ TEST_CASE("char colours: a puppet made again as another actor looks its material
     FakeGame f(Character());
     Wardrobe w;
     const Game g = f.AsGame();
-    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, 1}};
+    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, std::nullopt, std::nullopt, 1}};
     w.Frame(g, t, 1000, {});
     // The same address and block, another character with fewer materials: Mt_Hairs is now number 3 of 4.
     f.mats = {{"Mt_Skin", 1, 1, {}}, {"Mt_Eye_Inner", 1, 1, {"x", "y", "ns_param_color2"}}, {"Mt_A", 1, 1, {}},
