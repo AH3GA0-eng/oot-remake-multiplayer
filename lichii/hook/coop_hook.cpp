@@ -1655,13 +1655,24 @@ public:
                 }
                 return out;
             }();
-            std::uint32_t custom = 0;
+            // 0.11.9 (the owner: ONE customizer, co-op's own): the mod's own Customize options are held at 0, the
+            // model's own colours, so its code never paints over ours (its per-frame dresser changes only what an
+            // option sets; at 0 it reads and goes on; its Customize screen puts the model's own back for an option at 0).
+            std::array<std::optional<std::int32_t>, CoopLookShare::kCustomFlags.size()> values{};
             for (std::size_t i = 0; i < custom_hashes.size(); ++i) {
-                const auto v = coop::host::GameFlags(flag_memory).get_int(custom_hashes[i]);
-                if (v && *v > 0 && *v <= 15) {
-                    custom |= static_cast<std::uint32_t>(*v) << (4 * i);
-                }
+                values[i] = coop::host::GameFlags(flag_memory).get_int(custom_hashes[i]);
             }
+            std::size_t cleared = 0;
+            for (const std::size_t i : CoopLookShare::OptionsToHold(values)) {
+                if (coop::host::GameFlags::set_int(flag_memory, custom_hashes[i], 0)) ++cleared;
+            }
+            static bool said_held = false;
+            if (cleared != 0 && !said_held) {
+                said_held = true;
+                LOG_INFO(Core, "coop: characters: Character Select's own Customize options set back to the model's own "
+                               "({} of them): co-op's look is the one customizer", cleared);
+            }
+            const std::uint32_t custom = 0;   // (none of the mod's own: nothing of them goes to the others either)
             // What the mod's own code puts on every player-like model, puppets too (coop_char_colours.h Wardrobe).
             CoopCharColours::TheWardrobe().SetViewer(custom);
             CoopCharColours::SetShownCharacter(picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax

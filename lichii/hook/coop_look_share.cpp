@@ -45,6 +45,14 @@ void Share::SetCustom(std::uint32_t options) {
     due_ = due_ || character_ != 0;   // (with Link nothing of it is sent)
 }
 
+std::vector<std::size_t> OptionsToHold(const std::array<std::optional<std::int32_t>, 6>& values) {
+    std::vector<std::size_t> out;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (values[i] && *values[i] != 0) out.push_back(i);
+    }
+    return out;
+}
+
 std::uint32_t Share::CustomOf(std::uint8_t number) const {
     const auto it = their_custom_.find(number);
     return it == their_custom_.end() ? std::uint32_t{0} : it->second;

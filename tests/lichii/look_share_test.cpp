@@ -534,3 +534,10 @@ TEST_CASE("look share (row 198): a puppet never wears the game's own coloured it
     s.EnableSlots(false);
     CHECK_FALSE(s.CopyOf(3));
 }
+
+TEST_CASE("look share (0.11.9, one customizer): the mod's own options read and not 0 are held back at 0") {
+    using V = std::array<std::optional<std::int32_t>, 6>;
+    CHECK(CoopLookShare::OptionsToHold(V{}).empty());                                    // (no mod: none read)
+    CHECK(CoopLookShare::OptionsToHold(V{0, 0, 0, 0, 0, 0}).empty());                    // (already the model's own)
+    CHECK(CoopLookShare::OptionsToHold(V{3, 0, std::nullopt, 0, 7, -1}) == std::vector<std::size_t>{0, 4, 5});
+}
