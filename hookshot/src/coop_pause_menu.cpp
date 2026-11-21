@@ -1483,6 +1483,7 @@ void Menu::Decide(Act act) {
     case Act::kSameNetwork:
     case Act::kListRoom:
     case Act::kAutoRejoin:
+    case Act::kOriginal:
     case Act::kGameKind:
         Change(act, 0);   // (a toggle: A flips it)
         break;
