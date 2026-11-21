@@ -2104,6 +2104,11 @@ std::optional<double> Session::distance_to(const Connection& c, const Object& o,
   return metres(*c.position, *o.last_state->position);
 }
 
+bool Session::unfit_boss_owner(const Connection& c, std::uint64_t now_us) const {
+  if (c.dead_since != 0 && now_us - c.dead_since >= config_.boss_owner_dead_us) return true;
+  return c.paused_since != 0 && now_us - c.paused_since >= config_.boss_owner_paused_us;
+}
+
 bool Session::unfit_owner(const Connection& c, std::uint64_t now_us) const {
   if (c.status & status::loading) return true;
   // Downed (or out): its enemies go to a player still up, whose game's AI
@@ -2198,15 +2203,9 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
       return std::nullopt;
     }
   }
-  // Nor while a shot of its owner's game flies there (Phantom Ganon's ball in
-  // a rally): a shot is never handed over, so its rally would go on in the old
-  // owner's game alone. A shot whose end was lost counts for 10 s at most.
-  for (const auto& [sid, s] : objects_) {
-    if (s.projectile && !s.removed && s.owner == owner && s.scene == o.scene && s.first_at != 0 &&
-        now_us - s.first_at < config_.boss_turn_shot_us) {
-      return std::nullopt;
-    }
-  }
+  // A shot of its owner's game in the air does not hold the turn: the edge above comes right after a shooting
+  // attack, while its shots fly (Phantom Ganon's bolt and shockwaves: a hold on them meant no turn at all), and a
+  // shot stays with the game that made it. His rally ball is each game's own (a split shot, coop_enemy_shots.h).
   // The next player by number after the owner, round: in the boss's area,
   // ready (its intro played), up and playing.
   const auto own = connections_.find(owner);
@@ -2599,8 +2598,8 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
 
-    // An owner whose game stands still gives it up, fight or not.
-    if (unfit_owner(oc, now_us)) {
+    // An owner whose game stands still gives it up, fight or not; a boss's sooner (its AI fights its Link alone).
+    if (unfit_owner(oc, now_us) || (o.boss && unfit_boss_owner(oc, now_us))) {
       if (o.fish) {
         fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
       } else if (auto next = best_other(o, owner, true, now_us)) {
