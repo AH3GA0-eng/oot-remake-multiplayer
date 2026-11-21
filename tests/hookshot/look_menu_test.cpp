@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <string>
 
 #include "coop_colors.h"
@@ -78,9 +79,9 @@ TEST_CASE("look menu: Left and Right try the presets, the change is handed on on
     CHECK(Outlined(page.view()));
 }
 
-TEST_CASE("look menu: Confirm mixes a colour of one's own, Back goes back to the list") {
+TEST_CASE("look menu (0.11.9): Confirm picks any colour by hue, saturation and brightness, Back to the list") {
     Look start;
-    start[Part::master_hilt] = 0x102030u;
+    start[Part::master_hilt] = 0xFF0000u;   // red: hue 0, full saturation and brightness
     Page page;
     page.Open(start);
     const int hilt = RowOf(page, "Master Sword", "Hilt");
@@ -90,20 +91,28 @@ TEST_CASE("look menu: Confirm mixes a colour of one's own, Back goes back to the
     auto v = page.view();
     CHECK(v.rows[0].kind == 3);
     CHECK(v.rows[0].name == "Master Sword: Hilt");
-    CHECK(v.rows[static_cast<std::size_t>(v.selected)].name == "Red");
-    CHECK(v.rows[1].value == "16");
-    page.Press(Input::kRight);                     // red + 8
-    CHECK(page.look()[Part::master_hilt] == 0x182030u);
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].name == "Hue");
+    CHECK(v.rows[1].value == "0 degrees");
+    CHECK(v.rows[2].value == "100%");
+    CHECK(v.rows[3].value == "100%");
+    page.Press(Input::kLeft);                      // round the wheel backwards: 350 degrees
+    CHECK(page.view().rows[1].value == "350 degrees");
+    for (int i = 0; i < 13; ++i) page.Press(Input::kRight);   // 350 + 130 = 120: green
+    CHECK(page.look()[Part::master_hilt] == 0x00FF00u);
+    for (int i = 0; i < 12; ++i) page.Press(Input::kRight);   // 240: blue
+    CHECK(page.look()[Part::master_hilt] == 0x0000FFu);
     page.Press(Input::kDown);
-    for (int i = 0; i < 40; ++i) page.Press(Input::kRight);   // green up to the top
-    CHECK(page.look()[Part::master_hilt] == 0x18FF30u);
-    CHECK_FALSE(page.view().rows[2].right);        // no more to give
+    for (int i = 0; i < 30; ++i) page.Press(Input::kLeft);    // saturation to nothing: grey (white at full brightness)
+    CHECK(page.look()[Part::master_hilt] == 0xFFFFFFu);
+    CHECK_FALSE(page.view().rows[2].left);         // no less to give
+    for (int i = 0; i < 10; ++i) page.Press(Input::kRight);   // back to 50%: the hue was kept (a light blue)
+    CHECK(page.look()[Part::master_hilt] == 0x8080FFu);
     page.Press(Input::kDown);
-    for (int i = 0; i < 40; ++i) page.Press(Input::kLeft);    // blue down to nothing
-    CHECK(page.look()[Part::master_hilt] == 0x18FF00u);
+    for (int i = 0; i < 10; ++i) page.Press(Input::kLeft);    // brightness 50%
+    CHECK(page.look()[Part::master_hilt] == 0x404080u);
     CHECK(page.TakeChange());
-    // the picture shows the colour mixed
-    CHECK(PictureHas(page.view(), 0x18FF00u));
+    // the picture shows the colour picked
+    CHECK(PictureHas(page.view(), 0x404080u));
     CHECK(page.Press(Input::kBack));               // to the list, on the same row
     CHECK_FALSE(page.editing());
     CHECK(page.view().selected == hilt);
@@ -115,9 +124,11 @@ TEST_CASE("look menu: a part with no colour mixes from the game's own, Game's ow
     page.Open(Look{});
     page.Select(static_cast<std::size_t>(RowOf(page, "Boots", "Leather")));
     page.Press(Input::kDecide);
-    page.Press(Input::kLeft);   // red - 8 from the boots' own brown
+    // (the sliders start at the boots' own brown: a hue press keeps its saturation and brightness)
+    const CoopLookMenu::Hsv own = CoopLookMenu::ToHsv(CoopLookMenu::Shown(Look{}, Part::boots));
+    page.Press(Input::kLeft);
     REQUIRE(page.look()[Part::boots]);
-    CHECK(*page.look()[Part::boots] == ((CoopLookMenu::Shown(Look{}, Part::boots) - 0x080000u)));
+    CHECK(*page.look()[Part::boots] == CoopLookMenu::ToRgb({(own.h + 350) % 360, own.s, own.v}));
     auto v = page.view();
     int own = -1, done = -1;
     for (std::size_t i = 0; i < v.rows.size(); ++i) {
@@ -186,10 +197,31 @@ TEST_CASE("look menu: the Cap trim, under the Tunic heading after the tunics, fo
     page.Press(Input::kDecide);
     REQUIRE(page.editing());
     v = page.view();
-    CHECK(v.rows[static_cast<std::size_t>(v.selected)].name == "Red");
-    CHECK(v.rows[1].value == "48");   // 0x30, the tunic's red
+    CHECK(v.rows[static_cast<std::size_t>(v.selected)].name == "Hue");
+    const CoopLookMenu::Hsv tunic = CoopLookMenu::ToHsv(0x3070FFu);   // the sliders start at the tunic's colour
+    CHECK(v.rows[1].value == std::to_string(tunic.h) + " degrees");
     CHECK(v.rows[4].value == "As the tunic");   // the Preset row
     page.Press(Input::kRight);
-    CHECK(page.look()[Part::cap_trim] == 0x3870FFu);
+    CHECK(page.look()[Part::cap_trim] == CoopLookMenu::ToRgb({(tunic.h + 10) % 360, tunic.s, tunic.v}));
     CHECK(page.look()[Part::tunic] == 0x3070FFu);
+}
+
+TEST_CASE("look menu (0.11.9): any colour round-trips through hue, saturation and brightness") {
+    using CoopLookMenu::Hsv;
+    CHECK(CoopLookMenu::ToHsv(0xFF0000u) == Hsv{0, 100, 100});
+    CHECK(CoopLookMenu::ToHsv(0x00FF00u) == Hsv{120, 100, 100});
+    CHECK(CoopLookMenu::ToHsv(0x0000FFu) == Hsv{240, 100, 100});
+    CHECK(CoopLookMenu::ToHsv(0x000000u) == Hsv{0, 0, 0});
+    CHECK(CoopLookMenu::ToHsv(0xFFFFFFu) == Hsv{0, 0, 100});
+    CHECK(CoopLookMenu::ToRgb({60, 100, 100}) == 0xFFFF00u);
+    CHECK(CoopLookMenu::ToRgb({300, 100, 100}) == 0xFF00FFu);
+    CHECK(CoopLookMenu::ToRgb({-60, 100, 100}) == 0xFF00FFu);   // (a hue below 0 wraps)
+    // Every colour comes back within the steps' rounding (1% is 2.55 of 255).
+    for (std::uint32_t c : {0x4C8C3Cu, 0x27357Au, 0x634D38u, 0xBEC3DCu, 0x123456u, 0xFEDCBAu}) {
+        const std::uint32_t back = CoopLookMenu::ToRgb(CoopLookMenu::ToHsv(c));
+        for (int shift : {16, 8, 0}) {
+            const int a = static_cast<int>((c >> shift) & 0xFF), b = static_cast<int>((back >> shift) & 0xFF);
+            CHECK(std::abs(a - b) <= 4);
+        }
+    }
 }

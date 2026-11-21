@@ -14,9 +14,11 @@ using CoopLook::PartInfo;
 
 namespace {
 
-constexpr int kStep = 8;   // a press on Red, Green or Blue
+// 0.11.9 (the owner: any colour, not a palette): the mixer is hue, saturation and brightness, the whole range.
+constexpr int kHueStep = 10;    // degrees a press (wraps round)
+constexpr int kLevelStep = 5;   // percent a press on Saturation or Brightness
 
-enum class What { kHeading, kPart, kAllGame, kRed, kGreen, kBlue, kPreset, kGameOwn, kDone };
+enum class What { kHeading, kPart, kAllGame, kHue, kSaturation, kBrightness, kPreset, kGameOwn, kDone };
 
 // The game's own colours, near enough for the picture (the textures' averages).
 std::uint32_t GameColour(Part part) {
@@ -194,6 +196,36 @@ std::vector<Drawn> Doll(const CoopLook::Look& look, Part tunic, Part shield, Par
 
 }  // namespace
 
+Hsv ToHsv(std::uint32_t rgb) {
+    const int r = static_cast<int>((rgb >> 16) & 0xFF), g = static_cast<int>((rgb >> 8) & 0xFF),
+              b = static_cast<int>(rgb & 0xFF);
+    const int hi = std::max({r, g, b}), lo = std::min({r, g, b}), d = hi - lo;
+    Hsv out;
+    out.v = (hi * 100 + 127) / 255;
+    out.s = hi == 0 ? 0 : (d * 100 + hi / 2) / hi;
+    if (d == 0) return out;
+    double h = hi == r ? std::fmod(static_cast<double>(g - b) / d, 6.0) : hi == g ? static_cast<double>(b - r) / d + 2.0
+                                                                                  : static_cast<double>(r - g) / d + 4.0;
+    h *= 60.0;
+    if (h < 0) h += 360.0;
+    out.h = static_cast<int>(std::lround(h)) % 360;
+    return out;
+}
+
+std::uint32_t ToRgb(const Hsv& c) {
+    const double h = ((c.h % 360) + 360) % 360, s = std::clamp(c.s, 0, 100) / 100.0, v = std::clamp(c.v, 0, 100) / 100.0;
+    const double chroma = v * s, x = chroma * (1 - std::fabs(std::fmod(h / 60.0, 2.0) - 1)), m = v - chroma;
+    double r = 0, g = 0, b = 0;
+    if (h < 60) r = chroma, g = x;
+    else if (h < 120) r = x, g = chroma;
+    else if (h < 180) g = chroma, b = x;
+    else if (h < 240) g = x, b = chroma;
+    else if (h < 300) r = x, b = chroma;
+    else r = chroma, b = x;
+    const auto byte = [m](double t) { return static_cast<std::uint32_t>(std::lround(std::clamp(t + m, 0.0, 1.0) * 255)); };
+    return (byte(r) << 16) | (byte(g) << 8) | byte(b);
+}
+
 const std::vector<std::string>& Presets() {
     static const std::vector<std::string> kPresets = {"",     "red",    "orange", "yellow", "green", "cyan",
                                                       "blue", "purple", "pink",   "white",  "black"};
@@ -218,15 +250,17 @@ std::vector<Page::Line> Page::Lines() const {
     std::vector<Line> out;
     if (editing_) {
         const Part p = *editing_;
-        const std::uint32_t c = Shown(look_, p);
         out.push_back({{Title(p), "", 3}, What::kHeading, p, ""});
-        const char* names[3] = {"Red", "Green", "Blue"};
-        const What whats[3] = {What::kRed, What::kGreen, What::kBlue};
-        for (int i = 0; i < 3; ++i) {
-            const int v = static_cast<int>((c >> (16 - 8 * i)) & 0xFF);
-            out.push_back({{names[i], std::to_string(v), 1, v > 0, v < 255}, whats[i], p,
-                           "Left and Right: less or more of it, " + std::to_string(kStep) + " a press (0 to 255)."});
-        }
+        // (any colour: hue round the wheel, then how strong and how bright; the picture and Link show it at once)
+        out.push_back({{"Hue", std::to_string(hsv_.h) + " degrees", 1, true, true}, What::kHue, p,
+                       "Left and Right: round the colour wheel, " + std::to_string(kHueStep) +
+                           " degrees a press (red, yellow, green, cyan, blue, magenta, red)."});
+        out.push_back({{"Saturation", std::to_string(hsv_.s) + "%", 1, hsv_.s > 0, hsv_.s < 100}, What::kSaturation, p,
+                       "Left and Right: from grey (0%) to the full colour (100%), " + std::to_string(kLevelStep) +
+                           "% a press."});
+        out.push_back({{"Brightness", std::to_string(hsv_.v) + "%", 1, hsv_.v > 0, hsv_.v < 100}, What::kBrightness, p,
+                       "Left and Right: from black (0%) to the brightest (100%), " + std::to_string(kLevelStep) +
+                           "% a press."});
         std::string preset = "Mixed";
         for (const std::string& name : Presets()) {
             if (!name.empty() && look_[p] && CoopColors::Parse(name) == look_[p]) {
@@ -253,8 +287,8 @@ std::vector<Page::Line> Page::Lines() const {
         // once they are Chinese).
         const std::string note = CoopI18n::Tr(Note(info.part));
         const std::string how = CoopI18n::Tr(
-            "Left and Right try the colours; Confirm mixes your own. Your Link wears it when you close the menu "
-            "(the other players see only the tunic's colour for now).");
+            "Left and Right try the colours; Confirm picks any colour of your own. Your Link wears it when you close "
+            "the menu, and the other players see it on you.");
         out.push_back(
             {{info.name, ValueText(info.part, look_[info.part]), 1, true, true}, What::kPart, info.part, note + " " + how});
     }
@@ -319,15 +353,20 @@ void Page::Change(std::size_t row, int step) {
     }
     const Line& l = lines[row];
     switch (l.what) {
-    case What::kPart:
-    case What::kPreset: Set(l.part, NextPreset(look_[l.part], step)); break;
-    case What::kRed:
-    case What::kGreen:
-    case What::kBlue: {
-        const int shift = l.what == What::kRed ? 16 : l.what == What::kGreen ? 8 : 0;
-        const std::uint32_t c = Shown(look_, l.part);
-        const int v = std::clamp(static_cast<int>((c >> shift) & 0xFF) + step * kStep, 0, 255);
-        Set(l.part, (c & ~(0xFFu << shift)) | (static_cast<std::uint32_t>(v) << shift));
+    case What::kPart: Set(l.part, NextPreset(look_[l.part], step)); break;
+    case What::kPreset:
+        Set(l.part, NextPreset(look_[l.part], step));
+        hsv_ = ToHsv(Shown(look_, l.part));   // (the sliders follow the preset chosen)
+        break;
+    case What::kHue:
+    case What::kSaturation:
+    case What::kBrightness: {
+        // (kept as hue, saturation and brightness while the mixer is open: a grey keeps its hue, and no press is
+        // lost to rounding through red, green and blue)
+        if (l.what == What::kHue) hsv_.h = ((hsv_.h + step * kHueStep) % 360 + 360) % 360;
+        if (l.what == What::kSaturation) hsv_.s = std::clamp(hsv_.s + step * kLevelStep, 0, 100);
+        if (l.what == What::kBrightness) hsv_.v = std::clamp(hsv_.v + step * kLevelStep, 0, 100);
+        Set(l.part, ToRgb(hsv_));
         break;
     }
     default: break;
@@ -344,15 +383,19 @@ void Page::Decide(std::size_t row) {
     case What::kPart:
         list_selected_ = row;
         editing_ = l.part;
+        hsv_ = ToHsv(Shown(look_, l.part));   // (from the colour it shows: its own, the game's, or the tunic's)
         Focus(l.part);
-        selected_ = 1;   // Red
+        selected_ = 1;   // Hue
         break;
     case What::kAllGame:
         for (const PartInfo& info : CoopLook::Parts()) {
             Set(info.part, std::nullopt);
         }
         break;
-    case What::kGameOwn: Set(l.part, std::nullopt); break;
+    case What::kGameOwn:
+        Set(l.part, std::nullopt);
+        hsv_ = ToHsv(Shown(look_, l.part));
+        break;
     case What::kDone:
         editing_.reset();
         selected_ = list_selected_;

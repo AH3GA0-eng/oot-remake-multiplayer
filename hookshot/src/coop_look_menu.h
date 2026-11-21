@@ -2,8 +2,8 @@
 // The Link customizer: the Customize page of the Multiplayer tab (docs/puppet.md,
 // "The Link customizer"). On the left, every part of Link's look by item (the
 // tunics, the shields' frames and faces, the swords' blades and hilts, the
-// boots, the gauntlets): Left and Right try the preset colours, Confirm mixes
-// one's own (red, green and blue). On the right, a picture of Link in the
+// boots, the gauntlets): Left and Right try the preset colours, Confirm picks
+// any colour (hue, saturation and brightness: the whole range, 0.11.9). On the right, a picture of Link in the
 // colours chosen, with the part selected outlined: the shield, sword and
 // tunic shown are the ones whose part was looked at last.
 //
@@ -54,6 +54,14 @@ struct View {
     std::vector<Shape> picture;
 };
 
+// A colour as the mixer shows it (0.11.9: any colour): hue 0..359 degrees, saturation and brightness 0..100 %.
+struct Hsv {
+    int h = 0, s = 0, v = 0;
+    bool operator==(const Hsv&) const = default;
+};
+Hsv ToHsv(std::uint32_t rgb);
+std::uint32_t ToRgb(const Hsv& colour);
+
 // The preset colours, after the game's own (unset): CoopColors' names.
 const std::vector<std::string>& Presets();
 
@@ -88,6 +96,7 @@ private:
 
     CoopLook::Look look_;
     std::optional<CoopLook::Part> editing_;   // the colour mixer's part; none: the list
+    Hsv hsv_;                                 // the mixer's colour (kept as it is moved: no rounding drift)
     std::size_t selected_ = 0;
     std::size_t list_selected_ = 0;           // where the list was, for the way back from the mixer
     bool changed_ = false;
