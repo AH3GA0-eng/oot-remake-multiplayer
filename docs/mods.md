@@ -50,6 +50,18 @@ A mod marked `"coop": "own"` (a HUD, a camera) is your own business and is not c
 
 A setting marked `"shared"` is the host's in a co-op game: your tab shows the host's value, locked. The randomizer's seed is one. A guest keeps the host's values as its own afterwards, so a restart before joining again plays the same seed; change them in the tab to play your own.
 
+### Character Select
+
+[OoT Character Select](https://github.com/snaildev99/OoT-Character-Select) by snaildev99 (Snail) lets you play as the game's other characters (Saria, Sheik, Darunia and over a hundred more), and the other players see your pick on your puppet (docs/puppet.md). It is Snail's mod and he distributes it: the kit carries none of its files (its release holds the game's characters rebuilt from the game's own files; The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo; the mod's code is MIT).
+
+- **Asked once.** At the first start (Windows `Start Squadala.bat`, Linux `start-squadala.sh`) the kit asks `Install the playable NPC mod (Character Select by Snail)? [Y/n]` with a 15-second countdown: Enter, Y or no key is yes, N is no. A start with no console or terminal takes yes. The answer is kept (`hookshot\character-select-answer.txt`, Linux `data/character-select-answer.txt`; Update.bat keeps it).
+- **Change it later** in `coop-options.ini`: `character_select = yes` gets it, `no` takes the kit's copy out again (the game is then built again without its code, a few minutes), `ask` asks at the next start.
+- **What yes does.** The kit downloads Snail's release named in `hookshot\CHARACTER-SELECT.txt` (v0.2.1, about 1 GB) from his GitHub release page and his `characters.json` (the list of characters the puppet pack reads) from his fork at a fixed commit, checks each file's SHA-256, and puts the mod's one folder into the game's `mods` folder as `OoT Character Select`, with `characters.json`, `CREDITS-coop.txt` and his `LICENSE.txt` beside its `romfs`. The zip is deleted afterwards. A file with another SHA-256 is refused. When this PC is offline, has less than about 3 GB free, or a download fails, one line says so and the game starts without it; the next start tries again.
+- **On, and the Mods tab switches it off.** The kit never writes the Mods tab's list, so your Off stays, also over updates. Its code patch (`exefs`) is built into the game by our patches 0034 and 0035, so putting it in, updating it, taking it out or switching it in the tab builds the game again (a few minutes). The puppet pack is made again with its characters.
+- **A copy of your own** (a `mods\OoT Character Select` folder you put in yourself) is used as it is and never replaced or removed by the kit.
+- **On a first start** the game is built first (20 to 40 minutes), then the mod goes in and its code is built in (a few minutes more).
+- Without it nothing changes: solo and co-op play as before, and other players' character picks show as colour puppets.
+
 ### The randomizer
 
 The OoT Remake randomizer is [OOTRR](https://github.com/REALAZK/ootrr) (by REALAZK, GPL-3.0-or-later since 0.5.0). The kit brings it: there is nothing to download or set.

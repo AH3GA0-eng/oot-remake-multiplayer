@@ -147,6 +147,161 @@ make_game() {
     return "${PIPESTATUS[0]}"
 }
 
+# OoT Character Select by Snail (data/longshot/CHARACTER-SELECT.txt; owner, 0.11.8), as kit-paths.ps1's
+# Invoke-KitCharacterSelectStep: asked once (Enter, y or 15 s: yes; no terminal: yes; data/coop-options.ini
+# character_select = yes|no|ask wins, data/character-select-answer.txt keeps the answer). On yes Snail's own release and his
+# characters.json are downloaded from his GitHub pages onto this PC, SHA-256 checked, and the mod's folder goes into
+# data/game/mods, on (the Mods tab switches it off; the list is never written here). The kit carries none of its
+# files. Before the game's stamp below: the build takes in its code patch (patches 0034/0035), the pack its characters.
+# Before the kit changes data/game/mods/<folder>: what the game was last built with is kept as mods/_<folder>.prev (the
+# folder) or mods/_<folder>.none (nothing was there), both skipped by the game and the build ('_'); kept once, so a
+# start that stopped in its build keeps the older state, the one the game has (kit-paths.ps1 Save-KitCharacterSelectPrevious).
+charsel_save_previous() {
+    local dir=$GAME/mods/$1 prev=$GAME/mods/_$1.prev none=$GAME/mods/_$1.none
+    if [[ ! -e $prev && ! -e $none ]]; then
+        if [[ -e $dir ]]; then mv "$dir" "$prev"; else printf 'no %s before the kit'"'"'s change
+' "$1" >"$none"; fi
+    elif [[ -e $dir ]]; then
+        rm -rf "$dir"
+    fi
+}
+charsel_folder() { [[ -f $LS/CHARACTER-SELECT.txt ]] && pin_get "$LS/CHARACTER-SELECT.txt" folder; }
+# The game could not be built with the change (review-geno-0118): the mods folder goes back to what the game was built
+# with, so the game starts as it was. 0 when something was put back. The player's answer stays: the next start tries again.
+charsel_undo() {
+    local folder dir prev none
+    folder=$(charsel_folder) || return 1
+    [[ -n $folder ]] || return 1
+    dir=$GAME/mods/$folder prev=$GAME/mods/_$folder.prev none=$GAME/mods/_$folder.none
+    [[ -e $prev || -e $none ]] || return 1
+    rm -rf "$dir"
+    [[ -e $prev ]] && mv "$prev" "$dir"
+    rm -f "$none"
+    return 0
+}
+# The game was built (or needed no build) with the change: the kept state goes.
+charsel_confirm() {
+    local folder
+    folder=$(charsel_folder) || return 0
+    [[ -n $folder ]] && rm -rf "$GAME/mods/_$folder.prev" "$GAME/mods/_$folder.none"
+    return 0
+}
+
+charsel_step() {
+    local pin=$LS/CHARACTER-SELECT.txt choice='' line rel url zip zsha zfolder folder ourl osha iurl isha want dir new old dl why=''
+    [[ -f $pin ]] || return 0
+    rel=$(pin_get "$pin" release || true) url=$(pin_get "$pin" url || true) zip=$(pin_get "$pin" zip || true)
+    zsha=$(pin_get "$pin" zip_sha256 || true) zfolder=$(pin_get "$pin" zip_folder || true) folder=$(pin_get "$pin" folder || true)
+    ourl=$(pin_get "$pin" overlay_url || true) osha=$(pin_get "$pin" overlay_sha256 || true)
+    iurl=$(pin_get "$pin" ips_url || true) isha=$(pin_get "$pin" ips_sha256 || true)
+    if [[ ! $rel =~ ^[A-Za-z0-9._-]+$ || ! $url =~ ^https:// || ! $zip =~ ^[A-Za-z0-9._-]+$ || ! $zsha =~ ^[0-9a-fA-F]{64}$ ||
+          -z $zfolder || $zfolder == *..* || ! $folder =~ ^[A-Za-z0-9][^/\\:*?\"\<\>\|]*$ || ! $ourl =~ ^https:// || ! $osha =~ ^[0-9a-fA-F]{64}$ ]]; then
+        warn 'data/longshot/CHARACTER-SELECT.txt is incomplete: Character Select is left out.'; return 0
+    fi
+    [[ -n $iurl && ( ! $iurl =~ ^https:// || ! $isha =~ ^[0-9a-fA-F]{64}$ ) ]] && iurl=''
+    zsha=${zsha,,} osha=${osha,,} isha=${isha,,}
+    line=$(sed -n 's/^[[:space:]]*character_select[[:space:]]*=[[:space:]]*\(yes\|no\|ask\)[[:space:]]*\([#;].*\)\{0,1\}$/\1/p' "$DATA/coop-options.ini" 2>/dev/null | head -n1 || true)
+    if [[ -n $line ]]; then choice=$line; [[ $choice == ask ]] && rm -f "$DATA/character-select-answer.txt"
+    else choice=$(head -n1 "$DATA/character-select-answer.txt" 2>/dev/null | tr -d '\r[:space:]' || true); [[ $choice == yes || $choice == no ]] || choice=ask
+    fi
+    if [[ $choice == ask ]]; then
+        say ''
+        say "Character Select by Snail (snaildev99) lets you play as the game's other characters (Saria, Sheik, Darunia and over a hundred more)."
+        say "  It is Snail's mod: the kit downloads it from his own GitHub page (about 1 GB, once), puts it in the game's mods folder"
+        say "  and switches it on (the Mods tab switches it off). The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo."
+        local q='Install the playable NPC mod (Character Select by Snail)? [Y/n]' a='' s
+        choice=yes
+        if kit_tty; then
+            for ((s = ${OOT_COOP_CHARSEL_WAIT:-15}; s > 0; s--)); do
+                printf '\r%s (yes in %d s)  ' "$q" "$s"
+                if IFS= read -r -s -n 1 -t 1 a; then break; fi
+                a=timeout
+            done
+            [[ $a == [nN] ]] && choice=no
+            printf '%s\n' "${choice:0:1}"
+        else
+            say "$q y (no terminal: yes)"
+        fi
+        printf '%s\n' "$choice" >"$DATA/character-select-answer.txt"
+        [[ $choice == no ]] && say '  Not installed. To get it later: character_select = yes in data/coop-options.ini.'
+    fi
+    dir=$GAME/mods/$folder
+    if [[ $choice == no ]]; then
+        if [[ -f $dir/coop-charsel.txt ]] && charsel_save_previous "$folder"; then say 'Character Select: taken out (character_select = no).'; fi
+        return 0
+    fi
+    want="$rel $zsha $osha ${isha:--}"
+    if [[ -d $dir && ! -f $dir/coop-charsel.txt ]]; then say "Character Select: your own copy in $dir is used as it is."; return 0; fi
+    if [[ -d $dir/romfs && $(head -n1 "$dir/coop-charsel.txt" 2>/dev/null) == "$want" ]]; then say "Character Select $rel -> $dir (there already)"; return 0; fi
+    dl=$B/charsel new=$GAME/mods/_$folder.new
+    mkdir -p "$dl" "$GAME/mods"
+    local free_kb
+    free_kb=$(df -Pk "$GAME/mods" | awk 'NR == 2 { print $4 }')
+    if [[ -n $free_kb && $free_kb -lt $((3 * 1024 * 1024)) && ! ( -f $dl/$zip && $(sha256_of "$dl/$zip") == "$zsha" ) ]]; then
+        why='too little disk space (about 3 GB free needed)'
+    elif [[ ! -f $dl/$zip || $(sha256_of "$dl/$zip") != "$zsha" ]] && kit_offline "$offline"; then
+        why=offline
+    else
+        # (fetch_verified always downloads: a file here already with the pinned SHA-256 is used as it is)
+        charsel_get() { [[ -f $1 && $(sha256_of "$1") == "$2" ]] && return 0; say "  downloading ${1##*/} ..."; fetch_verified "$1" "$2" "$3"; }
+        charsel_get "$dl/$zip" "$zsha" "$url/$zip" || why="the download of Snail's release failed ($KIT_FETCH_WHY)"
+        [[ -z $why ]] && { charsel_get "$dl/characters.json" "$osha" "$ourl" || why="the download of characters.json failed ($KIT_FETCH_WHY)"; }
+        [[ -z $why && -n $iurl ]] && { charsel_get "$dl/code.ips" "$isha" "$iurl" || why="the download of the newer code patch failed ($KIT_FETCH_WHY)"; }
+    fi
+    if [[ -z $why ]]; then
+        rm -rf "$new" && mkdir -p "$new"
+        # (the zip: <release>/mods/OoT Character Select/{romfs,exefs}; only that folder is taken, by Python's zipfile:
+        # no unzip on every system. Names with '..' or a leading '/' are refused)
+        if ! "$PY" -I -B -c '
+import os, sys, zipfile, shutil
+z, top, out = sys.argv[1], sys.argv[2].rstrip("/") + "/", sys.argv[3]
+with zipfile.ZipFile(z) as f:
+    for i in f.infolist():
+        if not i.filename.startswith(top) or i.is_dir():
+            continue
+        rel = i.filename[len(top):]
+        if not rel or rel.startswith("/") or ".." in rel.split("/"):
+            sys.exit("bad name in the zip: " + i.filename)
+        dst = os.path.join(out, *rel.split("/"))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with f.open(i) as a, open(dst, "wb") as b:
+            shutil.copyfileobj(a, b, 1 << 20)
+' "$dl/$zip" "$zfolder" "$new" || [[ ! -d $new/romfs ]]; then
+            why="unpacking $zip failed"
+        else
+            cp -f "$dl/characters.json" "$new/characters.json"
+            if [[ -n $iurl ]]; then
+                local code=("$new"/exefs/*.ips)
+                if ((${#code[@]} == 1)) && [[ -f ${code[0]} ]]; then cp -f "$dl/code.ips" "${code[0]}"
+                else why="the release has ${#code[@]} code patches, not one: the newer one has no place"; fi
+            fi
+        fi
+        if [[ -z $why ]]; then
+            printf '%s\n' "$want" >"$new/coop-charsel.txt"
+            printf '%s\n' "OoT Character Select $rel by snaildev99 (Snail): https://github.com/snaildev99/OoT-Character-Select" \
+                'Downloaded by the Squadala co-op kit from his own release page onto this PC; the kit carries none of its files.' \
+                'Its code is under the MIT licence (Copyright (c) 2026 snaildev99; LICENSE.txt here when it could be fetched).' \
+                'The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.' \
+                "Switch it off in the game's Mods tab, or set character_select = no in data/coop-options.ini to take it out." >"$new/CREDITS-coop.txt"
+            curl -fsSL --max-time 30 -o "$new/LICENSE.txt" "https://raw.githubusercontent.com/snaildev99/OoT-Character-Select/$rel/LICENSE" 2>/dev/null || rm -f "$new/LICENSE.txt"
+            # (what was there is kept until the game is built with the new one: charsel_undo / charsel_confirm)
+            if charsel_save_previous "$folder" && mv "$new" "$dir"; then
+                rm -f "$dl/$zip"
+            else
+                charsel_undo
+                why='it could not be put in place: close the game and start again'
+            fi
+        fi
+        rm -rf "$new"
+    fi
+    if [[ $why == offline ]]; then say 'offline: Character Select is downloaded at the next start with internet; the game starts without it.'
+    elif [[ -n $why ]]; then warn "Character Select was not installed: $why. The game and co-op work without it; start again to retry (character_select = no in data/coop-options.ini stops it)."
+    else say "Character Select $rel by Snail -> $dir (on; the Mods tab switches it off)"
+    fi
+    return 0
+}
+((check_only)) || charsel_step
+
 game_stamp=$GAME/coop-built-from.txt
 # The mods' code patches the game is built with (patches 0034/0035: mods/.../exefs/*.ips and *.pchtxt, folders starting
 # with '-', '_' or '.' left out), with the Mods tab's list (its switches and order decide which go in): a new, changed or
@@ -268,33 +423,46 @@ if [[ -n $game ]]; then
     fi
 fi
 
+# The game's build; game_fail stops it with its reason. After charsel_step changed the mods folder, a build that fails
+# puts that folder back (charsel_undo) and the game starts as it was when that leaves it as built (review-geno-0118);
+# else the start stops as before.
+game_fail() { game_why=$*; return 1; }
+game_build() {
+        ((${#game_args[@]})) || { game_fail 'No game files given.'; return 1; }
+        step 'Checking your game files'
+        make_game "${game_args[@]}" --check ||
+            { game_fail 'Longshot cannot build from these files (it said why above). Co-op needs the game program 0400486024DEC000, update v131072, build e0f3ccfa: dump that version of your game and give its .nup.'; return 1; }
+        if ((check_only)); then say ''; say 'Your game files are right. Start again without --check-only to build.'; exit 0; fi
+        printf '%s\n' "$game" >"$remembered"
+        free_kb=$(df -Pk "$DATA" | awk 'NR == 2 { print $4 }')
+        if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
+            warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
+        fi
+        step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
+        build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
+        [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
+        # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
+        # renderer with it; the license was accepted above, data/dlss.txt)
+        ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
+        mkdir -p "$GAME"
+        ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
+        # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
+        no_dlss_hint=''
+        ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
+        make_game "${build_args[@]}" || { game_fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"; return 1; }
+        [[ -n $(kit_game_exe) ]] || { game_fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"; return 1; }
+        printf '%s' "$game_want" >"$game_stamp"
+}
 if ((ready && !rebuild && !check_only)); then
     step 'The game: built already'
+    charsel_confirm
+elif game_build; then
+    charsel_confirm
+elif charsel_undo && game_want="$src_stamp$(exefs_stamp)" && [[ -n $(kit_game_exe) && $(cat "$game_stamp" 2>/dev/null) == "$game_want" ]]; then
+    warn "$game_why"
+    warn 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again; character_select = no in data/coop-options.ini stops it).'
 else
-    ((${#game_args[@]})) || fail 'No game files given.'
-    step 'Checking your game files'
-    make_game "${game_args[@]}" --check ||
-        fail 'Longshot cannot build from these files (it said why above). Co-op needs the game program 0400486024DEC000, update v131072, build e0f3ccfa: dump that version of your game and give its .nup.'
-    if ((check_only)); then say ''; say 'Your game files are right. Start again without --check-only to build.'; exit 0; fi
-    printf '%s\n' "$game" >"$remembered"
-    free_kb=$(df -Pk "$DATA" | awk 'NR == 2 { print $4 }')
-    if [[ -n $free_kb && $free_kb -lt $((60 * 1024 * 1024)) && ! -d $WORK/sa ]]; then
-        warn "only $((free_kb / 1024 / 1024)) GB free here; the first build wants about 60 GB."
-    fi
-    step 'Building the game (15 to 60 minutes, once; the PC stays usable)'
-    build_args=("${game_args[@]}" --out "$GAME" --work "$WORK" --language "$language" --log "$LOGS/build.log")
-    [[ -n $jobs ]] && build_args+=(--jobs "$jobs")
-    # (NVIDIA DLSS: make_game.py fetches NVIDIA's SDK into data/work/ngx-sdk, only what is missing, and builds the
-    # renderer with it; the license was accepted above, data/dlss.txt)
-    ((want_dlss)) && build_args+=(--fetch-ngx-sdk --accept-nvidia-license)
-    mkdir -p "$GAME"
-    ((want_dlss)) && export LONGSHOT_NGX_SDK=$WORK/ngx-sdk
-    # (make_game.py's own words for a failed SDK download are the Builder's, "untick NVIDIA DLSS": the kit's way is --no-dlss)
-    no_dlss_hint=''
-    ((want_dlss)) && no_dlss_hint=" This build was with NVIDIA DLSS: if NVIDIA's SDK could not be downloaded (offline?), bash start-squadala.sh --no-dlss builds the game without it."
-    make_game "${build_args[@]}" || fail "The build stopped. Its log: $LOGS/build.log$no_dlss_hint"
-    [[ -n $(kit_game_exe) ]] || fail "The build finished but there is no game in $GAME. Its log: $LOGS/build.log"
-    printf '%s' "$game_want" >"$game_stamp"
+    fail "$game_why"
 fi
 
 # --- 5: co-op into the game ---------------------------------------------------------------------
@@ -397,6 +565,13 @@ mod=$GAME/mods/contents/0400486024DEC000/coop-puppet
 # (the pack tool's own files too: a pack made by another version of the tool is made again, as the
 # Windows kit's Test-KitPuppetPackStale does; the look files and the copies' marks change with it)
 pack_stamp="$src_stamp menus:1 tool:$(cd "$DATA/tools/puppet_pack" && LC_ALL=C sha256sum -- *.py | sha256sum | cut -d' ' -f1)"
+# (the Character Select mod's characters.json, which the pack's character puppets follow: put in, replaced or taken out
+# by charsel_step, it makes the pack again, as the Windows kit's Get-KitCharacterSelectSeen)
+for cs_json in "$GAME"/mods/*/characters.json; do
+    [[ -f $cs_json && -d ${cs_json%/*}/romfs/Model ]] || continue
+    [[ ${cs_json#"$GAME"/mods/} == [-_.]* ]] && continue
+    pack_stamp+=" characters:$(sha256_of "$cs_json")"; break
+done
 # A file the pack's manifest names that is gone (a pack tool stopped half way, a hand-copied pack): the look files
 # (coop_look/gear.bin, a colour's .bin) and each tunic's files, as the Windows kit's Get-KitPuppetPackGaps (pack-retry).
 pack_gap() {

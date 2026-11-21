@@ -108,6 +108,7 @@ Anyone can contribute: fork, branch, pull request. Every pull request is reviewe
 - [Fritchii](https://github.com/Frizti/Fritchii) by Frizti (GPL-3.0): the emulator co-op is built into.
 - [Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot) by Team MagicBean and contributors (GPL-3.0), whose changes are being merged into [Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) (NotRexed and contributors): the native PC build co-op also runs on ([docs/hookshot.md](docs/hookshot.md)).
 - [OOTRR](https://github.com/REALAZK/ootrr) by REALAZK (GPL-3.0-or-later): the randomizer the kit downloads and runs on the player's PC ([docs/mods.md](docs/mods.md#the-randomizer)).
+- [OoT Character Select](https://github.com/snaildev99/OoT-Character-Select) by snaildev99 (Snail; its code MIT): play as the game's other characters. Snail distributes it: at its first start the kit asks whether to get it (yes after 15 s; `character_select` in `coop-options.ini`), then downloads it from his own release page onto your PC and switches it on in the Mods tab ([docs/mods.md](docs/mods.md#character-select)). The kit carries none of its files; The Legend of Zelda: Ocarina of Time and its characters belong to Nintendo.
 - [Nucleus Co-op](https://github.com/SplitScreen-Me/splitscreenme-nucleus): the split-screen tool our handler (`tools/nucleus`) is for; not shipped with the kit.
 - Other code and libraries we use, and their licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -124,6 +125,7 @@ People who contributed code:
 - TheProjectNavi (problem reports, PR #259; crossplay: each game names its build to the server, PR #260; solo or multiplayer saves, from PR #236; a guest back on the title asks for the host's save again, PR #278; lifts and platforms wait for a player riding them, PR #279; skin gear, PR #276; skin effects, PR #277).
 - Waso2101 (custom character models as puppet skins, PR #254; co-author of skin effects, PR #277).
 - DrHammer79 (study tools for mapping the game, PRs #265, #266 and #269; room names for Host and Join through a relay, PRs #267, #268 and #270; host approval for joiners, `/allow` and `/deny`, PR #273; the game's own UI system documented and the pack tool that adds parts and text to its layouts, PRs #271 and #272; the pause menu's Multiplayer tab and page, PRs #274, #275, #281, #284, #285, #286, #288 (games on this network, auto-rejoin) and #289 (stay through a stall); host approval for a late joiner, PR #290; mod API versions 2 and 3, PRs #282 and #283).
+- snaildev99 (Character Select characters on the other players' puppets, with their Customize options, PR #299; the build half of Longshot #134 put onto v3.0.0 so mods' code patches are built into the game, our patch 0034; and OoT Character Select itself, which the kit offers to download).
 
 Every contributor whose pull request is merged is added here. GitHub's list: [contributors](https://github.com/daurosk/oot-remake-multiplayer/graphs/contributors).
 

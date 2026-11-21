@@ -169,6 +169,29 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
 # and the first build when there is no game yet (the game files are asked for once and remembered). The long
 # builds (no game, a moved game, another pin) ask Y/n first; a module antivirus took is said, not built.
 if ($Hookshot) {
+    # OoT Character Select by Snail (hookshot\CHARACTER-SELECT.txt; owner, 0.11.8): asked once, downloaded from his
+    # own release onto this PC and put in the game's mods folder before the check below, so the game build that check
+    # asks for takes in his code patch (our patches 0034/0035) and the pack its characters. A first start has no game
+    # yet: the step runs after the first build, and the second pass builds the mod's code in (a few minutes).
+    $csDone = $false
+    $csMods = ''
+    # A failed or declined build after the step changed the mods folder (review-geno-0118): the folder goes back to what
+    # the game was built with (Undo-KitCharacterSelect), and when that leaves nothing to build the game starts as it
+    # was. $true: start it. The player's answer stays, so the next start tries again.
+    function Restore-KitCharacterSelectStart {
+        if (-not $csMods) { return $false }
+        try { if (-not (Undo-KitCharacterSelect $kit $csMods)) { return $false } } catch { return $false }
+        Write-Host 'Character Select: the game could not be built with it, so it is taken back out for now and the game starts as it was (the next start tries again; character_select = no in coop-options.ini stops it).' -ForegroundColor Yellow
+        $n = Get-KitHookshotNeed $kit
+        return (-not $n -or $n -eq 'offline')
+    }
+    for ($pass = 1; $pass -le 2; $pass++) {
+    if (-not $csDone -and $exe) {
+        $csDone = $true
+        $csMods = Join-Path (Split-Path -Parent $exe) 'mods'
+        try { [void](Invoke-KitCharacterSelectStep $kit (Split-Path -Parent $exe)) }
+        catch { Write-Host "Character Select was not installed: $($_.Exception.Message). The game starts without it." -ForegroundColor Yellow }
+    }
     $need = Get-KitHookshotNeed $kit
     if ($need -eq 'offline') {
         # (no internet and only the randomizer's download left: the module step is not run again on every start)
@@ -179,23 +202,32 @@ if ($Hookshot) {
         Write-Host (Get-KitHookshotNeedText $need) -ForegroundColor Yellow
         exit 1
     }
+    $built = $true
     if ($need) {
         Write-Host (Get-KitHookshotNeedText $need $hsGame $hsOnly)
         # The long builds ask first (yes by itself after a minute, so an unattended start still builds).
         $question = Get-KitHookshotNeedQuestion $need
         if ($question -and -not (Read-YesNo "$question (then the game starts; closing this window cancels)" 60)) {
-            Write-Host $(if ($hsOnly) { 'Not now. Start "Start Squadala.bat" again when you want to set it up.' } else { 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.' })
-            exit 1
+            if (Restore-KitCharacterSelectStart) { $built = $false }
+            else {
+                Write-Host $(if ($hsOnly) { 'Not now. Start "Start Squadala.bat" again when you want to set it up.' } else { 'Not now. Build-Hookshot-Coop.bat sets it up (SETUP.md, "Play on Hookshot"); then start this again.' })
+                exit 1
+            }
+        } else {
+            $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+            & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "The co-op game could not be brought up to date (above: why). $hsRetry to try again."
+                if (Restore-KitCharacterSelectStart) { $built = $false }
+                else { Wait-AnyKey 60; exit 1 }
+            }
+            $hsGame = Get-KitHookshotGame $kit
+            $exe = Get-KitHookshotExe $hsGame
         }
-        $ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-        & $ps -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hookshot-build.ps1')
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "The co-op game could not be brought up to date (above: why). $hsRetry to try again."
-            Wait-AnyKey 60
-            exit 1
-        }
-        $hsGame = Get-KitHookshotGame $kit
-        $exe = Get-KitHookshotExe $hsGame
+    }
+    # (the game is built with the mods folder as it is now: the state kept for an undo goes)
+    if ($built -and $csMods) { try { Confirm-KitCharacterSelect $kit $csMods } catch { } }
+    if ($csDone -or -not $exe) { break }
     }
     if (-not $exe) {
         Write-Host "The co-op game isn't set up yet: none in $hsGame. $(if ($hsOnly) { 'Start ""Start Squadala.bat"" again and let it finish (SETUP.md).' } else { 'Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"").' })"
