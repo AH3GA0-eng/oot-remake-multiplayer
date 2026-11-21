@@ -78,11 +78,11 @@ constexpr std::uint64_t kCaptionLatest = 0x88;        // s32: the latest slot, -
 constexpr std::uint64_t kCaptionAnySave = 0x8e;       // u8: a save exists (Continue)
 constexpr std::uint64_t kCaptionAnyMq = 0x8f;         // u8: a Master Quest save exists
 // The title's buttons as OpenTitle.module arranges them (CoopTitleMenu::ArrangementFor), through the functions its
-// nodes end in (read from main): SeqOneShotRequestStopAnimationScreen queues a request on the screen's +0xb8, which the
-// game carries out with the layout at that object's +0x28 (main+0xbad070: the animation found by name, then stopped at
-// the frame if the frame is not past its last); SeqOneShotSetSLinkPropertyTitleBtnArrangementType calls the title's
+// nodes end in (read from main): SeqOneShotRequestStopAnimationScreen queues a request on the screen's queue (+0xb8),
+// which the screen's update carries out with the layout of the object at the screen's +0xf0 (CoopTitleMenu::
+// RequestsLayout; main+0xbad070: the animation found by name, then stopped at the frame if the frame is not past its
+// last); SeqOneShotSetSLinkPropertyTitleBtnArrangementType calls the title's
 // own setter. The texts go the way SetRowTexts sets the rows' (kPaneText), as SeqOneShotSetMessageScreen's do.
-constexpr std::uint64_t kTitleAnimLayout = 0xe0;      // the layout the screen's requests use (+0xb8, then +0x28)
 constexpr std::uint64_t kAnimFind = 0x43d870;         // main+: (layout, name) -> its animation by name, 0 none
 constexpr std::uint64_t kAnimPlayer = 0x20;           // an animation's player
 constexpr std::uint64_t kAnimLastFrame = 0x2d1340;    // main+: (player) -> s32: its last frame
@@ -442,8 +442,12 @@ const char* ArrangeTitle(void* ctx, std::uint64_t mgr) {
     if (!HasScratch()) return "this Hookshot has no patch 0004 scratch";
     if (screen == 0 || Read64(screen) != Main(kTitleVtable)) return "no title screen";
     const std::uint64_t layout = Read64(screen + kTitleLayout);
-    if (const std::uint64_t used = Read64(screen + kTitleAnimLayout); layout == 0 || used != layout) {
-        LOG_INFO(Core, "coop: title: save list: the title's layout {:#x}, its requests' {:#x}", layout, used);
+    // (the layout the game's own OpenTitle requests use, the walk the screen's update makes: the same layout or nothing
+    // is called, so a wrong screen read from main changes nothing)
+    const std::uint64_t used = CoopTitleMenu::RequestsLayout([](std::uint64_t a) { return Read64(a); }, screen);
+    if (layout == 0 || used != layout) {
+        LOG_INFO(Core, "coop: title: save list: the title's layout {:#x}, its requests' {:#x} (their owner {:#x})",
+                 layout, used, Read64(screen + CoopTitleMenu::kScreenRequestsOwner));
         return "the title's layout is not the one its requests use";   // (not the screen read from main)
     }
     std::uint8_t any = 0;
