@@ -1235,6 +1235,11 @@ bool Start(const HosCoopApi* api) {
         return false;
     }
     UseInputSelect();
+    // (the player list's size as coop-options.ini says, now that ApplyKitOptions put it in the process's variables:
+    // read at the module's load, it was always Auto without the kit's launcher, a test run 2026-11-20)
+    SetHudSize(Env("LICHII_COOP_HUD_SIZE"));
+    g_map_players.store(!EnvOff("LICHII_COOP_MAP"));   // (the same for the map's players and names)
+    g_map_names.store(!EnvOff("LICHII_COOP_MAP_NAMES"));
     CoopFiles::CheckName();  // never the PC's user or PC name as the co-op name (coop_name_privacy.h), before coop.ini is read
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;
