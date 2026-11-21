@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -31,6 +32,7 @@
 #include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_lan.h"
+#include "coop_map_page.h"
 #include "coop_lan_net.h"
 #include "coop_mod_screens.h"
 #include "coop_pause.h"
@@ -38,6 +40,8 @@
 #include "coop_runtime.h"
 #include "coop_lobby_game.h"
 #include "coop_look.h"
+#include "coop_char_colours.h"
+#include "coop_snail_custom.h"
 #include "hos_coop_menu.h"
 #include "coop_longshot_settings.h"
 #include "coop_lobby.h"
@@ -102,6 +106,8 @@ std::array<std::atomic<int>, kMenuMost + 1> g_menu_line_row{};
 std::array<std::atomic<bool>, kMenuMost + 1> g_menu_line_pick{};
 // The page co-op's menu shows for this view (CoopPause::OpenNative; -1 none): FollowMenu's, on the pad's thread.
 std::atomic<int> g_menu_open{-1};
+std::atomic<int> g_strip_state{0};            // row 199: the tab strip's state at its last update
+std::atomic<std::uint64_t> g_strip_seen_ms{0};   // and when (GameMenuUp)
 // Co-op's menu types into its row (a name, a port, the relay): the list's rows are the typing keys then, as for the
 // page's own fields (TypingLines): the key picked, Letter's letter (its place in kMenuLetters) and the rows shown
 // (empty while it does not type). g_mutex.
@@ -287,14 +293,11 @@ std::uint64_t g_live_gen = 0, g_live_ms = 0;
 // message file loaded again (another language, the archive reloaded) is found where it is now, never written through
 // an old address. Ours when its length is the placeholder's and its text is the placeholder's dots, or our own words at
 // the address we wrote before (the same file still loaded).
-bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
-    if (slot < 0 || slot >= kLiveSlots) return false;   // (a slot past the table: never written through)
-    LiveSlot& l = g_live[slot];
+// (any message file of the pack's placeholders: `file` "LayoutMsg/PlusMenu_00" and "Coop_Live_NN" for the pages' rows;
+// "LayoutMsg/CharacterCustomize_00" and "Coop_Custom_NN" for Character Select's Customize screen, 0.11.9)
+bool LiveLookupIn(void* ctx, LiveSlot& l, const std::string& file, const char* label, std::uint64_t gen) {
     if (l.bad) return false;
     if (l.gen == gen && l.text != 0) return true;
-    char label[16];
-    std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
-    const std::string file = "LayoutMsg/PlusMenu_00";
     std::uint8_t b[0x80] = {};
     const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
     if (base == 0) return false;
@@ -333,12 +336,31 @@ bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
 
 // `utf8` (at most kLivePlaceholder - 1 bytes) in the text pane at `path` ("Part/Part/Pane"), through slot `slot`.
 // True when shown.
+bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
+    if (slot < 0 || slot >= kLiveSlots) return false;   // (a slot past the table: never written through)
+    char label[16];
+    std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
+    return LiveLookupIn(ctx, g_live[slot], "LayoutMsg/PlusMenu_00", label, gen);
+}
+
+// `utf8` in the text pane at `path` of `layout`, through the placeholder `l` (looked up with LiveLookupIn). `force`:
+// set again even when it shows these words (another pane given the same placeholder). True when shown.
+bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSlot& l, const std::string& utf8,
+                bool force = false);
+
 bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::string& path, int slot,
               const std::string& utf8) {
     if (slot < 0 || slot >= kLiveSlots) return false;
     LiveSlot& l = g_live[slot];
     if (l.shown == utf8) return true;
     if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || !LiveLookup(ctx, slot, gen)) return false;
+    return LiveTextIn(ctx, layout, path, l, utf8);
+}
+
+bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSlot& l, const std::string& utf8,
+                bool force) {
+    if (!force && l.shown == utf8) return true;
+    if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || l.text == 0) return false;
     // [0x00] the path lookup's layout, [0x10] the path, [0x60] the reference.
     std::uint8_t b[0x80] = {};
     std::memcpy(b + 0x10, path.c_str(), path.size() + 1);
@@ -363,6 +385,117 @@ bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::str
     if (!CoopRuntime::Write(base + 0x60, ref, sizeof ref)) return false;
     if (!Call(ctx, kPaneSetMsg, pane, base + 0x60, 0)) return false;
     l.shown = utf8;
+    return true;
+}
+
+// --- Character Select's Customize screen with co-op's customization (0.11.9, coop_snail_custom.h) ---
+// His screen (layout CharacterCustomize_00) is known by its own panes, once per layout. While it is open its texts are
+// co-op's (through the pack's placeholders in his message file, LayoutMsg/CharacterCustomize_00 Coop_Custom_00..12,
+// added at the kit's start by merge_tables.py), its keys co-op's but the d-pad, B and -. Fallback: when his texts
+// cannot be set (no placeholders: a start without the merge), co-op keeps his keys but the d-pad, B and - from the
+// game there, so none of his six dead rows changes anything. g_snail_mutex (the game's screen updates and the pad).
+constexpr int kSnailSlots = 13;   // 0 the title, 1..6 the labels, 7..12 the values
+constexpr std::uint64_t kSnailStaleMs = 300;
+std::mutex g_snail_mutex;
+CoopSnailCustom::Driver g_snail;
+bool g_snail_open = false, g_snail_fallback = false;
+std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_snail_gen = 0, g_snail_pad_last = 0;
+std::map<std::uint64_t, bool> g_snail_layouts;   // a layout: his Customize screen's or not (looked up once)
+std::array<LiveSlot, kSnailSlots> g_snail_live{};
+CoopSnailCustom::Texts g_snail_shown;
+
+void SnailClose(const char* why) {
+    if (!g_snail_open) return;
+    g_snail_open = false;
+    const bool driven = g_snail.Active();
+    g_snail.Close();
+    if (driven) CoopLook::ApplyOnUnpause();   // (Link wears the look chosen, as when co-op's Customize closes)
+    LOG_INFO(Core, "coop: characters: Character Select's Customize screen left ({})", why);
+}
+
+bool SnailWrite(void* ctx, const CoopSnailCustom::Texts& t) {
+    for (int i = 0; i < kSnailSlots; ++i) {
+        char label[20];
+        std::snprintf(label, sizeof label, "Coop_Custom_%02d", i);
+        if (!LiveLookupIn(ctx, g_snail_live[static_cast<std::size_t>(i)], "LayoutMsg/CharacterCustomize_00", label,
+                          g_snail_gen)) {
+            return false;
+        }
+    }
+    bool ok = LiveTextIn(ctx, g_snail_layout, "T_Head_00", g_snail_live[0], t.title);
+    char path[24];
+    for (int f = 0; f < CoopSnailCustom::kOptions; ++f) {
+        const std::size_t k = static_cast<std::size_t>(f);
+        std::snprintf(path, sizeof path, "T_Label_%02d", f);
+        ok = LiveTextIn(ctx, g_snail_layout, path, g_snail_live[1 + k], t.labels[k]) && ok;
+        // (every value pane of the option: whichever his "Val" frame shows, co-op's value shows)
+        for (int v = 0; v < 16; ++v) {
+            std::snprintf(path, sizeof path, "T_Val_%02d_%02d", f, v);
+            if (!LiveTextIn(ctx, g_snail_layout, path, g_snail_live[7 + k], t.values[k], v > 0)) break;
+        }
+    }
+    return ok;
+}
+
+// One update of any game screen (OnScreen, before the kinds of ours): his Customize screen's.
+void SnailScreen(void* ctx, std::uint64_t screen) {
+    if (ctx == nullptr || !CanCall()) return;
+    const std::uint64_t layout = Read<std::uint64_t>(screen + kScreenLayout);
+    if (layout == 0) return;
+    std::lock_guard lock(g_snail_mutex);
+    auto known = g_snail_layouts.find(layout);
+    if (known == g_snail_layouts.end()) {
+        if (g_snail_layouts.size() > 512) g_snail_layouts.clear();   // (layouts come and go: a bound)
+        const bool his = (FindOwnPane(ctx, layout, "T_Val_00_00") != 0 &&
+                                       FindOwnPane(ctx, layout, "T_Label_00") != 0 &&
+                                       FindOwnPane(ctx, layout, "N_Mark_00") != 0);
+        known = g_snail_layouts.emplace(layout, his).first;
+        if (his) LOG_INFO(Core, "coop: characters: Character Select's Customize screen found (layout {:#x})", layout);
+    }
+    if (!known->second) return;
+    const int state = Read<std::uint8_t>(screen + kScreenState);
+    if (state != 1 && state != 2) {
+        SnailClose("closed");
+        return;
+    }
+    g_snail_seen_ms = NowMs();
+    if (!g_snail_open || screen != g_snail_screen || layout != g_snail_layout) {
+        g_snail_open = true, g_snail_fallback = false;
+        g_snail_screen = screen, g_snail_layout = layout, ++g_snail_gen;
+        g_snail_shown = {};
+        for (auto& l : g_snail_live) l.shown.clear();
+        g_snail.Open(CoopLook::Shown(), CoopCharColours::ShownCharacter());
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened: co-op's customization in it");
+    }
+    if (!g_snail.Active()) return;
+    if (auto look = g_snail.TakeChange()) CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
+    const auto t = g_snail.Shown();
+    if (t == g_snail_shown) return;
+    if (!SnailWrite(ctx, t)) {
+        g_snail.Close();   // (his screen stays; its keys are kept from the game: the fallback)
+        g_snail_fallback = true;
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: its texts cannot be set (no co-op "
+                       "placeholders in its messages: start the game from the kit): its keys are kept from it");
+        return;
+    }
+    g_snail_shown = t;
+}
+
+// The pad while his screen is open: the buttons the game gets (or nothing to do: false).
+bool SnailPad(std::uint64_t in, std::uint64_t* out) {
+    std::lock_guard lock(g_snail_mutex);
+    if (g_snail_open && NowMs() - g_snail_seen_ms > kSnailStaleMs) SnailClose("not seen");
+    const std::uint64_t down = in & ~g_snail_pad_last;
+    g_snail_pad_last = in;
+    if (!g_snail_open) return false;
+    using namespace CoopSnailCustom;
+    constexpr std::uint64_t kDirs = kUp | kDown | kLeft | kRight | kStickUp | kStickDown | kStickLeft | kStickRight;
+    std::uint64_t pass = kDirs | kB | kMinus | kPadPlus;
+    if (g_snail.Active()) {
+        g_snail.Pad(down);
+        if (g_snail.Editing()) pass &= ~(kB | kMinus);   // (B leaves co-op's mixer, not his screen)
+    }
+    *out = in & pass;
     return true;
 }
 
@@ -451,7 +584,7 @@ SessionView ViewNow(View view) {
     if (const std::string& title = CoopWindowBrand::TitleOf(CoopRuntime::GameDir()); title != CoopWindowBrand::kTitle) {
         v.version = title;   // the kit's release (0.11.6), as the title bar
     }
-    v.confirm_leave = Confirming(View::kMain, kRowLeave);
+    v.confirm_leave = Confirming(View::kHost, kHostRowStop) || Confirming(View::kJoin, kJoinRowLeave);
     v.confirm_kick = Confirming(View::kPlayerHost, 2);
     v.confirm_ban = Confirming(View::kPlayerHost, 3);
     v.confirm_click = g_confirm_by_mouse.load();
@@ -1160,6 +1293,9 @@ void PutModel(std::uint64_t actor, const float pos[3], const float rot[9]) {
 }
 
 void MenuModel(void* ctx, const Facts& f, bool want) {
+    // (row 207: with Character Select, never the menu's Link model forced here: its code patches that model's making
+    // for its own pages, and Customize is in its screen)
+    want = want && !CoopCharColours::ModPresent();
     const std::uint64_t base = CoopRuntime::MainBase();
     const std::uint64_t manager = Read<std::uint64_t>(base + kMenuManager);
     const std::uint64_t obj = manager != 0 ? Read<std::uint64_t>(manager + kPouchObject) : 0;
@@ -1413,7 +1549,8 @@ bool SystemOwn(std::uint64_t pane) {
 void SystemButtons(void* ctx) {
     const std::uint64_t now = NowMs();
     const int want = (g_page.Usable() && g_mp_button != 0 ? 1 : 0) | (g_page.SettingsUsable() && g_settings_button != 0 ? 2 : 0) |
-                     (g_page.Usable() && g_cl_button != 0 ? 4 : 0);
+                     (g_page.Usable() && g_cl_button != 0 && !CoopCharColours::ModPresent() ? 4 : 0);   // (row 207: with
+                                                                // Character Select, Customize is in its own screen)
     const bool over = g_page.Shown();
     if (want != g_settings_button_shown || over != g_sys_hidden) {
         if (over != g_sys_hidden) {
@@ -1559,6 +1696,138 @@ void PlaySound(void* ctx, std::uint64_t screen, const char* name) {
     const std::uint64_t at = g_api->scratch(ctx, name, std::strlen(name) + 1);
     if (at != 0) Call(ctx, kScreenSound, screen, at);
 }
+
+// --- The - menu's tabs of ours (0.11.9): Multiplayer, Lobby, Mods, right of Map ---
+// The pack's Pa_Category_04..06 (pause_menu.py add_tab, stored hidden; the strip counts its Pa_Category_%02d parts up
+// to the first missing, so ours follow the game's four) found once per opening of the strip, with the game's tabs to
+// place ours one game step apart after the - menu's last shown tab: slot 3 with Character Select's header (his code
+// shows four - tabs: Characters, Key Items, Threads of Time, Map), else slot 2 (the game hides slot 3 there). g_mutex.
+std::uint64_t g_strip_gen = 0;
+bool g_strip_looked = false;
+std::array<std::uint64_t, 4> g_game_tabs{};
+std::array<float, 4> g_game_tabs_x{};
+std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
+bool g_minus_ok = false, g_minus_shown = false;
+// The strip's L and R labels (T_BtnL_00, T_BtnR_00) and their own places; whether the row is laid out as ours now.
+std::array<std::uint64_t, 2> g_strip_btns{};
+std::array<float, 2> g_strip_btns_x{};
+bool g_strip_moved = false;
+
+void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
+    if (gen != g_strip_gen) {
+        g_strip_gen = gen, g_strip_looked = false;
+        g_game_tabs = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_ok = false, g_minus_shown = false;
+        g_strip_btns = {}, g_strip_moved = false;
+    }
+    if (g_strip_looked || !calls || f.layout == 0) return;
+    g_strip_looked = true;
+    std::uint64_t table = 0;
+    Call(ctx, kPaneTable, f.layout + 0x40, 0, 0, 0, 0, &table);
+    for (int i = 0; i < 4; ++i) {
+        char name[16];
+        std::snprintf(name, sizeof name, "Pa_Category_%02d", i);
+        const std::uint64_t tab = FindOwnPane(ctx, f.layout, name);
+        if (IsPart(tab)) {
+            g_game_tabs[static_cast<std::size_t>(i)] = tab;
+            g_game_tabs_x[static_cast<std::size_t>(i)] = Read<float>(tab + 0x6c);
+        }
+    }
+    g_minus_ok = g_game_tabs[2] != 0;
+    for (int i = 0; i < 2; ++i) {
+        const std::uint64_t b = FindOwnPane(ctx, f.layout, i == 0 ? "T_BtnL_00" : "T_BtnR_00");
+        g_strip_btns[static_cast<std::size_t>(i)] = b;
+        if (b != 0) g_strip_btns_x[static_cast<std::size_t>(i)] = Read<float>(b + 0x6c);
+    }
+    for (int i = 0; i < kMinusTabs; ++i) {
+        char name[16];
+        std::snprintf(name, sizeof name, "Pa_Category_%02d", 4 + i);
+        g_minus_panes[static_cast<std::size_t>(i)] = FindOwnPane(ctx, f.layout, name);
+        g_minus_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "N_MenuChangeTextIn_00");
+        g_minus_ok = g_minus_ok && IsPart(g_minus_panes[static_cast<std::size_t>(i)]);
+    }
+    LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours (Pa_Category_04..06): {}",
+             g_minus_ok ? "found" : "not in the pack (the - menu stays the game's)");
+}
+
+// The strip's Do for ours: shown while the - menu's strip is open, filled once per opening as - tabs with our words,
+// ours lit (the game's Map then not). WHAT THE LANE RUN MUST CONFIRM: the strip's tab objects 4..6 take kTabFill with a
+// - category's look, and which screen draws these tabs' pages (R1); until then COOP_TEST_MINUS_TABS=1 only.
+void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
+    const std::uint64_t tabs = Read<std::uint64_t>(f.screen + kStripTabArray);
+    if (f.layout == 0 || tabs == 0 || !g_minus_ok || !d.set_minus) return;
+    g_minus_shown = d.minus_shown;
+    for (int i = 0; i < kMinusTabs; ++i) SetVisible(ctx, g_minus_panes[static_cast<std::size_t>(i)], d.minus_shown);
+    if (!d.minus_shown) return;
+    if (static_cast<int>(Read<std::uint32_t>(f.screen + kStripTabs)) < 4 + kMinusTabs) return;   // (an older strip)
+    for (int i = 0; i < kMinusTabs; ++i) {
+        const std::uint64_t tab = Read<std::uint64_t>(tabs + 8 * static_cast<std::uint64_t>(4 + i));
+        if (tab == 0) continue;
+        if (d.fill_minus) {
+            Call(ctx, kTabFill, tab, kMapCategory, 1);   // (a - tab's look, as the game fills its own)
+            char path[48], label[48];
+            std::snprintf(path, sizeof path, "Pa_Category_%02d/T_Text_00", 4 + i);
+            std::snprintf(label, sizeof label, "Pa_Category_%02d-T_Text_00", 4 + i);
+            SetText(ctx, f.layout, path, "LayoutMsg/MenuOverlay_00", label);
+            Call(ctx, kTabOpen, tab, 0);
+            if (const std::uint64_t w = g_minus_words[static_cast<std::size_t>(i)]; w != 0) CallAlpha(ctx, w, 1.0f);
+        }
+        Call(ctx, kTabLight, tab, d.minus_lit == i ? 1 : 0, 0);
+    }
+    // (the game's Map tab: unlit while one of ours is; its slot is the last of the game's shown)
+    for (int slot = 2; slot <= 3; ++slot) {
+        const std::uint64_t t = Read<std::uint64_t>(tabs + 8 * static_cast<std::uint64_t>(slot));
+        if (t != 0 && d.minus_lit >= 0) Call(ctx, kTabLight, t, 0, 0);
+    }
+    if (d.fill_minus) LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours shown and filled");
+    if (d.minus_slide != 0) {
+        LOG_INFO(Core, "coop: pause tab: the - menu: {} ({})", d.minus_lit >= 0 ? kMinusTabNames[d.minus_lit] : "Map",
+                 d.minus_slide > 0 ? "R" : "L");
+    }
+}
+
+// The - strip as one row (R1, 2026-11-21: ours placed after Map ran past the strip's right end, Mods not seen, and the
+// game's R label stayed on Multiplayer): the game's shown tabs and ours centred where the game's were, one game step
+// apart, the L and R labels as far from the row's ends as the game has them. Everything back at the game's own places
+// whenever ours are not shown (the + menu uses the same strip). Own X (+0x6c) only, as the game's own place setter.
+// g_mutex.
+void FollowMinus(void* ctx) {
+    const auto put_back = [&] {
+        if (!g_strip_moved) return;
+        g_strip_moved = false;
+        for (std::size_t i = 0; i < g_game_tabs.size(); ++i) {
+            if (g_game_tabs[i] != 0) PlacePane(ctx, g_game_tabs[i], g_game_tabs_x[i]);
+        }
+        for (std::size_t i = 0; i < g_strip_btns.size(); ++i) {
+            if (g_strip_btns[i] != 0) PlacePane(ctx, g_strip_btns[i], g_strip_btns_x[i]);
+        }
+    };
+    if (!g_minus_shown || !g_minus_ok || g_game_tabs[0] == 0 || g_game_tabs[1] == 0) {
+        put_back();
+        return;
+    }
+    // (the game's shown: slots 0..3 when Character Select's header shows slot 3, else 0..2)
+    const int game = g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0 ? 4 : 3;
+    const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
+    if (!std::isfinite(step) || step == 0.0f) return;
+    const float first = g_game_tabs_x[0], last = g_game_tabs_x[static_cast<std::size_t>(game - 1)];
+    const float centre = (first + last) / 2.0f;
+    const int n = game + kMinusTabs;
+    const auto x_of = [&](int k) { return centre + step * (static_cast<float>(k) - static_cast<float>(n - 1) / 2.0f); };
+    for (int k = 0; k < game; ++k) PlacePane(ctx, g_game_tabs[static_cast<std::size_t>(k)], x_of(k));
+    const float y = Read<float>(g_game_tabs[0] + kPaneOwnY);
+    for (int i = 0; i < kMinusTabs; ++i) {
+        const std::uint64_t pane = g_minus_panes[static_cast<std::size_t>(i)];
+        PlacePane(ctx, pane, x_of(game + i));
+        if (std::isfinite(y) && Read<float>(pane + kPaneOwnY) != y) {
+            CoopRuntime::Write(pane + kPaneOwnY, &y, sizeof y);
+            Call(ctx, kPaneMoved, pane);
+        }
+    }
+    if (g_strip_btns[0] != 0) PlacePane(ctx, g_strip_btns[0], x_of(0) - (first - g_strip_btns_x[0]));
+    if (g_strip_btns[1] != 0) PlacePane(ctx, g_strip_btns[1], x_of(n - 1) + (g_strip_btns_x[1] - last));
+    g_strip_moved = true;
+}
+
 
 // The row of ours under the game's cursor frame (0..4): the pages screen's focused button, by the focus manager's walk
 // (CoopModScreens::FocusedButton, as the mods' screens) and its name, System's Pa_Button_00..04 (RowOfButton); -1 none.
@@ -1988,6 +2257,7 @@ void Act(int row, int line = -1, bool clicked = false) {
     case RowAction::kViewLetIn: SetView(View::kLetIn); break;
     case RowAction::kViewJoin: SetView(View::kJoin); break;
     case RowAction::kViewSession: SetView(View::kSession); break;
+    case RowAction::kViewHost: SetView(View::kHost); break;
     case RowAction::kBack: SetView(BackOf(view)); break;
     case RowAction::kTeleport: CoopHook::SendChat("/teleport " + v.player_name); break;   // (as the Lobby tab's)
     case RowAction::kOwnVoice: CoopLobby::SetOwnMute(player, CoopLobby::kVoice, (v.own_mutes & kMuteVoice) == 0); break;
@@ -2235,6 +2505,31 @@ void TestPouch(std::uint64_t manager) {
     }
 }
 
+// The - menu research (ui-tabs-0119): with COOP_TEST_SCREEN_PROBE=1 every screen update is counted (Census) and the
+// changes logged, with the menu manager's Plus and Minus categories. Off: one cached read of the variable.
+static void CensusUpdate(std::uint64_t screen, std::uint64_t vtable_offset) {
+    static const bool on = [] {
+        const char* v = std::getenv("COOP_TEST_SCREEN_PROBE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (!on) return;
+    static std::mutex census_mutex;
+    static Census census;
+    Census::Menu m;
+    if (const std::uint64_t manager = Read<std::uint64_t>(CoopRuntime::MainBase() + kMenuManager); manager != 0) {
+        m.plus = Read<std::int32_t>(manager + kManagerPage);
+        m.minus = Read<std::int32_t>(manager + 0x52c);
+        m.minus_on = Read<std::uint8_t>(manager + 0x53c);
+    }
+    const int state = Read<std::uint8_t>(screen + kScreenState);
+    std::vector<std::string> lines;
+    {
+        std::lock_guard lock(census_mutex);
+        lines = census.Seen(vtable_offset, state, m, NowMs());
+    }
+    for (const auto& l : lines) LOG_INFO(Core, "coop: pause tab: {}", l);
+}
+
 void OnScreen(void* ctx, std::uint64_t screen) noexcept {
     try {
         if (screen == 0) return;
@@ -2245,7 +2540,13 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (vtable < base) return;
         Facts f;
         f.kind = KindOf(vtable - base);
+        CensusUpdate(screen, vtable - base);   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
+        SnailScreen(ctx, screen);              // (Character Select's Customize screen: co-op's customization in it)
         if (f.kind == Kind::kOther) return;   // (most updates: the HUD's and the other screens', once a frame each)
+        if (f.kind == Kind::kStrip) {   // (row 199: any thread may ask whether the menu is up, GameMenuUp)
+            g_strip_state = Read<std::uint8_t>(screen + kScreenState);
+            g_strip_seen_ms = NowMs();
+        }
         f.screen = screen;
         f.state = Read<std::uint8_t>(screen + kScreenState);
         if (f.kind != Kind::kBlocker) f.layout = Read<std::uint64_t>(screen + kScreenLayout);
@@ -2299,6 +2600,14 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
             // This opening's panes first, so the page is usable only with the panes of the screens updating now (an
             // undrawn page never takes System's A: MousePage -2).
             gen = g_page.Track(f);
+            if (f.kind == Kind::kStrip) {   // (the - menu's tabs of ours, 0.11.9: the pack's in this opening)
+                LookStrip(ctx, calls, f, gen);
+                static const bool minus_tabs = [] {   // (until R1 confirms their pages' screen: reports/ui-tabs-0119.md)
+                    const char* v = std::getenv("COOP_TEST_MINUS_TABS");
+                    return v != nullptr && v[0] == '1';
+                }();
+                g_page.SetMinusTabsUsable(minus_tabs && g_minus_ok && CanCall());
+            }
             if (!g_page.Shown()) SetView(View::kMain);
             // (B is ours in a view of the Multiplayer page, and in the Settings page's list)
             g_page.SetSubView(g_page.Which() == 1 ? g_set_row.load() >= 0 : ViewShown() != View::kMain);
@@ -2325,6 +2634,11 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
                     page_only.page_from = d.page_from, page_only.page_to = d.page_to;
                     ApplyPages(ctx, pages, page_only);   // (the pages' own update comes a frame later)
                 }
+            }
+            if (f.kind == Kind::kStrip && calls) {   // (the - menu's tabs of ours: set, kept after Map, their sound)
+                if (d.set_minus) ApplyMinus(ctx, f, d);
+                FollowMinus(ctx);
+                if (const char* sound = g_page.TakeStripSound()) PlaySound(ctx, screen, sound);
             }
             if (f.kind == Kind::kPages && calls) StepSlide(ctx, NowMs());   // (each update while the pages slide)
             if (f.kind == Kind::kPages && calls && now_shown && g_slide.dir == 0) KeepPageShown(ctx, g_page.Which());
@@ -2438,6 +2752,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             if (stick[0] > 20000) in |= kPadStickRight;
             if (stick[0] < -20000) in |= kPadStickLeft;
         }
+        if (std::uint64_t snail = 0; SnailPad(in, &snail)) return snail;   // (Character Select's Customize screen)
         bool typing = false;
         std::uint64_t out = 0;
         bool was = false, shown = false;
@@ -3261,6 +3576,32 @@ bool ClientCursor(float* fx, float* fy, bool* left) noexcept {
     } catch (...) {
         return false;
     }
+}
+
+void CensusFromMenuState() noexcept {
+    try {
+        static const bool on = [] {
+            const char* v = std::getenv("COOP_TEST_SCREEN_PROBE");
+            return v != nullptr && v[0] == '1';
+        }();
+        if (!on) return;
+        static std::uint64_t next_ms = 0;
+        if (NowMs() < next_ms) return;
+        next_ms = NowMs() + 50;
+        const auto menu = CoopMapPage::MenuState();
+        if (!menu) return;
+        const std::uint64_t base = CoopRuntime::MainBase();
+        for (std::uint32_t i = 0; i < menu->screen_count && i < menu->screens.size(); ++i) {
+            const std::uint64_t screen = menu->screens[i];
+            const std::uint64_t vtable = screen != 0 ? Read<std::uint64_t>(screen) : 0;
+            if (vtable >= base) CensusUpdate(screen, vtable - base);
+        }
+    } catch (...) {
+    }
+}
+
+bool GameMenuUp() noexcept {
+    return MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs());
 }
 
 int MousePage() noexcept {

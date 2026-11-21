@@ -105,6 +105,11 @@ struct Place {
     bool overridden = false;
 };
 
+// Row 198's guard: the textures found more than once among the game's (texture index, places), in index order. Your
+// own Link has one of each; a second is a copy holding the game's own texels (a puppet's, unmarked), which your
+// colour would be drawn over too.
+std::vector<std::pair<std::size_t, std::size_t>> Repeated(const std::vector<Place>& places);
+
 struct Search {
     std::vector<Place> places;
     std::size_t listed = 0;   // the game's textures of a fitting size
@@ -148,7 +153,13 @@ public:
         std::string start;
     };
 
-    explicit Wardrobe(Host host) : host_(std::move(host)) {}
+    // A Host missing a part never stops the game (0.11.9 lane crash: a Host copied after it was moved from had no
+    // file and no log, and the worker's first call threw out of its thread): no file is a pack without the
+    // colour's, no log says nothing, and with no textures Step does nothing.
+    explicit Wardrobe(Host host) : host_(std::move(host)) {
+        if (!host_.file) host_.file = [](const std::string&) { return std::optional<std::vector<std::uint8_t>>{}; };
+        if (!host_.log) host_.log = [](const std::string&) {};
+    }
     // The colour to wear from now on: "green" (the game's own) or a colour of
     // the pack. Any thread.
     void Wear(std::string colour);
@@ -201,6 +212,7 @@ private:
     bool said_nothing_found_ = false;
     std::string said_;                        // the last "no texture" line (said again when it changes)
     int said_count_ = 0;
+    std::string said_repeated_;   // (row 198's guard: the repeats last logged)
     int said_taken_ = 0;                      // "override(s) taken away" lines said (at most 20)
 };
 

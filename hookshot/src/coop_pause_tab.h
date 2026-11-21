@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -62,6 +63,11 @@ inline constexpr std::uint64_t kManagerPage = 0x530;   // s32: the Plus menu's c
 inline constexpr std::uint64_t kManagerAsked = 0x538;  // s32: the page asked for (the step's)
 inline constexpr int kSystemPage = 5;                  // the System page's category
 inline constexpr int kPlusMode = 1;
+inline constexpr int kMapCategory = 2;   // the - menu's Map page's category (its last tab: Key Items, Threads, Map)
+// The - menu's tabs of ours (0.11.9, the owner: Multiplayer, Local co-op and Mods are tabs right of Map), in order.
+inline constexpr int kMinusTabs = 3;
+// (the owner, 0.11.9: Character Select's Characters, then Multiplayer, Lobby (the online Find / Host / Join) and Mods)
+inline constexpr const char* kMinusTabNames[kMinusTabs] = {"Multiplayer", "Lobby", "Mods"};
 inline constexpr int kRows = 5;                        // the page's buttons (Pa_Button_00..04), System's too
 // The buttons of the pages made of System's layout with the pack's Longshot Settings button (Pa_Button_05: System's
 // last button, and Longshot Settings' sixth category row).
@@ -82,6 +88,7 @@ inline constexpr std::uint64_t kPaneOwnY = 0x70, kPaneScreenX = 0x4c, kPaneScree
 // strip's "text in" animation fades, from 0 to 1 in about 250 ms as the strip opens (seen in a run, 2026-11-19, on the
 // fourth tab's N_MenuChangeTextIn_00). kPaneAlpha takes it as its pane.
 inline constexpr std::uint64_t kTextAlphaBlock = 0xb0, kTextAlpha = 0xb0 + 0x74;
+inline constexpr float kFollowMost = 200.0f;   // the most our tab is moved from its own place to follow the fourth
 // (pane): the pane's place marked changed (bit 0x40 of its first word) and its matrices made again, as the game's own
 // place setter (main+0x20a3e0: (pane, x, y, z)) ends for a part after storing x and y at +0x6c; nothing for a pane whose
 // +0xa8 lacks bit 20. Read from main, 2026-11-19: a place written without it stays where it was drawn.
@@ -187,7 +194,12 @@ public:
         // the other way; 0 at once (now always: our pages open from System's buttons and leave in place).
         int slide = 0;
         bool set_texts = false;  // the pages: our rows' texts (once per screen object)
-        bool any() const { return set_page || set_texts; }
+        // The - menu's tabs of ours (kMinusTabNames, after Map): shown while the - menu's strip is open, which one
+        // lit (-1 none: the game's Map, or its other pages), filled once per opening; slide +1 / -1 as R / L moved.
+        bool set_minus = false;
+        bool minus_shown = false, fill_minus = false;
+        int minus_lit = -1, minus_slide = 0;
+        bool any() const { return set_page || set_texts || set_minus; }
     };
     Do OnScreen(const Facts& f, std::uint64_t now_ms);
     // Player 1's pad before the game gets it: the buttons the game gets.
@@ -245,6 +257,19 @@ public:
     // the game does not start them, the module took the press. nullptr when none.
     const char* TakePagesSound();
     void Sound(const char* name) { pages_sound_ = name; }   // a menu sound for the module's own move (the cells)
+    // The tab sound the module starts at the strip's next update (R onto a - tab of ours, L off it: the game's own
+    // mc_TabToRight / mc_TabToLeft, which its graph plays on MenuOverlay_00 for its own tabs). nullptr when none.
+    const char* TakeStripSound() { return std::exchange(strip_sound_, nullptr); }
+
+    // The - menu's tabs (0.11.9): usable once the module found the pack's three tabs in the strip
+    // (SetMinusTabsUsable). R on Map (the - menu's last page, open and still) goes to the first of ours, R and L step
+    // among them, L on the first goes back to Map; each with the game's own tab sound. While one shows, the pad is its
+    // page's but B, + and - (the game's: the menu closes or changes, which also leaves ours). Which screen draws these
+    // tabs' pages is what the R1 probe answers (reports/ui-tabs-0119.md); until then the module keeps them off unless
+    // COOP_TEST_MINUS_TABS=1.
+    void SetMinusTabsUsable(bool usable) { minus_ok_ = usable; }
+    // Ours shown now: 0 Multiplayer, 1 Lobby, 2 Mods; -1 none.
+    int MinusTab() const { return minus_tab_; }
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
@@ -305,6 +330,14 @@ private:
     bool decide_ = false;
     bool refused_a_ = false;
     int slide_ = 0;   // the next set_page's Do::slide
+    bool minus_ok_ = false;    // SetMinusTabsUsable
+    int minus_tab_ = -1;       // MinusTab
+    int minus_set_ = -2;       // the - tabs' state last set (Do::set_minus): -2 none, -1 shown none lit, else lit
+    int minus_slide_ = 0;
+    std::uint64_t minus_gen_ = 0;   // the strip opening whose - tabs were filled
+    bool CanMinus(std::uint64_t now_ms) const;
+    std::uint64_t MinusPad(std::uint64_t buttons, std::uint64_t down);
+    const char* strip_sound_ = nullptr;
     int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
     bool settings_ok_ = false;
     int system_button_ = -1;
@@ -331,11 +364,17 @@ private:
 // a player, Let in, Join). Only a Paste answer, a refused Host or Join, and co-op that came with the game's start open
 // co-op's menu (Hookshot's menu, over the game's pause menu) on its main page, whose note or help says why.
 // The game has no text entry or keyboard of its own (docs/game-ui.md, "Frames for a text field"), so a code is pasted.
-enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword, kMenu };
+enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword, kMenu,
+                  kHost };   // (kHost: the Host a game view, 0.11.9; appended: a view is kept as its number)
 // Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, a game on
 // this network to the list of them, else the five rows.
 View BackOf(View view);
-enum Row { kRowSession = 0, kRowJoinCode = 1, kRowPlayers = 2, kRowLetIn = 3, kRowLeave = 4 };
+// The main view's five entries (0.11.9, the owner: "clean, user friendly"): each always says what it opens and always
+// opens it (no row that does nothing); what co-op does now is on the list on the right (DetailLines).
+enum Row { kRowFind = 0, kRowHost = 1, kRowJoin = 2, kRowPlayers = 3, kRowSettings = 4 };
+// The Host view's rows (hosting): the room or code, Let in, the session's details, Stop hosting; the Join view's Leave row
+// (in a friend's game). Both Stop and Leave wait for a second A.
+inline constexpr int kHostRowStop = 3, kJoinRowLeave = 1;
 enum class RowAction {
     kNone,
     kOpenMain,    // co-op's menu, its main page: what co-op does now, Host and Join, Stop and Leave
@@ -397,6 +436,7 @@ enum class RowAction {
     kTypeRoomName,   // this game's room name when it hosts (coop-options.ini relay_room), typed with the typing keys, saved
     kViewMenu,       // Settings and look (View::kMenu): co-op's own menu's Customize, Settings, Commands, Local co-op
     kMenuTab,        // that view's row: its page on the list, and the list has the pad
+    kViewHost,       // the Host a game view (View::kHost): start hosting, or the game hosted: its code, Let in, Stop
 };
 inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
@@ -727,6 +767,14 @@ int SettingNext(const SettingRow& r, int dir);
 // is the setting's place on its page (0 to kSettingsPerPage - 1; the list's row under the header is row + 1).
 void SettingMove(int count, int dy, int* page, int* row, int per_page = kSettingsPerPage);
 // The games the browser lists now (the chosen list's), and its pages.
+// Row 199: the strip's last update says the menu is up: open or opening (state 1, 2) and seen within kMenuUpMs.
+inline constexpr std::uint64_t kMenuUpMs = 200;
+bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
+// One update ahead of `now`, from its step since `prev`, and not past `limit` when it heads for it. The module reads
+// the fourth tab's place and fades before the strip's own update, so they are one update old: the Character tab takes
+// them one update ahead to move with the fourth, not a frame after it.
+float Ahead(float prev, float now, float limit);
+
 int BrowseListed(const Session& s);
 int CellPages(int listed);
 // The list's index of a cell on the browser's page, -1 none.
@@ -741,6 +789,29 @@ const char* ActionWords(RowAction a);   // for the log
 
 // The log lines a run needs (the first step's probe, kept): a screen object's first update, its updates over its
 // first second, and every change of what it shows. Pages and strip only.
+// The - menu research (ui-tabs-0119, COOP_TEST_SCREEN_PROBE=1): every screen that updates, by its vtable's offset in main,
+// and the menu manager's Plus and Minus categories, logged when a screen is first seen, when its state changes, and
+// when the categories change; a screen not seen for kCensusGoneMs is said gone. Log only: nothing in the game is set.
+class Census {
+public:
+    static constexpr std::uint64_t kCensusGoneMs = 1500;
+    struct Menu {
+        int plus = -1, minus = -1, minus_on = -1;   // manager +0x530, +0x52c, +0x53c
+        bool operator==(const Menu& o) const { return plus == o.plus && minus == o.minus && minus_on == o.minus_on; }
+    };
+    // One screen update: the lines to log (none for most).
+    std::vector<std::string> Seen(std::uint64_t vtable_offset, int state, const Menu& menu, std::uint64_t now_ms);
+
+private:
+    struct Screen {
+        std::uint64_t vtable = 0;
+        int state = -1;
+        std::uint64_t last_ms = 0;
+    };
+    std::vector<Screen> screens_;
+    std::optional<Menu> menu_;
+};
+
 class Probe {
 public:
     std::vector<std::string> Seen(const Facts& f, std::uint64_t now_ms);
@@ -788,6 +859,13 @@ std::string TestState();
 // The System page's question's screen (UISystemWindowScreen: "Return to the title screen?").
 inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).
+// Row 199: the game's pause menu is up (the + or the - menu, any page, a mod's page such as Character Select's
+// included: the tab strip shows on every one of them), as of the strip's last update. Any thread. Co-op's minimap
+// marks and player blocks wait while it is (the Map page draws its own).
+// The - menu research with COOP_TEST_SCREEN_PROBE=1 on a game without patch 0030: the screens patch 0018 says ran in
+// the last 100 ms, through the same census (any thread; nothing without the variable).
+void CensusFromMenuState() noexcept;
+bool GameMenuUp() noexcept;
 int MousePage() noexcept;
 // The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
 // the title's mouse reads it too (coop_title.cpp).

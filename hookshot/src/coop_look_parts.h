@@ -221,4 +221,23 @@ std::string BootsPaintingName(const Wearers& wearers);
 // its wearer, marked with the letter's code as the pack marks them).
 CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Wearers& wearers);
 
+// 0.11.9, exact puppet tunics: the coloured tunic copies (coop_look/puppet-<colour>.bin, "red".."black", each the
+// textures of green.bin in its order), each repainted for the player it is given to (CoopColors::AssignTunicCopies).
+// The wardrobe's base (every copy as the pack wrote it), and a painting's name: kPuppetTunicsBase when none is
+// painted, else "ptunics|<colour>=RRGGBB|..." by colour.
+inline constexpr const char* kPuppetTunicsBase = "ptunics";
+// colour ("red") -> what it is painted in: its player's exact tunic colour and Cap trim (0.11.9: the trim too)
+using TunicPaints = std::map<std::string, TunicPaint>;
+std::string PuppetTunicsName(const TunicPaints& paints);
+// The copies' texels for a painting: a copy given to a player, every texture of it from green painted in that
+// colour (TunicPainted) where it is the copy's size; a texture of another size (the child's dark tile, BC3 in the
+// copies and ASTC in green) and every other copy as the pack wrote it. `copies`: (colour, its texels), in order.
+// The copies' dark tile (the child's tunic body) is the main tile recoloured darker (tunic.py dark_tile_for,
+// DARK_SCALE): it is painted so from green's main tile in the colour scaled by kDarkScale (review round 2).
+inline constexpr float kDarkScale = 0.64f;
+// `cap`: the Cap trim's blocks (cap.bin; may be null: the trim as the tunic).
+CoopLookTunic::Texels PuppetTunicsTexels(const std::vector<std::pair<std::string, CoopLookTunic::Texels>>& copies,
+                                         const CoopLookTunic::Texels& green, const TunicPaints& paints,
+                                         const Cap* cap = nullptr);
+
 }  // namespace CoopLookParts

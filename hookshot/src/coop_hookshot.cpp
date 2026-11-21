@@ -88,6 +88,7 @@
 #include "coop_player_input.h"
 #include "coop_png.h"
 #include "coop_window_brand.h"
+#include "coop_pose.h"
 #include "coop_puppet.h"
 #include "coop_puppet_config.h"
 #include "coop_pack_notice.h"
@@ -812,7 +813,9 @@ const CoopDraw::MapShown* MapScene(bool camera, std::uint8_t self) {
     const auto menu = CoopMapPage::MenuState();
     const auto page = CoopMapPage::Shown(capture->dungeon);
     m.minimap.reset();
-    if (camera && !(menu && menu->menu_open)) {
+    // (row 199: also while the pause menu's tab strip is up, any page: patch 0018's menu_open is a screen that had the
+    // mouse, which a mod's page such as Character Select's never has, so the marks drew over it. The Map page: m.page)
+    if (camera && !(menu && menu->menu_open) && !CoopPauseTab::GameMenuUp()) {
         m.minimap = CoopMapPage::Minimap(capture->dungeon);
     }
     m.minimap_floor = coop::overlay::map::floor_of(*capture, view.self[1]);
@@ -979,8 +982,9 @@ CoopDraw::Scene DrawScene() {
     }
     // (the game's pause menu up: the other players' blocks wait; drawn over the pause menu's left rows they hid our
     // Multiplayer page's, a test run 2026-11-20)
+    CoopPauseTab::CensusFromMenuState();   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
     const auto menu_state = CoopMapPage::MenuState();
-    const bool game_menu_up = menu_state && menu_state->menu_open;
+    const bool game_menu_up = (menu_state && menu_state->menu_open) || CoopPauseTab::GameMenuUp();   // (row 199)
     std::optional<std::string> own_scene;
     for (const auto& row : rows) {
         if (row.self) own_scene = row.scene;
@@ -1883,7 +1887,6 @@ void LocalLayer(void* ctx) {
 void DressCharacters(void* ctx) {
     if (g_api == nullptr || g_api->call == nullptr) return;
     const auto views = CoopPuppet::DressTargets();
-    if (views.empty()) return;
     static void* frame_ctx = nullptr;
     frame_ctx = ctx;
     static const CoopCharColours::Game game = [] {
@@ -1903,10 +1906,42 @@ void DressCharacters(void* ctx) {
     CoopCharColours::Game g = game;
     g.main_base = CoopRuntime::MainBase();
     std::vector<CoopCharColours::Target> targets;
-    targets.reserve(views.size());
+    targets.reserve(views.size() + 1);
     for (const auto& v : views) {
-        targets.push_back({v.actor, v.cell, v.custom, v.mods_routine, 0, std::hash<std::string>{}(v.actor_name)});
+        CoopCharColours::Target t{v.actor, v.cell, v.custom, v.mods_routine, 0, std::hash<std::string>{}(v.actor_name)};
+        t.eyes = v.eyes;
+        t.hair = v.hair;
+        targets.push_back(t);
     }
+    // (0.11.9: your own Link's eye colour, the look shown: the one chosen in Customize at once, a preview, else worn;
+    // its cell of guest memory made once with the game's malloc, as a puppet's block)
+    static std::uint64_t own_cell = 0;
+    static bool own_cell_asked = false;
+    const CoopLook::Look shown = CoopLook::Shown();
+    const auto eyes = shown[CoopLook::Part::eyes];
+    const auto hair = CoopCharColours::ShownCharacter() == 0 ? shown[CoopLook::Part::hair] : std::nullopt;
+    if (eyes || hair) {
+        if (own_cell == 0 && !own_cell_asked) {
+            own_cell_asked = true;
+            HosCoopCall k{};
+            k.function = CoopRuntime::MainBase() + CoopPuppet::addr::kMalloc;
+            k.x[0] = CoopCharColours::kCellBytes;
+            std::uint64_t x0 = 0;
+            if (g_api->call(ctx, &k, &x0) && x0 != 0) {
+                const std::array<std::uint8_t, CoopCharColours::kCellBytes> zero{};
+                CoopRuntime::Write(x0, zero.data(), zero.size());
+                own_cell = x0;
+            }
+        }
+        BridgeGuest guest;
+        if (const std::uint64_t own = CoopPose::FindPlayer(guest, CoopRuntime::MainBase()); own != 0 && own_cell != 0) {
+            CoopCharColours::Target t{own, own_cell, 0, false, 0, 0};
+            if (eyes) t.eyes = *eyes & 0xFFFFFFu;
+            if (hair) t.hair = *hair & 0xFFFFFFu;
+            targets.push_back(t);
+        }
+    }
+    if (targets.empty()) return;
     CoopCharColours::TheWardrobe().Frame(g, targets, SteadyMs(),
                                          [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
 }

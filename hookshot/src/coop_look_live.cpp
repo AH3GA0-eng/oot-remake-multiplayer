@@ -5,6 +5,7 @@
 // both drawn through Longshot's texture overrides (patch 0020), and the
 // other players' puppets' own copies of the gear (coop_look_share.h) the same way.
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -22,6 +23,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "coop_camera.h"
+#include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_look.h"
 #include "coop_look_view.h"
@@ -339,6 +341,104 @@ std::optional<std::vector<std::uint8_t>> BootsFile(const std::string& name) {
     return CoopLookTunic::Pack(CoopLookParts::BootsTexels(*gear, wearers));
 }
 
+// 0.11.9, exact puppet tunics: each coloured tunic copy (coop_look/puppet-<colour>.bin) repainted for the player it
+// is given to (CoopColors::AssignTunicCopies), as the boots are, drawn by Longshot's texture overrides.
+std::unique_ptr<CoopLookTunic::Wardrobe> g_ptunics;   // none: a pack without the copies' files
+std::mutex g_ptunics_mutex;
+std::map<std::string, CoopLookParts::TunicPaints> g_ptunics_named;   // guarded: the newest painting's name
+std::vector<std::pair<std::string, CoopLookTunic::Texels>> g_ptunics_copies;   // guarded: read once
+std::string g_ptunics_worn;   // the worker's
+
+// The coloured copies' files, read once (colours in CoopColors::Tunics' order); none when one is missing.
+bool LoadPuppetTunics() {
+    if (!g_ptunics_copies.empty()) return true;
+    std::vector<std::pair<std::string, CoopLookTunic::Texels>> copies;
+    for (const std::string_view suffix : CoopColors::Tunics()) {
+        std::string colour(suffix);
+        for (char& c : colour) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const auto file = ReadFile(LookDir() / ("puppet-" + colour + ".bin"));
+        auto texels = file ? CoopLookTunic::Parse(*file) : std::nullopt;
+        if (!texels) return false;
+        copies.emplace_back(colour, std::move(*texels));
+    }
+    g_ptunics_copies = std::move(copies);
+    return true;
+}
+
+std::optional<std::vector<std::uint8_t>> PuppetTunicsFile(const std::string& name) {
+    CoopLookParts::TunicPaints paints;
+    std::shared_ptr<const CoopLookTunic::Texels> green;
+    {
+        std::lock_guard lock(g_tunic_mutex);
+        if (!g_tunic_green) {
+            const auto file = ReadFile(LookDir() / (std::string(CoopLookParts::kTunicBase) + ".bin"));
+            auto g = file ? CoopLookTunic::Parse(*file) : std::nullopt;
+            if (!g) return std::nullopt;
+            g_tunic_green = std::make_shared<const CoopLookTunic::Texels>(std::move(*g));
+        }
+        green = g_tunic_green;
+    }
+    std::lock_guard lock(g_ptunics_mutex);
+    if (!LoadPuppetTunics()) return std::nullopt;
+    if (name != CoopLookParts::kPuppetTunicsBase) {
+        const auto it = g_ptunics_named.find(name);
+        if (it == g_ptunics_named.end()) return std::nullopt;
+        paints = it->second;
+    }
+    std::shared_ptr<const CoopLookParts::Cap> cap;
+    {
+        std::lock_guard tl(g_tunic_mutex);
+        cap = g_tunic_cap;   // (cap.bin: the Cap trim's blocks; none in an older pack)
+    }
+    return CoopLookTunic::Pack(CoopLookParts::PuppetTunicsTexels(g_ptunics_copies, *green, paints, cap.get()));
+}
+
+// The worker's round: who gets which tunic copy, and its painting (the boots follow the same copies).
+std::map<std::uint8_t, CoopColors::TunicCopy> FollowTunics() {
+    std::vector<std::pair<std::uint8_t, std::uint32_t>> players;
+    for (const auto& row : CoopHook::PlayerList()) {
+        if (row.self) continue;
+        players.emplace_back(row.number,
+                             CoopPuppet::PlayerColor(row.number).value_or(coop::protocol::slot_color(row.number)));
+    }
+    static std::map<std::uint8_t, CoopColors::TunicCopy> before;   // (the worker's: copies stay with their players)
+    const auto copies = CoopColors::AssignTunicCopies(players, before);
+    before = copies;
+    if (!g_ptunics) return copies;   // (a pack without the copies' files: the nearest copy, as before)
+    std::map<std::uint8_t, std::string> given;
+    CoopLookParts::TunicPaints paints;
+    for (const auto& [number, copy] : copies) {
+        given[number] = copy.suffix;
+        if (!copy.exact) continue;
+        std::string colour = copy.suffix;
+        for (char& c : colour) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const auto it = std::find_if(players.begin(), players.end(), [n = number](const auto& p) { return p.first == n; });
+        if (it == players.end()) continue;
+        CoopLookParts::TunicPaint paint;
+        paint.tunic = it->second;
+        if (const auto parts = CoopLookShare::Of(number)) {   // (0.11.9: their Cap trim too, part 17)
+            for (const auto& p : *parts) {
+                if (p.part == static_cast<std::uint8_t>(Part::cap_trim)) paint.cap = p.colour & 0xFFFFFFu;
+            }
+        }
+        paints[colour] = paint;
+    }
+    CoopPuppet::SetTunicCopies(std::move(given));
+    const std::string name = CoopLookParts::PuppetTunicsName(paints);
+    if (name != g_ptunics_worn) {
+        g_ptunics_worn = name;
+        {
+            std::lock_guard lock(g_ptunics_mutex);
+            g_ptunics_named.clear();
+            g_ptunics_named[name] = paints;
+        }
+        LOG_INFO(Core, "coop: look: the puppets' tunics are {} now", name);
+        g_ptunics->Wear(name);
+        g_ptunics->Kick();
+    }
+    return copies;
+}
+
 CoopLookShare::Parts Share(const CoopLook::Look& look) {
     CoopLookShare::Parts parts;
     for (const auto& [number, colour] : CoopLook::Wire(look)) {
@@ -364,7 +464,7 @@ std::optional<std::uint32_t> g_chosen;   // guarded by g_chosen_mutex
 std::optional<std::uint32_t> g_chosen_cap;   // guarded by g_chosen_mutex: the Cap trim worn (CapOf)
 
 // The worker's round: who wears which colour now, and the boots they chose.
-void FollowBoots() {
+void FollowBoots(const std::map<std::uint8_t, CoopColors::TunicCopy>& copies) {
     std::vector<CoopLookParts::Wearer> others;
     for (const auto& row : CoopHook::PlayerList()) {
         if (row.self) {
@@ -373,7 +473,11 @@ void FollowBoots() {
         CoopLookParts::Wearer w;
         const std::uint32_t colour =
             CoopPuppet::PlayerColor(row.number).value_or(coop::protocol::slot_color(row.number));
-        w.letter = CoopLookParts::LetterOf(TunicName(colour));
+        // (0.11.9: the copy given to the player when the tunic copies are repainted, else the nearest)
+        const auto given = copies.find(row.number);
+        w.letter = CoopLookParts::LetterOf(g_ptunics && given != copies.end()
+                                               ? TunicName(CoopColors::TunicColour(given->second.suffix))
+                                               : TunicName(colour));
         if (const auto parts = CoopLookShare::Of(row.number)) {
             for (const auto& p : *parts) {
                 if (p.part == static_cast<std::uint8_t>(Part::boots)) {
@@ -465,12 +569,13 @@ void Work() {
             round = now + kRound;
             PaintPuppets(static_cast<std::uint64_t>(ms.count()));   // before their puppets wear the copies
             FollowNumber();
-            FollowBoots();
+            FollowBoots(FollowTunics());
         }
         g_wardrobe->Step(static_cast<std::uint64_t>(ms.count()));
         g_gear->Step(static_cast<std::uint64_t>(ms.count()));
         g_puppets->Step(static_cast<std::uint64_t>(ms.count()));
         g_boots->Step(static_cast<std::uint64_t>(ms.count()));
+        if (g_ptunics) g_ptunics->Step(static_cast<std::uint64_t>(ms.count()));
         lock.lock();
     }
 }
@@ -624,6 +729,12 @@ void StartModule() {
     puppets.base = CoopLookParts::kCopiesBase;
     puppets.start.clear();
     puppets.what = "puppets' gear";
+    // (0.11.9: the puppets' tunic copies, a Host of their own taken here, before `puppets` is moved below: the
+    // lane crash of a178e8bd was a copy taken after that move, with no file and no log)
+    CoopLookTunic::Wardrobe::Host ptunics = puppets;
+    ptunics.file = PuppetTunicsFile;
+    ptunics.base = CoopLookParts::kPuppetTunicsBase;
+    ptunics.what = "puppets' tunics";
     CoopLookTunic::Wardrobe::Host boots = puppets;
     boots.file = BootsFile;
     boots.base = CoopLookParts::kBootsBase;
@@ -633,6 +744,22 @@ void StartModule() {
     g_puppets = std::make_unique<CoopLookTunic::Wardrobe>(std::move(puppets));
     g_boots = std::make_unique<CoopLookTunic::Wardrobe>(std::move(boots));
     g_boots_worn.clear();
+    // (0.11.9: the puppets' tunic copies repainted in their players' exact colours, when the pack has their files)
+    {
+        bool have = true;
+        for (const std::string_view suffix : CoopColors::Tunics()) {
+            std::string colour(suffix);
+            for (char& c : colour) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            have = have && fs::exists(LookDir() / ("puppet-" + colour + ".bin"), no_file);
+        }
+        if (have && g_textures->Known()) {
+            g_ptunics = std::make_unique<CoopLookTunic::Wardrobe>(std::move(ptunics));
+            g_ptunics_worn.clear();
+        }
+        LOG_INFO(Core, "coop: look: other players' tunics on their puppets in {}",
+                 g_ptunics ? "their exact colours (each a copy of its own, repainted)"
+                           : "the nearest of the ten (the pack has no puppet-<colour>.bin, or no texture overrides)");
+    }
     // The others' puppets wear their own gear colours only where the pack has
     // the gear's texels to paint their copies with, and a Longshot that draws
     // them (patch 0020).
@@ -721,6 +848,14 @@ void StopModule() {
     g_gear->Clear();
     g_puppets->Clear();
     g_boots->Clear();
+    if (g_ptunics) g_ptunics->Clear();
+    g_ptunics.reset();
+    CoopPuppet::SetTunicCopies({});
+    {
+        std::lock_guard lock(g_ptunics_mutex);
+        g_ptunics_named.clear();
+        g_ptunics_copies.clear();
+    }
     g_wardrobe.reset();   // a later StartModule starts a new worker
     g_gear.reset();
     g_puppets.reset();

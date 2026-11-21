@@ -1301,6 +1301,9 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         except tunic.TunicError as e:
             raise BuildError(f"{tile_rel}: {e}")
         look = [(tunic.TILE, tile if own is None else own)]
+        # (0.11.9, exact puppet tunics: the puppets' copy as the pack writes it, to be found in memory and repainted
+        # live in its wearer's exact colour; the same textures, in the same order, as green.bin's)
+        pup = [(name, data)]
         if own is not None and self_dir and c != "green":
             # Same size as the game's tile once unpacked: its size-table entry stands. (Packs
             # before colour-agree put this one over the game's tile; the kit now uses self_files.)
@@ -1341,6 +1344,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 own_rel = strip_zs(f"Tex/{own_name}.bntx.zs")
                 own_sizes[own_rel] = max(own_sizes.get(own_rel, 0), (size or len(own_dark) + PACK_SIZE_MARGIN)
                                          if c == "green" else tile_size or len(own_dark) + PACK_SIZE_MARGIN)
+            pup.append((tunic.dark_name(c), ddata))
             if look_dir:
                 # In memory: the game's ASTC dark tile (green), else the BC3 copy your own Link
                 # wears for that colour; without those, the ASTC one recoloured in place.
@@ -1363,6 +1367,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             except tunic.TunicError as e:
                 raise BuildError(f"{e_rel}: {e}")
             look.append((name, e_own))
+            pup.append((tunic_extra.extra_name(name, c), e_pup))
             if own_set:
                 # Same size and layout as the game's file.
                 own_name = tunic_extra.extra_name(name, c, tunic.SELF_LETTER)
@@ -1412,6 +1417,9 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         if look_dir:
             write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
             look_files[c] = f"{look_live.DIR}/{c}.bin"
+            if c != "green":   # (the plain puppet's tunic is the game's own: never repainted)
+                write(os.path.join(look_dir, f"puppet-{c}.bin"), look_live.pack(pup))
+                look_files[f"puppet-{c}"] = f"{look_live.DIR}/puppet-{c}.bin"
         out[c] = paths
         log(f"tunic {c}: {tunic.tile_name(c)} and {len(models)} models")
     if look_dir and out and "green" not in out:
@@ -1458,7 +1466,9 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
         if not models:
             log(f"look items: no Model/{project}.* in this romfs, {item} left out")
             continue
-        for slot in range(1, slots * look_items.COPIES_PER_SLOT + 1):  # (each slot's two copies)
+        # (each slot's two copies, then one more, the neutral copy (row 198): the game's colours, marked, never
+        # painted, worn by a puppet with no slot of its own, so it never wears the game's item your colour is drawn on)
+        for slot in range(1, slots * look_items.COPIES_PER_SLOT + 2):
             actor = look_items.actor_name(item, slot)
             pack, ap, info = look_items.copy_pack(members, item, slot)
             dst = f"Pack/Actor/{actor}.pack.zs"
@@ -1504,7 +1514,8 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
         log(f"look items: {len(made)} items x {slots} slots x {look_items.COPIES_PER_SLOT} copies ({len(files)} files): "
             "puppets in their own gear colours")
     copies = slots * look_items.COPIES_PER_SLOT
-    return {"slots": slots, "copies": copies, "actors": made, "files": files} if made else None, new_ai, new_gai
+    return ({"slots": slots, "copies": copies, "neutral": copies + 1, "actors": made, "files": files} if made else None,
+            new_ai, new_gai)
 
 
 def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies, log=print):
@@ -1558,12 +1569,27 @@ def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies,
             if (project, n) in projects_done:
                 continue   # (the Giant's Knife on the Biggoron's: its models are there already)
             projects_done.add((project, n))
+            named = set()
             for m in models:
                 raw = read(os.path.join(mdir, m))
                 m_dst = f"Model/{copy_project}{m[len(project):]}"
-                write(os.path.join(out_romfs, m_dst), raw)
-                table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(dicts.decompress(raw)))
+                # (row 198: its own gear textures, marked, never the game's that your Link's colour is drawn over)
+                data, names = look_items.blade_model_for(dicts.decompress(raw), n)
+                named.update(names)
+                write(os.path.join(out_romfs, m_dst), recompress(dicts, raw, data, level=3) if names else raw)
+                table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(data))
                 files.append(m_dst)
+            for g in sorted(named):
+                t_rel = f"Tex/{g}.bntx.zs"
+                t_path = os.path.join(romfs, t_rel)
+                if not os.path.isfile(t_path):
+                    continue
+                t_raw = read(t_path)
+                t_data = look_items.blade_texture_for(dicts.decompress(t_raw), g, n)
+                t_dst = f"Tex/{look_items.blade_tex_name(g, n)}.bntx.zs"
+                write(os.path.join(out_romfs, t_dst), recompress(dicts, t_raw, t_data))
+                table.add_new(strip_zs(t_dst), table.get(strip_zs(t_rel)) or len(t_data) + PACK_SIZE_MARGIN)
+                files.append(t_dst)
         made.append(item)
     if made:
         log(f"wearer copies: {len(made)} items ({', '.join(made)}) x {copies} player numbers, "
