@@ -15,10 +15,15 @@ the plan; [dungeons-boss.md](dungeons-boss.md) says how the sync works today.
 - **Never stuck on a player who cannot fight** (2026-11-21): a boss leaves an owner who goes down or dies at once
   and one paused after 2 s (`boss_owner_dead_us`, `boss_owner_paused_us`; a plain enemy still waits 10 s and 6 s),
   for a player up and playing. With nobody up it stays where it is.
+- **A stun hands the boss to the stunner, also right after a turn:** a stun in another player's game (Gohma's eye,
+  a ball sent back into a copy Phantom Ganon or Ganondorf) asks the boss over at most every 8 s
+  (`boss_hitter_cooldown_us`), counted from the last change that was no turn (`Object::hitter_changed_at`): with a
+  turn at every attack, a count from every change refused nearly every stun.
 - The difficulty scales by the number of players (2 players: boss life 200%, damage 120%).
 
 What that does not give yet: **an attack aimed at more than one player at once**. The game's AI picks one target,
-and a shot or a grab is real only in the owner's game (a copy's own shots are refused, the owner's come as copies).
+and a shot or a grab is real only in the owner's game (a copy's own shots are refused, the owner's come as copies),
+except the split shots below.
 
 ## Tools we have or can build
 
@@ -26,7 +31,7 @@ and a shot or a grab is real only in the owner's game (a copy's own shots are re
 |---|---|---|
 | Turns | the boss fights each player in turn, between attacks | in (proof runs) |
 | Turn length | per boss: every attack, every second attack, every N s | to build (a server table by boss) |
-| Split shot | an attack's shot made in **every** game, aimed at that game's own Link: each player gets the ball / the rock / the beam at the same moment | to build (as the eggs that hatch in every game) |
+| Split shot | an attack's shot made in **every** game, aimed at that game's own Link: each player gets the ball / the rock / the beam at the same moment | in for Phantom Ganon's bolt, shockwaves and balls and Ganondorf's `DungeonBossGanondrof_Bullet_*` (#308, `CoopEnemyShots::IsSplitShot`); the rest to build |
 | Half split | a split shot in half the games, the other half the next time (every other attack) | to build on split shot |
 | Part targets | a boss of several bodies (Bongo Bongo's hands, Twinrova's sisters, Morpha's tentacles) gives each body its own target player | to build (owner per group member) |
 | Stun for all | a stun in one game stuns the boss for everyone (the stun hand-over already moves him to the stunner) | in |

@@ -747,6 +747,10 @@ class Session {
     // an enemy went round P2, P3, P4, P2 ... when only the last one was kept).
     std::map<ConnectionId, std::uint64_t> gave_up;
     std::uint64_t changed_at = 0;  // the last change of owner; 0: never
+    // The last change of owner that was no boss turn (next_turn), for boss_hitter_cooldown_us: a turn passes at
+    // every attack's end (4 s), so a cooldown from changed_at would refuse nearly every stun from another player
+    // (Gohma's eye, a ball sent back into a copy Phantom Ganon or Ganondorf). 0: never.
+    std::uint64_t hitter_changed_at = 0;
     // The last state relayed from its owner, for a hand-over with no answer
     // and for a player who enters the scene later.
     std::optional<protocol::ObjectState> last_state;
@@ -778,6 +782,8 @@ class Session {
       // A BOMB_TAKE (native puppets phase 2): no answer means the owner's
       // game keeps the bomb (BOMB_ANSWER kept), not a move.
       bool bomb = false;
+      // A boss turn (next_turn): its change does not start boss_hitter_cooldown_us (hitter_changed_at).
+      bool turn = false;
     };
     std::optional<Ask> ask;
     // DAMAGE that came while the owner hold had not chosen its owner yet

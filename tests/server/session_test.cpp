@@ -3229,6 +3229,37 @@ TEST_CASE("boss turns: a boss leaves an owner who died at once, a paused one aft
   }
 }
 
+TEST_CASE("review-geno-0119-3: a stun right after a boss turn still hands the boss to the stunner") {
+  // A turn passes at every attack's end now (#308), and boss_hitter_cooldown_us (8 s) counted from any change of
+  // owner refused nearly every stun from another player (Gohma's eye, a ball sent back into a copy Phantom Ganon).
+  // A turn starts no hitter cooldown; a hand-over to a stunner still does.
+  TurnHarness h;
+  h.stand(1, 4);
+  h.stand(2, 6);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+  h.clear();
+  h.run(20 * kSecond);
+  attack_ends(h, 1, 0, 11);
+  h.run(250'000);
+  REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});  // the turn
+  h.receive(1, HandoverState{0, placed(7), 0, attack_state(11, false)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+  h.clear();
+  h.run(kSecond);
+  h.receive(1, Damage{0, placed(7), 1, 0, 0, {}, {}}, kChannelOwnership);  // player 1 stuns its copy 1 s later
+  REQUIRE(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+  h.receive(2, HandoverState{0, placed(7), 1, attack_state(11, false)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(1, 2));
+  h.clear();
+  h.run(kSecond);
+  h.receive(2, Damage{0, placed(7), 2, 0, 0, {}, {}}, kChannelOwnership);  // a stun back 1 s after a stunner's
+  h.run(250'000);
+  CHECK(messages_to<HandoverAsk>(h, 1).empty());  // the hitter cooldown holds (no bounce)
+  CHECK(h.session.stats().boss_to_hitter == 1);
+}
+
 TEST_CASE("boss-turns-0119: the old owner's attack is never read as the new owner's attack end") {
   std::vector<std::string> lines;
   SessionConfig config = turn_config();
