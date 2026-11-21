@@ -1602,6 +1602,11 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
     } else {
       o.unready.erase(id);
     }
+    if (e.flags & object_presence::takes_turns) {
+      o.takes_turns.insert(id);
+    } else {
+      o.takes_turns.erase(id);
+    }
     // Tell a newcomer who owns it and the epoch to send with; its own made
     // enemy it knows.
     if (refresh || (fresh && !(o.made && o.owner == id))) {
@@ -2042,6 +2047,7 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
   o.present.erase(id);
   o.chased_by.erase(id);
   o.unready.erase(id);  // its next presence says again whether it is ready
+  o.takes_turns.erase(id);
   if (o.candidate == id) o.candidate.reset();
   if (o.made) {
     if (o.owner != id) return;
@@ -2216,6 +2222,8 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
   std::optional<ConnectionId> first;  // the lowest number of all (round)
   for (ConnectionId other : o.present) {
     if (other == owner || !has_loaded(other, o) || o.unready.contains(other)) continue;
+    // An older build (no takes_turns) would keep it for the rest of the fight: it sends no attack end.
+    if (!o.takes_turns.contains(other)) continue;
     const Connection& pc = connections_.at(other);
     if (busy(pc)) continue;
     const auto d = distance_to(pc, o, now_us);

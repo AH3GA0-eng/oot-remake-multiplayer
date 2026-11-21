@@ -1974,6 +1974,7 @@ public:
         {
             std::lock_guard lock(g_unready_mutex);
             sync_.SetUnready(g_unready);
+            sync_.SetTakesTurns(CoopBossNative::TheTable().TurnsOn());
             sync_.SetDying(g_dying);
         }
         sync_.Tick(*scene, self, server_now_us, seen, send, writes);
