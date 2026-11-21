@@ -2104,9 +2104,9 @@ std::optional<double> Session::distance_to(const Connection& c, const Object& o,
   return metres(*c.position, *o.last_state->position);
 }
 
-bool Session::unfit_boss_owner(const Connection& c, std::uint64_t now_us) const {
-  if (c.dead_since != 0 && now_us - c.dead_since >= config_.boss_owner_dead_us) return true;
-  return c.paused_since != 0 && now_us - c.paused_since >= config_.boss_owner_paused_us;
+bool Session::unfit_fight_owner(const Connection& c, std::uint64_t now_us) const {
+  if (c.dead_since != 0 && now_us - c.dead_since >= config_.fight_owner_dead_us) return true;
+  return c.paused_since != 0 && now_us - c.paused_since >= config_.fight_owner_paused_us;
 }
 
 bool Session::unfit_owner(const Connection& c, std::uint64_t now_us) const {
@@ -2218,7 +2218,7 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
     const Connection& pc = connections_.at(other);
     if (busy(pc)) continue;
     const auto d = distance_to(pc, o, now_us);
-    if (!d || *d > config_.boss_turn_m) continue;
+    if (!d || *d > (o.boss ? config_.boss_turn_m : config_.enemy_turn_m)) continue;
     const auto lower = [&](const std::optional<ConnectionId>& than) {
       return !than || pc.number < connections_.at(*than).number;
     };
@@ -2599,7 +2599,7 @@ void Session::run_ownership(std::uint64_t now_us) {
     }
 
     // An owner whose game stands still gives it up, fight or not; a boss's sooner (its AI fights its Link alone).
-    if (unfit_owner(oc, now_us) || (o.boss && unfit_boss_owner(oc, now_us))) {
+    if (unfit_owner(oc, now_us) || ((o.boss || in_fight(o, now_us)) && unfit_fight_owner(oc, now_us))) {
       if (o.fish) {
         fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
       } else if (auto next = best_other(o, owner, true, now_us)) {
@@ -2637,14 +2637,15 @@ void Session::run_ownership(std::uint64_t now_us) {
 
     // A boss in a fight takes turns: its AI fights only its owner's Link, so
     // every player gets it for a while (Phantom Ganon's ball, a charge, a
-    // breath aimed at each in turn).
-    if (o.boss) {
+    // breath aimed at each in turn). Every other enemy too, among the players
+    // near it (enemy_turns): the baseline for every mob.
+    if (o.boss || (config_.enemy_turns && !o.fish)) {
       if (auto next = next_turn(o, owner, now_us)) {
-        ++stats_.boss_turns;
+        ++(o.boss ? stats_.boss_turns : stats_.enemy_turns);
         // One line per turn (proof runs read it: a turn passes only at "its attack ended").
         const auto from = connections_.find(owner);
         const auto to = connections_.find(*next);
-        if (from != connections_.end() && to != connections_.end()) {
+        if (o.boss && from != connections_.end() && to != connections_.end()) {  // (plain enemies: counted only)
           log("boss turns: " + (o.actor.empty() ? std::string("a boss") : o.actor) + " of player " +
               std::to_string(from->second.number) + ": its attack ended: to player " +
               std::to_string(to->second.number) + " (turn " + std::to_string(stats_.boss_turns) + ")");

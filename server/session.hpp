@@ -263,6 +263,10 @@ struct SessionConfig {
   std::uint64_t boss_turn_us = 4'000'000;
   std::uint64_t boss_turn_quiet_us = 3'000'000;
   float boss_turn_m = 40.0f;
+  // Every enemy takes turns too (2026-11-21: the baseline for every mob, not bosses alone): the same rule, among
+  // the players near it (enemy_turn_m: the ones fighting it, not one across the field). Off: bosses only.
+  bool enemy_turns = true;
+  float enemy_turn_m = 12.0f;
   // ...and only right at the end of the boss's own attack (boss-turns-0119): its owner's samples say an attack
   // ran (object_state::attacking, the hook's addr::InAttackSequence: after a reaction it stays on until the
   // boss's own next attack ends) and the latest one says it ended, within boss_turn_edge_us. An owner whose
@@ -288,11 +292,11 @@ struct SessionConfig {
   // to another player who has them, fight or not.
   std::uint64_t owner_paused_us = 6'000'000;
   std::uint64_t owner_dead_us = 10'000'000;
-  // A boss (its group's root) leaves an owner who died at once and one paused this long: its AI fights only its
-  // owner's Link, and a dead or paused one is nobody to fight (the boss stood idle until owner_dead_us). It goes to
-  // a player up and playing (best_other, fit only); a downed owner already loses it at once (dbno).
-  std::uint64_t boss_owner_dead_us = 0;
-  std::uint64_t boss_owner_paused_us = 2'000'000;
+  // A boss, or any enemy in its fight, leaves an owner who died at once and one paused this long: its AI fights
+  // only its owner's Link, and a dead or paused one is nobody to fight (it stood idle until owner_dead_us). It goes
+  // to a player up and playing (best_other, fit only); a downed owner already loses it at once (dbno).
+  std::uint64_t fight_owner_dead_us = 0;
+  std::uint64_t fight_owner_paused_us = 2'000'000;
   // A player position older than this is not used for distances.
   std::uint64_t position_stale_us = 5'000'000;
   // Proximity voice (docs/protocol.md, "Voice"): VOICE_FRAME goes to the
@@ -475,6 +479,7 @@ struct Stats {
   std::uint64_t boss_to_hitter = 0;     // a boss asked over to the player who hurt it (issue 150)
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t boss_turns = 0;          // a boss asked over to the next player's turn (boss_turn_us)
+  std::uint64_t enemy_turns = 0;         // a plain enemy asked over to the next player's turn (enemy_turns)
   std::uint64_t boss_kept_from_unready = 0;  // row 189: ticks a ready, unfit owner's boss was not asked to an unready game
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
@@ -984,8 +989,8 @@ class Session {
   bool place_known_in(const Connection& c, const std::string& scene,
                       std::uint64_t now_us) const;
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
-  // The same for a boss's owner, sooner (boss_owner_dead_us, boss_owner_paused_us).
-  bool unfit_boss_owner(const Connection& c, std::uint64_t now_us) const;
+  // The same for the owner of a boss or of an enemy in its fight, sooner (fight_owner_dead_us, fight_owner_paused_us).
+  bool unfit_fight_owner(const Connection& c, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;
   // The owner hit it itself within boss_owner_hit_hold_us (issue 150).

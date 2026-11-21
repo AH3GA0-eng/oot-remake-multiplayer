@@ -12,9 +12,12 @@ the plan; [dungeons-boss.md](dungeons-boss.md) says how the sync works today.
   attack in its owner's game (4 s at least with one player, `boss_turn_us`, so a quick combo is not split), so its
   AI fights each player in turn. A player who is down, dead or paused is skipped, and is in the round again at the
   next attack's end once up (their puppet is seen by enemies again then too).
-- **Never stuck on a player who cannot fight** (2026-11-21): a boss leaves an owner who goes down or dies at once
-  and one paused after 2 s (`boss_owner_dead_us`, `boss_owner_paused_us`; a plain enemy still waits 10 s and 6 s),
-  for a player up and playing. With nobody up it stays where it is.
+- **Never stuck on a player who cannot fight** (2026-11-21, every enemy): a boss, or any enemy in its fight, leaves
+  an owner who goes down or dies at once and one paused after 2 s (`fight_owner_dead_us`, `fight_owner_paused_us`;
+  out of a fight the old 10 s and 6 s), for a player up and playing. With nobody up it stays where it is.
+- **Every enemy takes turns** (`enemy_turns`): the same rule as a boss's, between its attacks, among the players
+  within 12 m of it (`enemy_turn_m`: the ones fighting it, not one across the field). The server's `enemies:` line
+  counts them as `enemy turns`.
 - The difficulty scales by the number of players (2 players: boss life 200%, damage 120%).
 
 What that does not give yet: **an attack aimed at more than one player at once**. The game's AI picks one target,
