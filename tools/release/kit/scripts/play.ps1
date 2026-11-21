@@ -120,7 +120,12 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$updater`"", '-Status', '-Kit', "`"$kit`"")
         if ($check.WaitForExit(15000)) { $status = ([System.IO.File]::ReadAllText($out)).Trim() } else {
             $check.Kill()
-            $status = 'failed GitHub did not answer in 15 s'
+            # update.ps1 -Status prints its line before its shortcut scan (0.11.9): a line already in the file is the
+            # answer, and only a silent check is "no answer". (0.11.5-0.11.8 printed it last, after a scan that took
+            # 30 s on a Desktop full of project folders.)
+            $partial = ''
+            try { $partial = ([System.IO.File]::ReadAllText($out)).Trim() } catch { }
+            $status = if ($partial) { $partial } else { 'failed the check did not answer in 15 s' }
         }
     } catch { $status = "failed $($_.Exception.Message)" }
     Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
