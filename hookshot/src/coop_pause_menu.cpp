@@ -709,9 +709,9 @@ void Menu::TitleCodeLines(std::vector<Line>& out, bool off) const {
 // The title's Host page: the choices, then Start hosting; while hosting, the code and password to send, who asks.
 void Menu::TitleHostLines(std::vector<Line>& out, bool host, bool guest) const {
     if (!host) {
-        out.push_back({Choice("Who can join", options_.public_game ? "Anyone (public list)" : "Friends with the code"),
+        out.push_back({Choice("Who can join", options_.public_game ? "Public" : "Private"),
                        Act::kGameKind,
-                       "Friends with the code: you send the code. Anyone: listed in Join a game."});
+                       "Private: friends join with the code you send. Public: listed in Join a game."});
         out.push_back({Choice("Players", std::to_string(options_.max_players)), Act::kPlayers,
                        "The most players in your game, you included."});
         if (options_.public_game) {

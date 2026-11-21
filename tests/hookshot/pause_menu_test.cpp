@@ -1839,7 +1839,7 @@ TEST_CASE("pause tab: the title's Host opens on its choices, hosts on Start host
     m.Open(Page::kHost);
     CHECK_FALSE(m.TakeRequest().has_value());   // (not hosted on opening)
     CHECK(Names(m) == std::vector<std::string>{"Who can join", "Players", "Start hosting"});
-    CHECK(SelectedValue(m) == "Friends with the code");
+    CHECK(SelectedValue(m) == "Private");
     m.Press(Input::kRight);   // (Anyone: the room name row)
     (void)m.TakeRequest();
     CHECK(Names(m) == std::vector<std::string>{"Who can join", "Players", "Room name", "Start hosting"});
