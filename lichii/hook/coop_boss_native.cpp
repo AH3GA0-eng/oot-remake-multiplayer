@@ -237,6 +237,7 @@ void Table::Publish(const std::vector<Boss>& bosses) {
                 e.hold_since = steps_;
                 e.hold_asks = 0;
                 e.hold_rechoices = 0;
+                e.stall_rechoices = 0;  // (another game's turn since: judged anew)
                 ForgetOwnAsks(e);  // (row 177 review: learnt again as a copy from its own asks)
                 if (b.role == Role::copy) {
                     e.restart_action.reset();
@@ -355,10 +356,21 @@ void Table::Hold(Entry& e, const Boss& b) {
         e.hold_brain = e.mine.brain_verb;
         e.hold_action = action;
         e.hold_life = b.life;
-        e.hold_rechoices = 0;
+        if (e.stall_rechoices != 0 && b.life != e.stall_life) {
+            e.stall_rechoices = 0;  // a hit since: its fight goes on, nothing stuck is remembered
+        }
+        // Back in the move it was re-chosen out of (the re-choice's own short move between): the count goes on.
+        const bool stuck_again = e.stall_rechoices != 0 && b.animation == e.stall_animation &&
+                                 e.mine.brain_verb == e.stall_brain && action == e.stall_action;
+        e.hold_rechoices = stuck_again ? e.stall_rechoices : 0;
     }
-    if (!same || event_ || e.dying || !StallJudged(b.animation, b.life)) {
-        // A new move, or none to judge (our event's, its death's, a cutscene's, nothing read): counted from now.
+    if (b.life) {
+        e.hit = e.hit || (e.top_life && *b.life < *e.top_life);
+        e.top_life = std::max(e.top_life.value_or(*b.life), *b.life);
+    }
+    if (!same || event_ || e.dying || (NotBegun(b.name) && !e.hit) || !StallJudged(b.animation, b.life)) {
+        // A new move, or none to judge (our event's, its death's, a cutscene's, its wait before the fight, nothing
+        // read): counted from now.
         e.hold_since = steps_;
         e.hold_asks = 0;
         return;
@@ -367,6 +379,11 @@ void Table::Hold(Entry& e, const Boss& b) {
         return;
     }
     ++e.hold_rechoices;
+    e.stall_animation = e.hold_animation;
+    e.stall_brain = e.hold_brain;
+    e.stall_action = e.hold_action;
+    e.stall_life = e.hold_life;
+    e.stall_rechoices = e.hold_rechoices;
     e.hold_since = steps_;
     e.hold_asks = 0;
     e.rechoose = true;
@@ -617,6 +634,15 @@ void Table::AddDyingLife(std::uint64_t component) {
             return;
         }
     }
+}
+
+bool Table::NotBegun(std::string_view name) const {
+    return std::find(not_begun_.begin(), not_begun_.end(), name) != not_begun_.end();
+}
+
+void Table::SetNotBegun(std::vector<std::string> bodies) {
+    std::lock_guard lock(mutex_);
+    not_begun_ = std::move(bodies);
 }
 
 void Table::SetDying(std::vector<std::string> bodies) {
@@ -1403,6 +1429,7 @@ void Table::Reset() {
     for (auto& slot : held_life_) {
         slot.store(0, std::memory_order_relaxed);
     }
+    not_begun_.clear();
     dying_.clear();
     shot_ends_.clear();
     stream_notes_ = 0;

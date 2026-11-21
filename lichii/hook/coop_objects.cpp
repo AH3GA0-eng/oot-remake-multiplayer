@@ -363,6 +363,18 @@ void NoteAttackEdge(u64 actor, const std::string& name, bool attacking, const st
                    : (attacking ? "attack starts" : "attack ends"),
              verbs[0], verbs[1], verbs[2], verbs[3], verbs[4], bits);
 }
+// Boss turns: each boss's attack sequence over our walks (CoopBossNative::addr::InAttackSequence: after a
+// reaction it stays on until its own next attack), kept by actor.
+bool InAttackSequenceOf(u64 actor, u64 bits, bool boss) {
+    namespace ba = CoopBossNative::addr;
+    static std::mutex m;
+    static std::map<u64, ba::AttackSequence> sequences;
+    std::lock_guard lock(m);
+    if (sequences.size() >= 512) {
+        sequences.clear();  // (actors come and go with scenes: kept small)
+    }
+    return ba::InAttackSequence(sequences[actor], bits, boss);
+}
 }  // namespace
 // LICHII_COOP_OBJECTS_AI_HOLD=1 or 2 (off by default; docs/objects.md
 // "Holding a copy's AI", coop_hold.h): the BSA component is table +0xb0
@@ -4152,7 +4164,7 @@ private:
                                 }
                             }
                             if (read) {
-                                s.attacking = ba::IsAttack(bits);
+                                s.attacking = InAttackSequenceOf(a, bits, IsBossOrPart(s.name));
                                 NoteAttackEdge(a, s.name, *s.attacking, verbs, bits);
                             }
                         }
@@ -6161,11 +6173,11 @@ void NoteBosses(const std::vector<Seen>& seen, const std::vector<std::pair<u64, 
     }
     for (const Seen& s : g_bosses) {
         // Every boss body's death as our walk reads it (the LANE1 checks look for this line in each game).
-        const auto was = g_boss_lives.find(s.name);
-        if (s.life && s.life->life <= 0 && (was == g_boss_lives.end() || was->second.life > 0)) {
+        // Once per body: by its own last reading (row 191: several eggs share the name).
+        const BossLifeSeen* was = BossLifeOf(g_boss_lives, s.name, s.address);
+        if (s.life && s.life->life <= 0 && (was == nullptr || was->life > 0)) {
             LOG_INFO(Core, "coop: bosses: {} {:#x} read at life 0 here ({}): its death", s.name, s.address,
-                     was == g_boss_lives.end() ? std::string("first reading")
-                                               : "from " + std::to_string(was->second.life));
+                     was == nullptr ? std::string("first reading") : "from " + std::to_string(was->life));
         }
     }
     NoteBossLives(g_bosses, g_boss_lives);
