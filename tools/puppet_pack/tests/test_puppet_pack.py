@@ -1674,8 +1674,10 @@ class FullBuildTest(unittest.TestCase):
     def test_blade_copies(self):
         # held-piece: every player item with the game's weapon component (WeaponRef, through its
         # $parents) gets one copy per player number, `<item>_Blade<n>`, on a model project copy of
-        # its own per number (the game's bytes and textures), read from the romfs; a shield (no
-        # WeaponRef), an enemy's weapon (PerimeterAnalyserRef) and a `_Base` get none.
+        # its own per number, read from the romfs; a shield (no WeaponRef), an enemy's weapon
+        # (PerimeterAnalyserRef) and a `_Base` get none. Row 198: the copy's model names gear
+        # textures of its own (`W<a..p>_`), marked with BLADE_MARK_BASE + its number, so your own
+        # Link's colour (drawn over the game's texture, found by its texels) never reaches it.
         from puppet_pack import look_items, zs
         plain = zstandard.ZstdCompressor()
         item = "Weapon_Sword_Kokiri"
@@ -1703,6 +1705,8 @@ class FullBuildTest(unittest.TestCase):
         model = b"FRES" + bytes(12) + b"\x1b\x00Mt_Weapon_Sword_Kokiri_Alb\x00" + f"{item}\x00".encode()
         raw = plain.compress(model)
         self.write(f"Model/{item}.{item}.bfres.zs", raw)
+        tex = fake_bntx("Mt_Weapon_Sword_Kokiri_Alb", [bc1_block(1, 2)], fmt=0x1A)
+        self.write("Tex/Mt_Weapon_Sword_Kokiri_Alb.bntx.zs", plain.compress(tex))
         self.write("RSDB/ActorInfo.Product.999.rstbl.byml.zs", plain.compress(byml.dumps(ai)))
         self.write("RSDB/GameActorInfo.Product.999.rstbl.byml.zs",
                    plain.compress(byml.dumps([{"__RowId": r["__RowId"]} for r in ai])))
@@ -1730,10 +1734,28 @@ class FullBuildTest(unittest.TestCase):
                 self.assertEqual(byml.loads(files[comps["ModelInfoRef"][1:]]),
                                  {"FmdbName": item, "ModelProjectName": project})
             actor = look_items.blade_name(item, n)
-            # The model under the copy's project, byte for byte the game's: the game's textures.
-            self.assertEqual(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")), raw)
-            for f in (f"Pack/Actor/{actor}.pack", f"Model/{actor}.{item}.bfres"):
+            # The model under the copy's project, as long as the game's, naming its own gear texture.
+            got = d.decompress(build.read(os.path.join(out, f"Model/{actor}.{item}.bfres.zs")))
+            name = look_items.blade_tex_name("Mt_Weapon_Sword_Kokiri_Alb", n)
+            self.assertEqual(name, "W%s_Weapon_Sword_Kokiri_Alb" % "abc"[n - 1])
+            self.assertEqual(len(got), len(model))
+            self.assertIn(name.encode() + b"\x00", got)
+            self.assertNotIn(b"Mt_Weapon_Sword_Kokiri_Alb\x00", got)
+            # Its texture: the game's texels under that name, marked BLADE_MARK_BASE + n (never a look copy's
+            # 1..8, a boots colour's letter or the tunic's marks).
+            got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
+            renamed = tex.replace(b"Mt_Weapon_Sword_Kokiri_Alb\x00", name.encode() + b"\x00")
+            self.assertEqual(got, look_live.mark_bntx(renamed, look_items.BLADE_MARK_BASE + n))
+            self.assertEqual(look_live.texels(got)[-1], look_live.texels(renamed)[-1] ^ (0x80 + n))
+            self.assertIn(f"Tex/{name}.bntx.zs", m["blade_items"]["files"])
+            for f in (f"Pack/Actor/{actor}.pack", f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
                 self.assertGreater(t.get(f) or 0, 0, f)
+        marks = {look_items.blade_mark(n) for n in range(1, look_items.BLADE_COPIES + 1)}
+        self.assertFalse(marks & set(range(1, 9)))                                   # the look copies'
+        self.assertFalse(marks & {look_items.boots_mark(c) for c in look_items.COLORS})   # the boots colours'
+        self.assertFalse(marks & {0xA5, 0x5A})                                       # the tunic's
+        with self.assertRaises(look_items.TunicError):
+            look_items.blade_tex_name("Mt_Weapon_Sword_Kokiri_Alb", look_items.BLADE_COPIES + 1)
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Blade4.pack.zs")))
         self.assertEqual(look_items.BLADE_COPIES, 16)   # the protocol's kMaxPlayers
         for none in ("Weapon_Shield_Wood", "Weapon_PoeLamp", "Weapon_Sword_Base"):

@@ -77,6 +77,41 @@ def blade_name(item, number):
     return f"{item}_Blade{number}"
 
 
+# Row 198 (0.11.9): a wearer copy's model named the game's own gear textures, so the puppet's sword was drawn with
+# the very texture your own Link's colour is drawn over (the game loads a texture once, by its name), and its texels
+# were the game's (your Link's wardrobe finds its textures by them). Each wearer copy now names gear textures of its
+# own, `Mt_` -> `W<a..p>_` (as long; one letter a player number), their texels marked BLADE_MARK_BASE + the number:
+# never a look copy's 1..8, a boots colour's letter, or the tunic's marks. Painted by nobody: the game's colours.
+BLADE_MARK_BASE = 0x80
+
+
+def blade_tex_name(name, number):
+    """A wearer copy's name of a gear texture: `Mt_` -> `W<letter>_` (as long), a for number 1 to p for 16."""
+    if not name.startswith(PREFIX) or not 1 <= number <= BLADE_COPIES:
+        raise TunicError(f"{name}: no wearer copy name for number {number}")
+    return f"W{chr(ord('a') + number - 1)}_" + name[len(PREFIX):]
+
+
+def blade_mark(number):
+    """The mark of a wearer copy's gear textures (look_live.mark): BLADE_MARK_BASE + its number."""
+    if not 1 <= number <= BLADE_COPIES:
+        raise TunicError(f"no wearer copy mark for number {number}")
+    return BLADE_MARK_BASE + number
+
+
+def blade_model_for(model, number):
+    """A wearer copy's model naming its own gear textures; (bytes, the gear names it names)."""
+    named = [g for g in GEAR if (g.encode() + b"\0") in model]
+    for g in named:
+        model = rename(model, g, blade_tex_name(g, number), at_least=1)
+    return model, named
+
+
+def blade_texture_for(bntx, name, number):
+    """The game's gear texture under a wearer copy's name, its texels marked with the copy's mark."""
+    return mark_bntx(rename(bntx, name, blade_tex_name(name, number), at_least=1), blade_mark(number))
+
+
 def actor_components(members, item):
     """The item's ActorParam components with its $parents (from its pack) merged in; None when
     the pack lacks its ActorParam or a parent."""

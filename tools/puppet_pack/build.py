@@ -1558,12 +1558,27 @@ def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies,
             if (project, n) in projects_done:
                 continue   # (the Giant's Knife on the Biggoron's: its models are there already)
             projects_done.add((project, n))
+            named = set()
             for m in models:
                 raw = read(os.path.join(mdir, m))
                 m_dst = f"Model/{copy_project}{m[len(project):]}"
-                write(os.path.join(out_romfs, m_dst), raw)
-                table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(dicts.decompress(raw)))
+                # (row 198: its own gear textures, marked, never the game's that your Link's colour is drawn over)
+                data, names = look_items.blade_model_for(dicts.decompress(raw), n)
+                named.update(names)
+                write(os.path.join(out_romfs, m_dst), recompress(dicts, raw, data, level=3) if names else raw)
+                table.add_new(strip_zs(m_dst), table.get(strip_zs(f"Model/{m}")) or len(data))
                 files.append(m_dst)
+            for g in sorted(named):
+                t_rel = f"Tex/{g}.bntx.zs"
+                t_path = os.path.join(romfs, t_rel)
+                if not os.path.isfile(t_path):
+                    continue
+                t_raw = read(t_path)
+                t_data = look_items.blade_texture_for(dicts.decompress(t_raw), g, n)
+                t_dst = f"Tex/{look_items.blade_tex_name(g, n)}.bntx.zs"
+                write(os.path.join(out_romfs, t_dst), recompress(dicts, t_raw, t_data))
+                table.add_new(strip_zs(t_dst), table.get(strip_zs(t_rel)) or len(t_data) + PACK_SIZE_MARGIN)
+                files.append(t_dst)
         made.append(item)
     if made:
         log(f"wearer copies: {len(made)} items ({', '.join(made)}) x {copies} player numbers, "
