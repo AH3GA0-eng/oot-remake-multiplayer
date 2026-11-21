@@ -28,31 +28,38 @@ TEST_CASE("official mark: a proof checks for its room and version only, with the
   const OfficialPublicKey pub = official_public_key(seed);
   const std::uint16_t version = public_listing_version();
   const std::uint64_t t = 1'795'000'000;
-  const OfficialProof proof = official_sign(seed, "squadala", version, t);
+  const std::string relay = official_relay_name("159.54.182.85", 27530);
+  const OfficialProof proof = official_sign(seed, relay, "squadala", version, t);
   // Valid (the room's case does not matter: the relay compares names in lower case).
-  CHECK(official_check(pub, "squadala", version, proof, t));
-  CHECK(official_check(pub, "Squadala", version, proof, t + 10));
+  CHECK(official_check(pub, relay, "squadala", version, proof, t));
+  CHECK(official_check(pub, relay, "Squadala", version, proof, t + 10));
   // Wrong key: the kits' built-in one, or any other.
-  CHECK_FALSE(official_check(kOfficialPublicKey, "squadala", version, proof, t));
+  CHECK_FALSE(official_check(kOfficialPublicKey, relay, "squadala", version, proof, t));
   OfficialSeed other = seed;
   other[0] ^= 1;
-  CHECK_FALSE(official_check(official_public_key(other), "squadala", version, proof, t));
+  CHECK_FALSE(official_check(official_public_key(other), relay, "squadala", version, proof, t));
   // Tampered: another room name, another version, another time, a changed signature byte.
-  CHECK_FALSE(official_check(pub, "squadala2", version, proof, t));
-  CHECK_FALSE(official_check(pub, "forest-4821", version, proof, t));
-  CHECK_FALSE(official_check(pub, "squadala", static_cast<std::uint16_t>(version + 1), proof, t));
-  CHECK_FALSE(official_check(pub, "squadala", kProtocolVersion, proof, t));   // (the private listing's version)
+  CHECK_FALSE(official_check(pub, relay, "squadala2", version, proof, t));
+  CHECK_FALSE(official_check(pub, relay, "forest-4821", version, proof, t));
+  CHECK_FALSE(official_check(pub, relay, "squadala", static_cast<std::uint16_t>(version + 1), proof, t));
+  CHECK_FALSE(official_check(pub, relay, "squadala", kProtocolVersion, proof, t));   // (the private listing's version)
   OfficialProof moved = proof;
   moved.time_s += 1;
-  CHECK_FALSE(official_check(pub, "squadala", version, moved, t));
+  CHECK_FALSE(official_check(pub, relay, "squadala", version, moved, t));
   OfficialProof flipped = proof;
   flipped.signature[17] ^= 0x40;
-  CHECK_FALSE(official_check(pub, "squadala", version, flipped, t));
+  CHECK_FALSE(official_check(pub, relay, "squadala", version, flipped, t));
+  // Passed on through another relay (an attacker's relay lists 'squadala' with fresh proofs fetched from ours): the
+  // relay is in the signed bytes, so the proof does not check there; the relay's name is compared in lower case.
+  CHECK_FALSE(official_check(pub, official_relay_name("203.0.113.9", 27530), "squadala", version, proof, t));
+  CHECK_FALSE(official_check(pub, official_relay_name("159.54.182.85", 27531), "squadala", version, proof, t));
+  CHECK_FALSE(official_check(pub, "", "squadala", version, proof, t));
+  CHECK(official_relay_name("Relay.Example.NET", 27530) == "relay.example.net:27530");
   // Replayed: an old proof stops checking after kOfficialProofMaxAgeS; one from the future too.
-  CHECK(official_check(pub, "squadala", version, proof, t + kOfficialProofMaxAgeS));
-  CHECK_FALSE(official_check(pub, "squadala", version, proof, t + kOfficialProofMaxAgeS + 1));
-  CHECK_FALSE(official_check(pub, "squadala", version, proof, t + 86'400));
-  CHECK_FALSE(official_check(pub, "squadala", version, proof, t - kOfficialProofMaxAgeS - 1));
+  CHECK(official_check(pub, relay, "squadala", version, proof, t + kOfficialProofMaxAgeS));
+  CHECK_FALSE(official_check(pub, relay, "squadala", version, proof, t + kOfficialProofMaxAgeS + 1));
+  CHECK_FALSE(official_check(pub, relay, "squadala", version, proof, t + 86'400));
+  CHECK_FALSE(official_check(pub, relay, "squadala", version, proof, t - kOfficialProofMaxAgeS - 1));
 }
 
 TEST_CASE("official mark: the key file is 64 hex digits and nothing else") {

@@ -230,10 +230,16 @@ TEST_CASE("command line: --dedicated is the always-on public game (needs --publi
              .has_value());
   CHECK(!parse_command_line({"--bans-file"}, error).has_value());
   auto signed_game = parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public",
-                                         "--official-key-file", "/etc/squadala-public/official-game.key"},
+                                         "--official-key-file", "/etc/squadala-public/official-game.key",
+                                         "--official-relay", "159.54.182.85:27530"},
                                         error);
   REQUIRE(signed_game.has_value());
   CHECK(signed_game->official_key_file == "/etc/squadala-public/official-game.key");
+  CHECK(signed_game->official_relay == "159.54.182.85:27530");
+  CHECK(!parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public",
+                             "--official-key-file", "k.key"},
+                            error)
+             .has_value());   // (no --official-relay)
   CHECK(!parse_command_line({"--official-key-file", "k.key"}, error).has_value());
   CHECK(error.find("--public") != std::string::npos);
   auto plain = parse_command_line({}, error);

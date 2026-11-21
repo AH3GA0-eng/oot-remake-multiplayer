@@ -76,6 +76,7 @@ struct HostServiceConfig {
   // listing goes with a fresh signed proof (protocol::official_sign: room, listing version, time), so kits show the
   // room as the official public game. Never logged.
   std::optional<protocol::OfficialSeed> official_key;
+  std::string official_relay;   // the relay as the kits reach it (protocol::official_relay_name), signed in
   // coop_server's window shows the invite code (the host copies it from
   // there). The game's log must not have it: it holds the join password and
   // logs are shared (collect-logs). false: the code is only in status().

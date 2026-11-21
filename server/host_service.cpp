@@ -276,8 +276,11 @@ bool HostService::start(std::string& error) {
         };
         if (config_.public_game && config_.official_key) {
           const protocol::OfficialSeed key = *config_.official_key;
-          c.proof = [key](const std::string& room, const relay::RoomEntry& listed) -> std::optional<relay::RoomProof> {
-            const protocol::OfficialProof p = protocol::official_sign(key, room, listed.version, protocol::official_now_s());
+          const std::string signed_relay = config_.official_relay;
+          c.proof = [key, signed_relay](const std::string& room,
+                                        const relay::RoomEntry& listed) -> std::optional<relay::RoomProof> {
+            const protocol::OfficialProof p =
+                protocol::official_sign(key, signed_relay, room, listed.version, protocol::official_now_s());
             relay::RoomProof out;
             out.time_s = p.time_s;
             out.signature = p.signature;

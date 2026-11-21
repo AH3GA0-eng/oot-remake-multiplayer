@@ -72,6 +72,24 @@ std::atomic<bool> g_stop{false};   // the list left (or the module going): the a
 std::atomic<bool> g_done{true};    // the thread has nothing more of ours to touch
 std::thread g_thread;              // under g_mutex
 
+// The kit's own relay as the proofs name it, and until when it is not asked for proofs again after it did not answer
+// (a relay before 0.11.8 never does: asked again every kProofsRetryMs, not with every refresh).
+constexpr std::uint64_t kProofsRetryMs = 10 * 60 * 1000;
+std::atomic<std::uint64_t> g_proofs_silent_until_ms{0};
+
+std::string KitsRelayName() {
+    std::string host;
+    std::uint16_t port = 0;
+    if (!coop::server::relay::parse_relay_address(CoopTitleMenu::kDefaultRelay, host, port)) return {};
+    return coop::protocol::official_relay_name(host, port);
+}
+
+std::uint64_t SteadyMs() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
 void Ask(std::string relay) {
     namespace relay_ns = coop::server::relay;
     Snapshot s;
@@ -87,7 +105,14 @@ void Ask(std::string relay) {
             s.state = kCantReach;
         } else {
             at.port = port;
-            if (const auto list = relay_ns::list_rooms_on_relay(at, [] { return g_stop.load(); })) {
+            const std::string asked = coop::protocol::official_relay_name(host, port);
+            const std::string kits = KitsRelayName();
+            // (proofs only from the kit's own relay: the official game is listed nowhere else)
+            const bool ask_proofs = asked == kits && SteadyMs() >= g_proofs_silent_until_ms.load();
+            if (const auto list = relay_ns::list_rooms_on_relay(at, [] { return g_stop.load(); }, ask_proofs)) {
+                if (ask_proofs && !list->rooms.empty() && !list->proofs_answered && !g_stop.load()) {
+                    g_proofs_silent_until_ms = SteadyMs() + kProofsRetryMs;
+                }
                 for (const auto& e : list->rooms) {
                     s.rooms.push_back(FromListing(e.room, e.host, e.players, e.max_players, e.version));
                 }
@@ -96,7 +121,7 @@ void Ask(std::string relay) {
                 for (const auto& p : list->proofs) {
                     proofs.push_back(Proof{p.room, coop::protocol::OfficialProof{p.time_s, p.signature}});
                 }
-                Order(s.rooms, proofs, coop::protocol::official_now_s());
+                Order(s.rooms, proofs, coop::protocol::official_now_s(), asked, kits);
                 if (s.rooms.empty()) s.state = kNoGames;
             } else {
                 s.state = kCantReach;   // (no answer: no internet, the server down, or one from before the list)

@@ -11,7 +11,11 @@ namespace coop::protocol {
 
 namespace {
 
-constexpr std::string_view kTag = "squadala-official-listing-v1";
+constexpr std::string_view kTag = "squadala-official-listing-v2";
+
+void put_lower(std::vector<std::uint8_t>& out, std::string_view text) {
+  for (char c : text) out.push_back(static_cast<std::uint8_t>(std::tolower(static_cast<unsigned char>(c))));
+}
 
 std::array<std::uint8_t, 64> secret_key(const OfficialSeed& seed, OfficialPublicKey& pub) {
   std::array<std::uint8_t, 64> secret{};
@@ -22,10 +26,19 @@ std::array<std::uint8_t, 64> secret_key(const OfficialSeed& seed, OfficialPublic
 
 }  // namespace
 
-std::vector<std::uint8_t> official_message(std::string_view room, std::uint16_t version, std::uint64_t time_s) {
+std::string official_relay_name(std::string_view host, std::uint16_t port) {
+  std::string out;
+  for (char c : host) out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  return out + ":" + std::to_string(port);
+}
+
+std::vector<std::uint8_t> official_message(std::string_view relay, std::string_view room, std::uint16_t version,
+                                           std::uint64_t time_s) {
   std::vector<std::uint8_t> out(kTag.begin(), kTag.end());
   out.push_back(0);
-  for (char c : room) out.push_back(static_cast<std::uint8_t>(std::tolower(static_cast<unsigned char>(c))));
+  put_lower(out, relay);
+  out.push_back(0);
+  put_lower(out, room);
   out.push_back(0);
   out.push_back(static_cast<std::uint8_t>(version & 0xffu));
   out.push_back(static_cast<std::uint8_t>(version >> 8));
@@ -40,11 +53,11 @@ OfficialPublicKey official_public_key(const OfficialSeed& seed) {
   return pub;
 }
 
-OfficialProof official_sign(const OfficialSeed& seed, std::string_view room, std::uint16_t version,
-                            std::uint64_t time_s) {
+OfficialProof official_sign(const OfficialSeed& seed, std::string_view relay, std::string_view room,
+                            std::uint16_t version, std::uint64_t time_s) {
   OfficialPublicKey pub{};
   std::array<std::uint8_t, 64> secret = secret_key(seed, pub);
-  const std::vector<std::uint8_t> message = official_message(room, version, time_s);
+  const std::vector<std::uint8_t> message = official_message(relay, room, version, time_s);
   OfficialProof proof;
   proof.time_s = time_s;
   crypto_ed25519_sign(proof.signature.data(), secret.data(), message.data(), message.size());
@@ -52,11 +65,11 @@ OfficialProof official_sign(const OfficialSeed& seed, std::string_view room, std
   return proof;
 }
 
-bool official_check(const OfficialPublicKey& key, std::string_view room, std::uint16_t version,
-                    const OfficialProof& proof, std::uint64_t now_s) {
+bool official_check(const OfficialPublicKey& key, std::string_view relay, std::string_view room,
+                    std::uint16_t version, const OfficialProof& proof, std::uint64_t now_s) {
   const std::uint64_t age = now_s >= proof.time_s ? now_s - proof.time_s : proof.time_s - now_s;
   if (age > kOfficialProofMaxAgeS) return false;
-  const std::vector<std::uint8_t> message = official_message(room, version, proof.time_s);
+  const std::vector<std::uint8_t> message = official_message(relay, room, version, proof.time_s);
   return crypto_ed25519_check(proof.signature.data(), key.data(), message.data(), message.size()) == 0;
 }
 

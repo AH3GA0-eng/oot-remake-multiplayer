@@ -8,15 +8,20 @@ the relay's machine.
 ## The official mark (signed)
 
 The server signs its listing with the official game's private key (Ed25519; Monocypher's): the
-room name, the listing's version and the time, again with every listing (every 5 seconds). The
-relay passes the proof on beside the room list (a kit asks for it after the list), and every kit
-has the public key built in (coop/protocol/official_mark.hpp). A kit shows **Official public
-game**, first in the list, only when the proof checks for that room and version and is at most 5
-minutes old by the kit's clock. So:
+relay as the kits reach it (`--official-relay`, the kits' default relay), the room name, the
+listing's version and the time, again with every listing (every 5 seconds). The relay passes the
+proof on beside the room list (a kit asks the kit's own relay for it after the list), and every
+kit has the public key built in (coop/protocol/official_mark.hpp). A kit shows **Official public
+game**, first in the list, only for a room on the kit's own relay whose proof checks for that
+relay, room and version and is at most 5 minutes old by the kit's clock. So:
 
-- Someone who takes the room name `squadala` (while the server restarts, or on another relay) is
-  an ordinary public game: they have no key, and a proof copied from the list stops checking
-  within 5 minutes and never checks for another room or version.
+- Someone who takes the room name `squadala` on another relay is an ordinary public game, also if
+  their relay passes on fresh proofs fetched from ours: a proof names the relay it was made for,
+  and kits look for the mark on the kit's own relay only.
+- A proof copied from the list never checks for another room or version, and stops checking
+  within 5 minutes.
+- A relay that does not answer the proofs (before 0.11.8) is asked again only every 10 minutes,
+  so its list does not wait for them at every refresh.
 - Old kits and old relays (before 0.11.8) ignore the proofs: the official game shows there as an
   ordinary public game, never an error and never a missing room. The relay needs this release's
   `coop_server --relay` for the mark to show.
@@ -49,7 +54,9 @@ minutes old by the kit's clock. So:
    to the box and lock it to the service's user:
    `sudo install -D -m 600 -o coop -g coop official-game.key /etc/squadala-public/official-game.key`.
    coop_server refuses a key file other users can read, never prints the key, and says at start
-   whether it is the kits' key (`official key: the listing is signed`). A new pair (if the key
+   whether it is the kits' key (`official key: the listing is signed`). `--official-relay` must be
+   the kits' default relay exactly as the kit has it (`159.54.182.85:27530`); the log says
+   `official key: proofs name the relay ...`. A new pair (if the key
    is ever lost or leaked): `python tools/official-game/make_key.py PATH` writes a new key file
    and prints its public key, which then goes into `kOfficialPublicKey` in a new release.
 4. `sudo cp tools/official-game/squadala-public.service /etc/systemd/system/`, then
@@ -84,8 +91,11 @@ The commands act on every player, also the one who hosts the session's progress.
 ## Not there yet (0.11.9)
 
 - Moderation from the owner's own game (an admin key that lets the Lobby tab act as host there).
-- A reserved room name: while the server restarts (about 2 seconds), someone else could take the
-  room `squadala` on the relay. They show as an ordinary public game (no mark); the server takes
-  the name back when they leave.
+- A reserved room name (with the relay's host key). Until then, while the server is down or
+  restarts, someone else could take the room `squadala` on the kits' relay. Without the key they
+  show as an ordinary public game, but for up to 5 minutes (the proofs' age limit) after the
+  official server stopped they could pass on its last proof from the relay's answer and show the
+  mark. Keep the server up (Restart=always restarts it in 2 seconds and it takes the name back as
+  soon as the room is free); the reserved name closes this.
 - Rate limits: the per-player message limits and the relay's per-address limits only; no word
   filter, no report button.

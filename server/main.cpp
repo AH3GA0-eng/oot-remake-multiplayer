@@ -370,6 +370,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "coop_server: --official-key-file: %s\n", why.c_str());
         return 2;
       }
+      std::string relay_host;
+      std::uint16_t relay_port = 0;
+      if (!coop::server::relay::parse_relay_address(line->official_relay, relay_host, relay_port)) {
+        std::fprintf(stderr, "coop_server: --official-relay: '%s' is not a relay address\n", line->official_relay.c_str());
+        return 2;
+      }
+      config.official_relay = coop::protocol::official_relay_name(relay_host, relay_port);
+      say("official key: proofs name the relay " + config.official_relay);
       const auto pub = coop::protocol::official_public_key(*config.official_key);
       say(pub == coop::protocol::kOfficialPublicKey
               ? "official key: the listing is signed (kits show the official public game)"

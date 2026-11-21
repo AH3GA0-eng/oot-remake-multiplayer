@@ -63,6 +63,9 @@ struct CommandLine {
   // listing goes with a signed proof, so kits mark the room official. Needs --public. On Linux the file must
   // not be readable by group or others (chmod 600).
   std::string official_key_file;
+  // --official-relay HOST[:PORT]: the relay as the kits reach it (their default relay; docs/official-game.md), signed
+  // into each proof. Needed with --official-key-file (--relay-via is this machine's own way to it, 127.0.0.1).
+  std::string official_relay;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;

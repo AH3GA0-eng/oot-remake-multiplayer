@@ -3,9 +3,10 @@
 
 // The official public game's mark (docs/official-game.md): the official server signs its listing with an Ed25519
 // key only the owner holds; every kit has the public key built in and shows "Official public game" only for a room
-// whose proof checks. The proof binds the room name (in the relay's lower case), the listing's version and the time
-// it was made, so it is good for that room and version only and goes stale after kOfficialProofMaxAgeS: a copy taken
-// off the list cannot mark another room, and a replayed one stops working within minutes.
+// whose proof checks. The proof binds the relay it is listed on (as the kits name it: official_relay_name), the room
+// name (in the relay's lower case), the listing's version and the time it was made, so it is good for that relay,
+// room and version only and goes stale after kOfficialProofMaxAgeS: a copy taken off the list cannot mark a room on
+// another relay or another room, and a replayed one stops working within minutes.
 
 #include <array>
 #include <cstdint>
@@ -35,15 +36,19 @@ struct OfficialProof {
   bool operator==(const OfficialProof&) const = default;
 };
 
-// The bytes signed: "squadala-official-listing-v1", 0, the room in lower case, 0, version (u16, low byte first),
-// time_s (u64, low byte first).
-std::vector<std::uint8_t> official_message(std::string_view room, std::uint16_t version, std::uint64_t time_s);
+// A relay as the signed bytes name it: its host in lower case, ':', its port ("159.54.182.85:27530"), the same
+// whether a player typed the port or not.
+std::string official_relay_name(std::string_view host, std::uint16_t port);
+// The bytes signed: "squadala-official-listing-v2", 0, the relay (official_relay_name), 0, the room in lower case, 0,
+// version (u16, low byte first), time_s (u64, low byte first).
+std::vector<std::uint8_t> official_message(std::string_view relay, std::string_view room, std::uint16_t version,
+                                           std::uint64_t time_s);
 OfficialPublicKey official_public_key(const OfficialSeed& seed);
-OfficialProof official_sign(const OfficialSeed& seed, std::string_view room, std::uint16_t version,
-                            std::uint64_t time_s);
-// Whether `proof` is `key`'s for this room and version, made no more than kOfficialProofMaxAgeS from `now_s`.
-bool official_check(const OfficialPublicKey& key, std::string_view room, std::uint16_t version,
-                    const OfficialProof& proof, std::uint64_t now_s);
+OfficialProof official_sign(const OfficialSeed& seed, std::string_view relay, std::string_view room,
+                            std::uint16_t version, std::uint64_t time_s);
+// Whether `proof` is `key`'s for this relay, room and version, made no more than kOfficialProofMaxAgeS from `now_s`.
+bool official_check(const OfficialPublicKey& key, std::string_view relay, std::string_view room,
+                    std::uint16_t version, const OfficialProof& proof, std::uint64_t now_s);
 // A key file's text: 64 hex digits (either case) with spaces or line ends around them; nothing when it is not.
 std::optional<OfficialSeed> official_seed_from_text(std::string_view text);
 std::string official_seed_text(const OfficialSeed& seed);

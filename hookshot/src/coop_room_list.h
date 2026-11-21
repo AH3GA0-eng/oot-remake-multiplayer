@@ -32,19 +32,22 @@ struct Proof {
     std::string room;
     coop::protocol::OfficialProof proof;
 };
-// Whether a room is the official public game (docs/official-game.md): a public room with a proof that checks
-// against the kit's built-in key for its name and listing version, made within kOfficialProofMaxAgeS of now. A
-// room of any name without one (an old relay, a copy of the name, a stale or tampered proof) is an ordinary room.
-inline bool Proven(const Room& r, const std::vector<Proof>& proofs, std::uint64_t now_s,
+// Whether a room is the official public game (docs/official-game.md): a public room on the kit's own relay
+// (`relay`: official_relay_name of the relay asked; `kits_relay`: of the kit's default relay) with a proof that
+// checks against the kit's built-in key for that relay, its name and listing version, made within
+// kOfficialProofMaxAgeS of now. A room of any name without one (an old relay, a copy of the name, a proof passed
+// on through another relay, a stale or tampered proof) is an ordinary room.
+inline bool Proven(const Room& r, const std::vector<Proof>& proofs, std::uint64_t now_s, const std::string& relay,
+                   const std::string& kits_relay,
                    const coop::protocol::OfficialPublicKey& key = coop::protocol::kOfficialPublicKey) {
-    if (!r.is_public) return false;
+    if (!r.is_public || relay.empty() || relay != kits_relay) return false;
     const auto version = static_cast<std::uint16_t>(r.protocol | kPublicListingBit);
     const auto lower = [](std::string s) {
         for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         return s;
     };
     for (const Proof& p : proofs) {
-        if (lower(p.room) == lower(r.room) && coop::protocol::official_check(key, r.room, version, p.proof, now_s)) {
+        if (lower(p.room) == lower(r.room) && coop::protocol::official_check(key, relay, r.room, version, p.proof, now_s)) {
             return true;
         }
     }
@@ -53,8 +56,9 @@ inline bool Proven(const Room& r, const std::vector<Proof>& proofs, std::uint64_
 // The list's order, the same in every viewer: the official game first, then public games, then the rest (the
 // relay's order kept within each); marks each room's `official`.
 inline void Order(std::vector<Room>& rooms, const std::vector<Proof>& proofs, std::uint64_t now_s,
+                  const std::string& relay, const std::string& kits_relay,
                   const coop::protocol::OfficialPublicKey& key = coop::protocol::kOfficialPublicKey) {
-    for (Room& r : rooms) r.official = Proven(r, proofs, now_s, key);
+    for (Room& r : rooms) r.official = Proven(r, proofs, now_s, relay, kits_relay, key);
     const auto rank = [](const Room& r) { return r.official ? 0 : r.is_public ? 1 : 2; };
     std::stable_sort(rooms.begin(), rooms.end(), [&](const Room& a, const Room& b) { return rank(a) < rank(b); });
 }

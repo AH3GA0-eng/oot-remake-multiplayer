@@ -162,7 +162,8 @@ std::optional<Message> ask_page(ENetSocket s, const ENetAddress& relay, std::uin
 
 }  // namespace
 
-std::optional<RoomList> list_rooms_on_relay(const ENetAddress& relay, const std::function<bool()>& stop) {
+std::optional<RoomList> list_rooms_on_relay(const ENetAddress& relay, const std::function<bool()>& stop,
+                                            bool ask_proofs) {
   ENetSocket s = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
   if (s == ENET_SOCKET_NULL) return std::nullopt;
   ENetAddress any{};
@@ -182,8 +183,11 @@ std::optional<RoomList> list_rooms_on_relay(const ENetAddress& relay, const std:
       result->rooms.insert(result->rooms.end(), m->rooms.begin(), m->rooms.end());
     }
     // The proofs: once, a short wait (a relay before 0.11.8 never answers; the list is shown without them).
-    if (result && !result->rooms.empty()) {
-      if (const auto p = ask_page(s, relay, 0, stop, Kind::kListProofs, 1, 700)) result->proofs = p->proofs;
+    if (ask_proofs && result && !result->rooms.empty()) {
+      if (const auto p = ask_page(s, relay, 0, stop, Kind::kListProofs, 1, 700)) {
+        result->proofs = p->proofs;
+        result->proofs_answered = true;
+      }
     }
   }
   enet_socket_destroy(s);
