@@ -259,12 +259,9 @@ constexpr Entry kzh_Hans[] = {
     {"Your friend's router blocks the way in.", "朋友的路由器挡住了入口。"},
     {"Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:",
      "把这个应答码发给朋友，让他在「创建房间」页按「粘贴朋友的应答码」："},
-    // Row 209: no way through the routers (both strict, or CGNAT)
-    {"No way through your routers was found.", "找不到穿过你们路由器的路。"},
-    {"Both routers are strict, or an internet provider shares one address between homes (CGNAT): an answer code or UPnP cannot open that.",
-     "两边的路由器都很严格，或者网络供应商让很多家庭共用一个地址（CGNAT）：应答码和 UPnP 都打不开。"},
-    {"What works: both join a free VPN network (Radmin VPN or Tailscale). The host copies the line from \"VPN\" on their Host page; you paste it in Join a game.",
-     "可行的办法：两人都加入一个免费的 VPN 网络（Radmin VPN 或 Tailscale）。房主在「创建房间」页复制「VPN」那一行，你把它粘贴到「加入房间」里。"},
+    // Row 209: still no way in after the helper's wait
+    {"If they pasted it and nothing happens, both routers are strict or a provider shares one address (CGNAT): both join a free VPN network (Radmin VPN or Tailscale); the host copies the line from \"VPN\" on their Host page and you paste it in Join a game.",
+     "如果他已经粘贴了却没有反应，说明两边的路由器都很严格，或者网络供应商让很多家庭共用一个地址（CGNAT）：两人都加入一个免费的 VPN 网络（Radmin VPN 或 Tailscale）；房主在「创建房间」页复制「VPN」那一行，你把它粘贴到「加入房间」里。"},
     {"Or ask them to turn on UPnP in their router's settings and host again.",
      "或者请他打开路由器的 UPnP 再开一次房。"},
     {"Connected! Choose your file and play.", "已连接！选择存档开始玩。"},
@@ -1131,12 +1128,9 @@ constexpr Entry kzh_Hant[] = {
     {"Your friend's router blocks the way in.", "朋友的路由器擋住了入口。"},
     {"Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:",
      "把這個應答碼傳給朋友，讓他在「建立房間」頁按「貼上朋友的應答碼」："},
-    // Row 209: no way through the routers (both strict, or CGNAT)
-    {"No way through your routers was found.", "找不到穿過你們路由器的路。"},
-    {"Both routers are strict, or an internet provider shares one address between homes (CGNAT): an answer code or UPnP cannot open that.",
-     "兩邊的路由器都很嚴格，或者網路供應商讓很多家庭共用一個位址（CGNAT）：應答碼和 UPnP 都打不開。"},
-    {"What works: both join a free VPN network (Radmin VPN or Tailscale). The host copies the line from \"VPN\" on their Host page; you paste it in Join a game.",
-     "可行的辦法：兩人都加入一個免費的 VPN 網路（Radmin VPN 或 Tailscale）。房主在「建立房間」頁複製「VPN」那一行，你把它貼到「加入房間」裡。"},
+    // Row 209: still no way in after the helper's wait
+    {"If they pasted it and nothing happens, both routers are strict or a provider shares one address (CGNAT): both join a free VPN network (Radmin VPN or Tailscale); the host copies the line from \"VPN\" on their Host page and you paste it in Join a game.",
+     "如果他已經貼上了卻沒有反應，表示兩邊的路由器都很嚴格，或者網路供應商讓很多家庭共用一個位址（CGNAT）：兩人都加入一個免費的 VPN 網路（Radmin VPN 或 Tailscale）；房主在「建立房間」頁複製「VPN」那一行，你把它貼到「加入房間」裡。"},
     {"Or ask them to turn on UPnP in their router's settings and host again.",
      "或者請他打開路由器的 UPnP 再開一次房。"},
     {"Connected! Choose your file and play.", "已連線！選擇存檔開始玩。"},

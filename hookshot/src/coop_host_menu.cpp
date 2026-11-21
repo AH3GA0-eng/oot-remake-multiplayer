@@ -515,7 +515,7 @@ void Menu::RunJoin(JoinJob job) {
                 if (helper.no_way() && status_.problem != HOS_COOP_PROBLEM_NO_WAY) {   // row 209
                     status_.problem = HOS_COOP_PROBLEM_NO_WAY;
                     CopyText(status_.message, sizeof status_.message,
-                             "no way through the routers was found (both strict, or CGNAT): join over a VPN network");
+                             "still no way in after 3 minutes: if the host pasted the answer code, both routers are strict or CGNAT: join over a VPN network");
                 }
                 if (status_.state != HOS_COOP_WAIT_HOST) {
                     status_.state = HOS_COOP_WAIT_HOST;
