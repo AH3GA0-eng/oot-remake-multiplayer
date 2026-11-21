@@ -1083,7 +1083,7 @@ void RefreshFound(std::uint64_t now) {
             games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),
                              CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine), h.address,
                              h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players, h.game.max,
-                             h.game.protocol == mine});
+                             h.game.protocol == mine, false});
         }
     }
     g_menu.SetFound(std::move(games), std::move(state));

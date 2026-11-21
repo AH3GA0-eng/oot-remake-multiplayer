@@ -389,8 +389,8 @@ TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's room
     CHECK(m.page() == Page::kFind);
     CHECK(m.find_online());
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "Asking the relay..."});
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true},
-                {"forest (Mido)", "Full", "forest", 0, false, "Mido", 4, 4, true}}, "");
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true, false},
+                {"forest (Mido)", "Full", "forest", 0, false, "Mido", 4, 4, true, false}}, "");
     // (the most players first)
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "forest (Mido)", "kokiri (Saria)"});
     CHECK(m.view().rows[5].fixed);   // (full: not joinable)
@@ -437,7 +437,7 @@ TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's room
     m.Press(Input::kRight);
     CHECK_FALSE(m.find_online());
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "Looking for games..."});
-    m.SetFound({{"Saria's game", "1/4", "192.168.1.20", 27511, true, "Saria", 1, 4, true}}, "");
+    m.SetFound({{"Saria's game", "1/4", "192.168.1.20", 27511, true, "Saria", 1, 4, true, false}}, "");
     SelectRow(m, "Saria's game");
     m.Press(Input::kDecide);
     CHECK(Selected(m) == "Join");
@@ -1622,7 +1622,7 @@ TEST_CASE("pause tab: Browse games: Refresh asks for the list again and empties 
     m.Show(o);
     m.Open(Page::kFind);
     REQUIRE(m.page() == Page::kFind);
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true}}, "");
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true, false}}, "");
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "kokiri (Saria)"});
     SelectRow(m, "Refresh");
     CHECK(SelectedValue(m) == "Ask again");
@@ -1634,7 +1634,7 @@ TEST_CASE("pause tab: Browse games: Refresh asks for the list again and empties 
     CHECK(r->kind == Request::Kind::kRefreshFound);
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "Asking the relay..."});
     CHECK(Selected(m) == "Refresh");
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true}}, "");
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true, false}}, "");
     CHECK(Names(m).back() == "kokiri (Saria)");
     // This network's list: its own words
     SelectRow(m, "List");
