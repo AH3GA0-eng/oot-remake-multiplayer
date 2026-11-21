@@ -828,3 +828,22 @@ TEST_CASE("story: Saria's played flags from others wait until an ocarina is ours
     ints = {{host::ocarina::kTime, 1}};  // the fairy count unread, the Ocarina of Time held: held
     CHECK(CoopStory::GiftHeld(saria, read) == std::optional<bool>(true));
 }
+
+TEST_CASE("story: the Ocarina of Time's scene waits for its item, never mended (rows 195/204 sweep)") {
+    REQUIRE(CoopStory::Gifts().size() == 2);
+    CHECK(CoopStory::Gifts()[0].mend);
+    const auto& time = CoopStory::Gifts()[1];
+    CHECK_FALSE(time.mend);  // the randomizer's progressive ocarina: hold only
+    REQUIRE(time.played.size() == 1);
+    CHECK(time.played[0] == host::flag_hash("HavePlayedEvent.HyruleField_DoorOfTime_GetOcarinaOfTime"));
+    CHECK(CoopStory::Find(time.played[0]) != nullptr);
+    CHECK(time.count == host::ocarina::kTime);
+    REQUIRE(time.held.size() == 1);
+    CHECK(time.held[0] == host::ocarina::kTime);
+    std::array<bool, CoopStory::kGiftsMax> held{};
+    held[0] = true;  // the Fairy Ocarina is no Ocarina of Time
+    CHECK(CoopStory::GiftHolds(time.played[0], held));
+    held[1] = true;
+    CHECK_FALSE(CoopStory::GiftHolds(time.played[0], held));
+    for (const auto h : CoopStory::Gifts()[0].played) CHECK_FALSE(CoopStory::GiftHolds(h, held));
+}

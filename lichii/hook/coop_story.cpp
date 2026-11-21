@@ -533,8 +533,18 @@ constexpr std::uint32_t kOcarinaHeld[] = {
     0xb7df60f1u,  // PouchData.Item_Ocarina_Fairy.StockNum
     0x54e2a3d1u,  // PouchData.Item_Ocarina_Time.StockNum
 };
+// The Ocarina of Time (DoorOfTime flow, entry DoorOfTime_GetOcarinaOfTime): its pouch get is in the setting's own
+// flow and the setting is not co-watched, but its played flag is a shared story flag: one that came in before the
+// item (a getter cut off mid-scene) took the scene from a game with no Ocarina of Time.
+constexpr std::uint32_t kTimePlayed[] = {
+    0x78a420f6u,  // HavePlayedEvent.HyruleField_DoorOfTime_GetOcarinaOfTime
+};
+constexpr std::uint32_t kTimeHeld[] = {
+    0x54e2a3d1u,  // PouchData.Item_Ocarina_Time.StockNum
+};
 constexpr Gift kGifts[] = {
-    {kSariaPlayed, 0xb7df60f1u, kOcarinaHeld, "Item_Ocarina_Fairy", "Saria's gift on the bridge"},
+    {kSariaPlayed, 0xb7df60f1u, kOcarinaHeld, "Item_Ocarina_Fairy", "Saria's gift on the bridge", true},
+    {kTimePlayed, 0x54e2a3d1u, kTimeHeld, "Item_Ocarina_Time", "the Ocarina of Time in the moat", false},
 };
 } // namespace
 

@@ -343,7 +343,7 @@ void MendGifts(EmulatorMemory& memory, coop::host::GameFlags& flags, MendClocks&
     for (std::size_t i = 0; i < gifts.size() && i < CoopStory::kGiftsMax; ++i) {
         const auto& gift = gifts[i];
         auto& since = clocks.gifts[i];
-        const bool due = idle && !clocks.gift_given[i] &&
+        const bool due = gift.mend && idle && !clocks.gift_given[i] &&
                          CoopStory::GiftDue(gift, [&](std::uint32_t h) { return flags.get_bool(h); },
                                             [&](std::uint32_t h) { return flags.get_int(h); });
         if (!due) {

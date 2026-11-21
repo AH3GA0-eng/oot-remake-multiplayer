@@ -265,6 +265,10 @@ struct Gift {
     std::span<const std::uint32_t> held;    // StockNums: any above 0 means the gift (or better) is held
     const char* item;
     const char* where;  // for the log
+    // Given by MendGifts when spent and not held. Off for the Ocarina of Time: under the randomizer its spot gives a
+    // progressive ocarina (OOTRR flow_rules.rs pins "HF Ocarina of Time Item" to "Ocarina"), so the item a spent
+    // scene stands for is not always that one; its played flag is only held (GiftHolds).
+    bool mend;
 };
 std::span<const Gift> Gifts();
 inline constexpr std::size_t kGiftsMax = 4;  // Gifts().size() stays under it (story_test)
