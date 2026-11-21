@@ -67,6 +67,7 @@
 #include "coop_pvp_native_game.h"
 #include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
+#include "coop_hallway.h"
 #include "coop_mod_share.h"
 #include "coop_pack_notice.h"
 #include "coop_name_privacy.h"
@@ -1897,6 +1898,15 @@ public:
                         report.server_now_us);
         for (auto& line : CoopDbno::TakeLines()) {
             chat_.Add(std::move(line), true);
+        }
+        // The Forest Temple's twisting hallway (coop_hallway.h): a refused turn says who is in the way, to us
+        // and (as our chat) to them.
+        for (auto& line : CoopHallway::TakeOurLines()) {
+            LOG_INFO(Core, "coop: hallway: {}", line);
+            chat_.Add(std::move(line), true);
+        }
+        for (const auto& line : CoopHallway::TakeChatLines()) {
+            LOG_INFO(Core, "coop: hallway: said to the players inside: {}{}", line, SendChat(line) ? "" : " (not sent)");
         }
         // The Lobby (docs/play-online.md "Lobby"): the tab's host actions go out.
         CoopLobby::Frame(report.connected ? session_.get() : nullptr);

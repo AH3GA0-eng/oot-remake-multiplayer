@@ -55,6 +55,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
+#include "coop_hallway.h"
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
@@ -1692,6 +1693,12 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             // One death cutscene per game (coop_boss_scenes.h refuse_deaths): a boss's death asked again after it
             // played here is not run; x0 0 is the manager's own "not taken" (phase 1 still reports it).
             if (named && CoopBossScenes::RefuseAsk(name)) {
+                x[0] = 0;
+                return 1;
+            }
+            // The Forest Temple's twisting hallway never turns under another player standing in it
+            // (coop_hallway.h): the eye's turn is not run, and the lines say who is in the way.
+            if (named && CoopHallway::RefuseAsk(name)) {
                 x[0] = 0;
                 return 1;
             }

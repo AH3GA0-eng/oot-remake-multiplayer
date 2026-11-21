@@ -10,6 +10,7 @@
 // - the Life step (Hookshot patch 0007) asks the guard for our Link only.
 
 #include "coop_dbno_game.h"
+#include "coop_hallway.h"
 
 #include <array>
 #include <atomic>
@@ -424,13 +425,16 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     // Row 178: and every puppet while a boss whose own AI fights the Player only is here
     // (CoopBossNative::Table::FightsPlayerOnly: Phantom Ganon held his phase 2 with a puppet as his target).
     const auto player_only = CoopBossNative::TheTable().PlayerOnlyBoss();
+    std::uint32_t cannot_move = 0;  // coop_hallway.h: such a player never blocks a hallway's turn
     for (const Teammate& t : team) {
         if (auto why = Body::UnseenWhy(t.state == State::downed || t.state == State::spectating, t.status)) {
+            if (t.number < 32) cannot_move |= 1u << t.number;
             body.unseen_puppets.push_back({t.number, std::move(*why)});
         } else if (player_only) {
             body.unseen_puppets.push_back({t.number, "fighting " + *player_only + ", whose AI fights the Player only"});
         }
     }
+    CoopHallway::SetCannotMove(cannot_move);
     Body::TheCrawl().Want(body);
     for (auto& note : Body::TheCrawl().TakeNotes()) {
         LOG_INFO(Core, "coop: dbno: {}", note);
