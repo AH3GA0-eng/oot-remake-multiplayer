@@ -765,6 +765,8 @@ class Session {
     std::map<ConnectionId, std::uint64_t> chased_by;
     // Games whose boss is not ready to be owned (object_presence::unready).
     std::set<ConnectionId> unready;
+    // Games that take boss turns (object_presence::takes_turns): an older build is never given a turn.
+    std::set<ConnectionId> takes_turns;
     // A HANDOVER_ASK the owner has not answered yet.
     struct Ask {
       ConnectionId to = 0;
