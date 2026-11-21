@@ -1284,6 +1284,10 @@ namespace room_proof_tests {
 using coop::server::relay::decode;
 using coop::server::relay::encode;
 using coop::server::relay::Message;
+// (the room list tests' helpers, used by the proof test below)
+using room_list_tests::ask_list;
+using room_list_tests::host_at;
+using room_list_tests::list_room_message;
 
 namespace {
 
