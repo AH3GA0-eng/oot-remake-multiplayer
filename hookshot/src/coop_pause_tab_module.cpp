@@ -347,6 +347,7 @@ bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
 // set again even when it shows these words (another pane given the same placeholder). True when shown.
 bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSlot& l, const std::string& utf8,
                 bool force = false);
+thread_local const char* g_live_why = "";   // (why LiveTextIn last returned false: named in the Customize line)
 
 bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::string& path, int slot,
               const std::string& utf8) {
@@ -360,30 +361,32 @@ bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::str
 bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSlot& l, const std::string& utf8,
                 bool force) {
     if (!force && l.shown == utf8) return true;
-    if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || l.text == 0) return false;
+    if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || l.text == 0) {
+        return g_live_why = "no placeholder", false;
+    }
     // [0x00] the path lookup's layout, [0x10] the path, [0x60] the reference.
     std::uint8_t b[0x80] = {};
     std::memcpy(b + 0x10, path.c_str(), path.size() + 1);
     const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
-    if (base == 0) return false;
+    if (base == 0) return g_live_why = "no scratch", false;
     std::uint64_t name = 0;
-    if (!Call(ctx, kPathFind, base + 0x10, layout, base, 0, 0, &name) || name == 0) return false;
+    if (!Call(ctx, kPathFind, base + 0x10, layout, base, 0, 0, &name) || name == 0) return g_live_why = "path not in the layout", false;
     const std::uint64_t part = Read<std::uint64_t>(base);
     std::uint64_t table = 0, pane = 0;
-    if (part == 0 || !Call(ctx, kPaneTable, part + 0x40, 0, 0, 0, 0, &table) || table == 0) return false;
-    if (!Call(ctx, kPaneByName, table, name, 0, 0, 0, &pane) || pane == 0) return false;
-    if (((Read<std::uint32_t>(pane + 0xa8) >> 22) & 0xf) != kTextPaneKind) return false;   // (not a text pane)
+    if (part == 0 || !Call(ctx, kPaneTable, part + 0x40, 0, 0, 0, 0, &table) || table == 0) return g_live_why = "no pane table", false;
+    if (!Call(ctx, kPaneByName, table, name, 0, 0, 0, &pane) || pane == 0) return g_live_why = "pane not found", false;
+    if (((Read<std::uint32_t>(pane + 0xa8) >> 22) & 0xf) != kTextPaneKind) return g_live_why = "not a text pane", false;   // (not a text pane)
     std::string bytes = utf8;
     bytes.push_back('\0');
-    if (!CoopRuntime::Write(l.text, bytes.data(), bytes.size())) return false;
+    if (!CoopRuntime::Write(l.text, bytes.data(), bytes.size())) return g_live_why = "not written", false;
     const std::uint64_t attrs = Read<std::uint64_t>(pane + 0x10);
     const std::uint32_t length = static_cast<std::uint32_t>(utf8.size()) + l.extra;
     std::uint8_t ref[0x18] = {};
     std::memcpy(ref + 0x00, &l.text, 8);
     std::memcpy(ref + 0x08, &length, 4);
     std::memcpy(ref + 0x10, &attrs, 8);
-    if (!CoopRuntime::Write(base + 0x60, ref, sizeof ref)) return false;
-    if (!Call(ctx, kPaneSetMsg, pane, base + 0x60, 0)) return false;
+    if (!CoopRuntime::Write(base + 0x60, ref, sizeof ref)) return g_live_why = "reference not written", false;
+    if (!Call(ctx, kPaneSetMsg, pane, base + 0x60, 0)) return g_live_why = "the game's set failed", false;
     l.shown = utf8;
     return true;
 }
@@ -400,7 +403,11 @@ std::mutex g_snail_mutex;
 CoopSnailCustom::Driver g_snail;
 bool g_snail_open = false, g_snail_fallback = false;
 std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_snail_gen = 0, g_snail_pad_last = 0;
-std::map<std::uint64_t, bool> g_snail_layouts;   // a layout: his Customize screen's or not (looked up once)
+struct SnailLayout {
+    std::uint64_t screen = 0;   // the screen it was looked at with
+    bool his = false;           // his Customize screen's
+};
+std::map<std::uint64_t, SnailLayout> g_snail_layouts;   // a layout: his Customize screen's or not (once per screen)
 std::array<LiveSlot, kSnailSlots> g_snail_live{};
 CoopSnailCustom::Texts g_snail_shown;
 std::string g_snail_failed_said;   // (the panes last named as not set: said once per list)
@@ -433,7 +440,7 @@ SnailWritten SnailWrite(void* ctx, const CoopSnailCustom::Texts& t, std::string&
     using CoopSnailCustom::PaneText;
     const auto set = [&](const char* path, LiveSlot& l, const std::string& text, bool force) {
         if (LiveTextIn(ctx, g_snail_layout, path, l, PaneText(text), force)) return true;
-        failed += std::string(failed.empty() ? "" : ", ") + path;
+        failed += std::string(failed.empty() ? "" : ", ") + path + " (" + g_live_why + ")";
         return false;
     };
     set("T_Head_00", g_snail_live[0], t.title, false);
@@ -460,16 +467,27 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
     const std::uint64_t layout = Read<std::uint64_t>(screen + kScreenLayout);
     if (layout == 0) return;
     std::lock_guard lock(g_snail_mutex);
+    const auto his_panes = [&] {
+        return FindOwnPane(ctx, layout, "T_Val_00_00") != 0 && FindOwnPane(ctx, layout, "T_Label_00") != 0 &&
+               FindOwnPane(ctx, layout, "N_Mark_00") != 0;
+    };
+    // (a layout is looked at once per screen it comes with. Lane 053539, 0.11.9: Saria's reopen failed every one of
+    // his panes at each update: the layout was known as his by its address alone, and a layout freed and made again at
+    // that address is another screen's. A known address with another screen is looked at again, either way.)
     auto known = g_snail_layouts.find(layout);
-    if (known == g_snail_layouts.end()) {
-        if (g_snail_layouts.size() > 512) g_snail_layouts.clear();   // (layouts come and go: a bound)
-        const bool his = (FindOwnPane(ctx, layout, "T_Val_00_00") != 0 &&
-                                       FindOwnPane(ctx, layout, "T_Label_00") != 0 &&
-                                       FindOwnPane(ctx, layout, "N_Mark_00") != 0);
-        known = g_snail_layouts.emplace(layout, his).first;
-        if (his) LOG_INFO(Core, "coop: characters: Character Select's Customize screen found (layout {:#x})", layout);
+    if (known == g_snail_layouts.end() || known->second.screen != screen) {
+        if (known == g_snail_layouts.end() && g_snail_layouts.size() > 512) g_snail_layouts.clear();   // (a bound)
+        const bool was = known != g_snail_layouts.end() && known->second.his;
+        const bool his = his_panes();
+        known = g_snail_layouts.insert_or_assign(layout, SnailLayout{screen, his}).first;
+        if (his && !was) {
+            LOG_INFO(Core, "coop: characters: Character Select's Customize screen found (layout {:#x})", layout);
+        } else if (was && !his) {
+            LOG_INFO(Core, "coop: characters: layout {:#x} (screen {:#x}) was Character Select's Customize screen's and "
+                           "has not its panes now: not taken", layout, screen);
+        }
     }
-    if (!known->second) return;
+    if (!known->second.his) return;
     const int state = Read<std::uint8_t>(screen + kScreenState);
     if (state != 1 && state != 2) {
         SnailClose("closed");
@@ -483,7 +501,8 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
         g_snail_failed_said.clear();
         for (auto& l : g_snail_live) l.shown.clear();
         g_snail.Open(CoopLook::Shown(), CoopCharColours::ShownCharacter());
-        LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened: co-op's customization in it");
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened (screen {:#x}, layout {:#x}): "
+                       "co-op's customization in it", screen, layout);
     }
     if (!g_snail.Active()) return;
     if (auto look = g_snail.TakeChange()) CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
