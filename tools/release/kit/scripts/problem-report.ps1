@@ -1,14 +1,15 @@
 # Problem reports (docs/problem-reports.md): the co-op module's problems from the player's finished game sessions, masked
 # as collect-logs masks them (log-mask.ps1 Protect-LogText: addresses, MAC addresses, the user and PC names, invite codes,
 # passwords), players' names masked too, each problem in one report only, written as logs\coop-report-<date>.zip for the
-# player to send with the /report bot command. Nothing is sent from here: no webhook, no network. Windows only for now.
+# player to send with the /report bot command. Nothing is sent from here: no webhook, no network. Sending them, when the
+# player said yes, is problem-send.ps1's (it makes them with these functions).
 #
 # Opt-in, asked once: start.ps1 calls it with -AtStart, which asks the first time (default no) and remembers the answer in
 # logs\problem-reports.json; with yes, each start makes a zip when the sessions since the last one had a new problem.
 # problem-report.cmd (-Now) makes one at once, whatever the answer (the player asked for it); problem-report.cmd on (or
-# off) changes the answer.
+# off) changes the answer; off turns sending off too. problem-report.cmd send (or nosend) turns sending on or off.
 # Dot-source it for its functions (tools\release\tests\problem_report_test.ps1); run as a script for the above.
-param([Parameter(Position = 0)][ValidateSet('on', 'off')][string]$Turn, [switch]$AtStart, [switch]$Now)
+param([Parameter(Position = 0)][ValidateSet('on', 'off', 'send', 'nosend')][string]$Turn, [switch]$AtStart, [switch]$Now)
 
 # The module's problems: its own warnings and errors, lines that say something failed, was refused, gave up, timed out or
 # was lost, faults the guard caught, and crashes. The words are whole words, as the module writes them (lower case), so a
@@ -188,7 +189,7 @@ function New-ProblemReport([string[]]$Logs, [hashtable]$State, [string]$OutDir, 
     try {
         $lines = @("Squadala! problem report: $($new.Count) new problem(s) from $($read.Count) session(s)",
             "Kit: $(Protect-LogText $Version $mask $UserName $PcName)",
-            'Addresses, names, codes and passwords are masked (as collect-logs masks them). Send with /report.', '')
+            'Addresses, names, codes and passwords are masked (as collect-logs masks them). Send with /bugreport.', '')
         foreach ($e in @($new.Values | Sort-Object { -$_.Count })) { $lines += ('{0}x {1}' -f $e.Count, $e.Line) }
         [System.IO.File]::WriteAllText((Join-Path $stage 'problem-report.txt'), ($lines -join "`r`n") + "`r`n",
             (New-Object System.Text.UTF8Encoding $false))
@@ -226,12 +227,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
 $kit = if ($env:OOT_COOP_KIT) { $env:OOT_COOP_KIT } else { Split-Path -Parent $PSScriptRoot }
 $stateFile = Get-ProblemStateFile $kit
+if ($Turn -in 'send', 'nosend') { & (Join-Path $PSScriptRoot 'problem-send.ps1') $Turn; return }
+# (the lock problem-send.ps1 makes its reports under: a game's end may be making one now)
+$lock = New-Object System.Threading.Mutex($false, 'Local\SquadalaProblem-reports')
+try { [void]$lock.WaitOne(30000) } catch [System.Threading.AbandonedMutexException] { }
 $state = Read-ProblemState $stateFile
 if ($Turn) {
     $state.choice = $Turn
     Write-ProblemState $stateFile $state
     if ($Turn -eq 'on') { Write-Host 'Problem reports are on: each start makes one when your games had a new problem.' }
     else { Write-Host 'Problem reports are off. scripts\problem-report.cmd still makes one when you ask.' }
+    try { $lock.ReleaseMutex() } catch { }
+    if ($Turn -eq 'off') { & (Join-Path $PSScriptRoot 'problem-send.ps1') off }
     return
 }
 if (-not $state.choice) {
@@ -239,7 +246,7 @@ if (-not $state.choice) {
     if (-not $interactive) { return }
     Write-Host ''
     Write-Host 'Problem reports: after your games, the kit can put the co-op problems it finds in your logs into a small zip'
-    Write-Host 'for you to send with /report in the Squadala! Discord. Addresses, names and codes are masked; nothing is'
+    Write-Host 'for you to send with /bugreport in the Squadala! Discord. Addresses, names and codes are masked; nothing is'
     Write-Host 'sent by itself. Change it later with scripts\problem-report.cmd on (or off).'
     $answer = Read-Host 'Make problem reports? [y/N]'
     $state.choice = if ($answer -and $answer.Trim() -match '^(?i)(y|yes)$') { 'on' } else { 'off' }
@@ -248,11 +255,13 @@ if (-not $state.choice) {
 if ($AtStart -and $state.choice -ne 'on') { return }
 $version = ''
 try { $version = (Get-Content -LiteralPath (Join-Path $kit 'VERSION.txt') -TotalCount 1 -ErrorAction Stop) } catch { }
-$report = New-ProblemReport @(Get-ProblemLogs $kit) $state (Join-Path $kit 'logs') $version
-Write-ProblemState $stateFile $state
+try {
+    $report = New-ProblemReport @(Get-ProblemLogs $kit) $state (Join-Path $kit 'logs') $version
+    Write-ProblemState $stateFile $state
+} finally { try { $lock.ReleaseMutex() } catch { } }
 if ($report) {
     Write-Host "Problem report: $($report.Count) new problem(s) in $($report.Zip)"
-    Write-Host 'Send it with /report in the Squadala! Discord (addresses, names and codes are masked in it).'
+    Write-Host 'Send it with /bugreport in the Squadala! Discord (addresses, names and codes are masked in it).'
 } elseif ($Now) {
     Write-Host 'Problem report: no new problem in your game logs since the last report.'
 }
