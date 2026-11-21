@@ -472,6 +472,7 @@ struct Stats {
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t boss_turns = 0;          // a boss asked over to the next player's turn (boss_turn_us)
   std::uint64_t boss_kept_from_unready = 0;  // row 189: ticks a ready, unfit owner's boss was not asked to an unready game
+  std::uint64_t boss_finish_kept = 0;  // row 215: hand-overs of a boss in its finish not made (asked or answered)
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
   std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link
@@ -796,6 +797,9 @@ class Session {
     bool attacking = false;           // in its attack sequence
     std::uint16_t attack_epoch = 0;   // the epoch those two are of
     std::uint64_t attack_ended_at = 0;  // its newest attack's end in that epoch; 0: none
+    // Row 215: its finish was logged (a boss root at life 0 or in its death, kept by its owner's game); cleared
+    // when it is no longer in one (a refill for its next phase), so the next finish logs again.
+    bool finish_noted = false;
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -931,9 +935,17 @@ class Session {
   // The end of the owner hold: each held object to the lowest player number
   // that lists it, announced to its scene.
   void end_owner_hold(std::uint64_t now_us);
-  // Asks the owner to let go of it to `to`; finish_handover follows.
-  void ask_handover(const protocol::ObjectId& oid, Object& o, ConnectionId to,
+  // Asks the owner to let go of it to `to`; finish_handover follows. False: not asked (no owner, `to` gone, or a
+  // boss in its finish, keeps_finish).
+  bool ask_handover(const protocol::ObjectId& oid, Object& o, ConnectionId to,
                     std::uint64_t now_us);
+  // Row 215: a boss root whose owner's last state says it is at life 0 or plays its death (anim::IsDeath).
+  static bool boss_finishing(const Object& o);
+  // Row 215: no boss changes owner in its finish (at life 0 or in its death): the game that runs the finish keeps
+  // it to the end, whatever rule asks (hitter, turns, near, chase, unfit owner, unready). True: `o` (a boss or a
+  // boss's part) stays. A part may still go to its boss's own owner (the group together). Only an owner that
+  // leaves or unloads it gives it on (drop_presence: nobody else could run it).
+  bool keeps_finish(Object& o, ConnectionId to);
   // The owner answered (or never did: answer null) and the object moves.
   void finish_handover(const protocol::ObjectId& oid, Object& o,
                        const protocol::ObjectState* answer, std::uint64_t now_us);

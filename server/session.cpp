@@ -1814,8 +1814,7 @@ void Session::on_damage(ConnectionId id, Connection& c, Damage& d, std::uint64_t
         has_loaded(id, *root) && !root->unready.contains(id) &&
         (root->changed_at == 0 || now_us - root->changed_at >= config_.boss_hitter_cooldown_us) &&
         !owner_hit_lately(*root, now_us) && !owner_hit_lately(o, now_us)) {
-      ask_handover(root_id, *root, id, now_us);
-      ++stats_.boss_to_hitter;
+      if (ask_handover(root_id, *root, id, now_us)) ++stats_.boss_to_hitter;
     }
     return;  // a boss is not moved by the distance rule below
   }
@@ -2307,14 +2306,64 @@ bool Session::in_fight(const Object& o, std::uint64_t now_us) const {
   return target->fight_until > now_us;
 }
 
-void Session::ask_handover(const ObjectId& oid, Object& o, ConnectionId to,
+bool Session::boss_finishing(const Object& o) {
+  if (!o.last_state) return false;
+  if (o.last_state->life && o.last_state->life->life <= 0) return true;
+  const auto& a = o.last_state->animation;
+  return a && coop::protocol::anim::IsDeath(a->name);
+}
+
+// Row 215 (owner's playtest, 0.11.8): Ganon at life 0 went P2 -> P1 -> P4 -> P2 -> P1 in his finish (each hit on a
+// copy asked him over to its hitter), and each new owner's verbs drove the others' copies out of their own finish:
+// nobody could stab him. Every rule that moves an object asks here (or answers in finish_handover), so this one check
+// keeps every boss's finish (Ganon, Ganondorf, Twinrova and her sisters, Bongo Bongo, Volvagia, Morpha, Barinade,
+// King Dodongo, Gohma, Phantom Ganon, a mid-boss with the boss flag) in the game that runs it. A part follows its
+// boss, never the other way: a part's own death (a Bongo Bongo hand, a Barinade arm) does not hold its boss.
+bool Session::keeps_finish(Object& o, ConnectionId to) {
+  Object* root = &o;
+  if (o.root) {
+    if (auto r = objects_.find(*o.root); r != objects_.end()) root = &r->second;
+  }
+  if (!o.boss && !root->boss) return false;
+  if (!boss_finishing(*root)) {
+    root->finish_noted = false;  // alive (a refill for its next phase, Ganondorf's or Twinrova's): rules as before
+    return false;
+  }
+  if (root != &o && root->owner == to) return false;  // a part goes to its dying boss's own game
+  ++stats_.boss_finish_kept;
+  if (!root->finish_noted) {
+    root->finish_noted = true;
+    std::string owner = "nobody";
+    if (root->owner) {
+      if (auto oc = connections_.find(*root->owner); oc != connections_.end()) {
+        owner = "player " + std::to_string(oc->second.number);
+      }
+    }
+    std::string asked = "player ?";
+    if (auto tc = connections_.find(to); tc != connections_.end()) {
+      asked = "player " + std::to_string(tc->second.number);
+    }
+    const auto& life = root->last_state->life;
+    log("boss finish: " + (root->actor.empty() ? std::string("a boss") : root->actor) + " in " + root->scene +
+        (life ? " at life " + std::to_string(life->life) : std::string(" in its death")) + " stays with " + owner +
+        " (not to " + asked + "): no hand-over until it is gone (row 215)");
+  }
+  return true;
+}
+
+bool Session::ask_handover(const ObjectId& oid, Object& o, ConnectionId to,
                            std::uint64_t now_us) {
   auto target = connections_.find(to);
-  if (!o.owner || target == connections_.end()) return;
+  if (!o.owner || target == connections_.end()) return false;
+  if (keeps_finish(o, to)) {
+    o.candidate.reset();
+    return false;
+  }
   o.ask = Object::Ask{to, now_us};
   o.candidate.reset();
   send(*o.owner, kChannelOwnership, HandoverAsk{oid, o.epoch, target->second.number});
   ++stats_.handover_asked;
+  return true;
 }
 
 void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState* answer,
@@ -2374,6 +2423,9 @@ void Session::finish_handover(const ObjectId& oid, Object& o, const ObjectState*
     const std::int64_t cap = std::max<std::int64_t>(0, std::int64_t{*o.hit_base} - o.hit_sum);
     if (o.last_state->life->life > cap) o.last_state->life->life = static_cast<std::int32_t>(cap);
   }
+  // Row 215: asked while it lived, answered in its finish (the answer's life 0, or the hits passed on after the
+  // ask took the last of it): the owner's game keeps it, as a new ask would be refused now.
+  if (!bomb && keeps_finish(o, to)) return;
   std::uint8_t old_owner = 0;
   if (auto it = connections_.find(*o.owner); it != connections_.end()) {
     old_owner = it->second.number;
@@ -2630,8 +2682,7 @@ void Session::run_ownership(std::uint64_t now_us) {
     // spot (boss-copy-b).
     if (o.boss && o.unready.contains(owner)) {
       if (auto next = best_other(o, owner, true, now_us); next && !o.unready.contains(*next)) {
-        ++stats_.boss_to_ready;
-        ask_handover(oid, o, *next, now_us);
+        if (ask_handover(oid, o, *next, now_us)) ++stats_.boss_to_ready;
         continue;
       }
     }
@@ -2689,8 +2740,7 @@ void Session::run_ownership(std::uint64_t now_us) {
           o.candidate_since = now_us;
         }
         if (now_us - o.candidate_since >= config_.boss_near_hold_us) {
-          ++stats_.boss_to_near;
-          ask_handover(oid, o, *want, now_us);
+          if (ask_handover(oid, o, *want, now_us)) ++stats_.boss_to_near;
         }
       }
       continue;
