@@ -7,6 +7,7 @@ setflag Sequence_IsChildhood 0
 warp HyruleField_Adult HyruleField_FrontOfKakarikoVillage
 wait 1200
 mark field
+nofairy                  # every bottle emptied: a bottled fairy revives instead of downing (3 VOID runs, 2026-11-20)
 wait 360                # A's /dbno time 10 is in
 hurt 4
 wait 60
