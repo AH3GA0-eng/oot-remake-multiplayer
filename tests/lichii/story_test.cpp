@@ -802,3 +802,29 @@ TEST_CASE("story: Saria's gift spent with no ocarina is due, never with one held
     bools.clear();
     CHECK_FALSE(due());  // played flags not read: left alone
 }
+
+TEST_CASE("story: Saria's played flags from others wait until an ocarina is ours (rows 195/204, the cause)") {
+    const auto& saria = CoopStory::Gifts()[0];
+    for (const auto h : saria.played) CHECK(CoopStory::GiftOf(h) == std::optional<std::size_t>(0));
+    CHECK_FALSE(CoopStory::GiftOf(host::flag_hash("HavePlayedEvent.Dm_Kokiri_0140")));
+    CHECK_FALSE(CoopStory::GiftOf(host::ocarina::kFairy));
+
+    std::array<bool, CoopStory::kGiftsMax> held{};
+    for (const auto h : saria.played) CHECK(CoopStory::GiftHolds(h, held));  // no ocarina here: wait
+    CHECK_FALSE(CoopStory::GiftHolds(host::flag_hash("HavePlayedEvent.Dm_Kokiri_0140"), held));  // others pass
+    held[0] = true;
+    for (const auto h : saria.played) CHECK_FALSE(CoopStory::GiftHolds(h, held));  // the shared ocarina came
+
+    std::map<std::uint32_t, std::int32_t> ints;
+    const auto read = [&](std::uint32_t h) -> std::optional<std::int32_t> {
+        const auto it = ints.find(h);
+        return it == ints.end() ? std::nullopt : std::optional<std::int32_t>(it->second);
+    };
+    CHECK_FALSE(CoopStory::GiftHeld(saria, read).has_value());  // unread (a load): the hold keeps waiting
+    ints = {{host::ocarina::kFairy, 0}, {host::ocarina::kTime, 0}};
+    CHECK(CoopStory::GiftHeld(saria, read) == std::optional<bool>(false));
+    ints[host::ocarina::kFairy] = 1;
+    CHECK(CoopStory::GiftHeld(saria, read) == std::optional<bool>(true));
+    ints = {{host::ocarina::kTime, 1}};  // the fairy count unread, the Ocarina of Time held: held
+    CHECK(CoopStory::GiftHeld(saria, read) == std::optional<bool>(true));
+}
