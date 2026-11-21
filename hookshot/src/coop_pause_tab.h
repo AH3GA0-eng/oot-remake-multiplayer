@@ -332,11 +332,17 @@ private:
 // a player, Let in, Join). Only a Paste answer, a refused Host or Join, and co-op that came with the game's start open
 // co-op's menu (Hookshot's menu, over the game's pause menu) on its main page, whose note or help says why.
 // The game has no text entry or keyboard of its own (docs/game-ui.md, "Frames for a text field"), so a code is pasted.
-enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword, kMenu };
+enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword, kMenu,
+                  kHost };   // (kHost: the Host a game view, 0.11.9; appended: a view is kept as its number)
 // Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, a game on
 // this network to the list of them, else the five rows.
 View BackOf(View view);
-enum Row { kRowSession = 0, kRowJoinCode = 1, kRowPlayers = 2, kRowLetIn = 3, kRowLeave = 4 };
+// The main view's five entries (0.11.9, the owner: "clean, user friendly"): each always says what it opens and always
+// opens it (no row that does nothing); what co-op does now is on the list on the right (DetailLines).
+enum Row { kRowFind = 0, kRowHost = 1, kRowJoin = 2, kRowPlayers = 3, kRowSettings = 4 };
+// The Host view's rows (hosting): the room or code, Let in, the session's details, Stop hosting; the Join view's Leave row
+// (in a friend's game). Both Stop and Leave wait for a second A.
+inline constexpr int kHostRowStop = 3, kJoinRowLeave = 1;
 enum class RowAction {
     kNone,
     kOpenMain,    // co-op's menu, its main page: what co-op does now, Host and Join, Stop and Leave
@@ -398,6 +404,7 @@ enum class RowAction {
     kTypeRoomName,   // this game's room name when it hosts (coop-options.ini relay_room), typed with the typing keys, saved
     kViewMenu,       // Settings and look (View::kMenu): co-op's own menu's Customize, Settings, Commands, Local co-op
     kMenuTab,        // that view's row: its page on the list, and the list has the pad
+    kViewHost,       // the Host a game view (View::kHost): start hosting, or the game hosted: its code, Let in, Stop
 };
 inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).

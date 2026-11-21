@@ -451,7 +451,7 @@ SessionView ViewNow(View view) {
     if (const std::string& title = CoopWindowBrand::TitleOf(CoopRuntime::GameDir()); title != CoopWindowBrand::kTitle) {
         v.version = title;   // the kit's release (0.11.6), as the title bar
     }
-    v.confirm_leave = Confirming(View::kMain, kRowLeave);
+    v.confirm_leave = Confirming(View::kHost, kHostRowStop) || Confirming(View::kJoin, kJoinRowLeave);
     v.confirm_kick = Confirming(View::kPlayerHost, 2);
     v.confirm_ban = Confirming(View::kPlayerHost, 3);
     v.confirm_click = g_confirm_by_mouse.load();
@@ -1982,6 +1982,7 @@ void Act(int row, int line = -1, bool clicked = false) {
     case RowAction::kViewLetIn: SetView(View::kLetIn); break;
     case RowAction::kViewJoin: SetView(View::kJoin); break;
     case RowAction::kViewSession: SetView(View::kSession); break;
+    case RowAction::kViewHost: SetView(View::kHost); break;
     case RowAction::kBack: SetView(BackOf(view)); break;
     case RowAction::kTeleport: CoopHook::SendChat("/teleport " + v.player_name); break;   // (as the Lobby tab's)
     case RowAction::kOwnVoice: CoopLobby::SetOwnMute(player, CoopLobby::kVoice, (v.own_mutes & kMuteVoice) == 0); break;

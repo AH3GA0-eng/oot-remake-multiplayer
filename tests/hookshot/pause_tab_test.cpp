@@ -439,7 +439,7 @@ TEST_CASE("pause tab: the probe logs a screen's first update, its first second's
     CHECK(p.Seen(Blocker(2), 0).empty());
 }
 
-TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing") {
+TEST_CASE("pause tab (0.11.9): five fixed entries, each opening its own view, whatever co-op is doing") {
     Session idle;
     Session joined;
     joined.in_one = true;
@@ -449,149 +449,155 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
     hosting.code = true;
 
     for (const Session& s : {idle, joined, hosting_no_code, hosting}) {
-        CHECK(ActionFor(kRowSession, s) == (s.in_one ? RowAction::kViewSession : RowAction::kHost));
-        // (not in a session, the Players row is the games on this network, and Let in is auto-rejoin's switch; in one
-        // with nobody else known, nothing: below)
-        CHECK(ActionFor(kRowPlayers, s) == (s.in_one ? RowAction::kNone : RowAction::kViewLan));
-        // (in no session, nothing to leave: Settings and look there)
-        CHECK(ActionFor(kRowLeave, s) == (s.in_one ? RowAction::kConfirmLeave : RowAction::kViewMenu));
+        CHECK(ActionFor(kRowFind, s) == RowAction::kViewLan);
+        CHECK(ActionFor(kRowHost, s) == RowAction::kViewHost);
+        CHECK(ActionFor(kRowJoin, s) == RowAction::kViewJoin);
+        CHECK(ActionFor(kRowPlayers, s) == RowAction::kViewPlayers);   // (every entry opens: "just you" too)
+        CHECK(ActionFor(kRowSettings, s) == RowAction::kViewMenu);
         CHECK(ActionFor(-1, s) == RowAction::kNone);              // (no row under the cursor)
         CHECK(ActionFor(kRows, s) == RowAction::kNone);
+        for (int row = 0; row < kRows; ++row) CHECK(ActionFor(row, s) != RowAction::kNone);
     }
-    // The Players row opens the list once another player is in: "Players: just you" has nothing to open (a tester).
-    Session two = hosting;
-    two.listed = 1;
-    CHECK(ActionFor(kRowPlayers, two) == RowAction::kNone);
-    two.listed = 2;
-    CHECK(ActionFor(kRowPlayers, two) == RowAction::kViewPlayers);
-    // Join code: the host copies its room name or code (the row says so); a host whose code is still coming, or a
-    // guest, the Session view; alone the Join view.
-    CHECK(ActionFor(kRowJoinCode, hosting) == RowAction::kCopyCode);
-    CHECK(ActionFor(kRowJoinCode, hosting_no_code) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowJoinCode, joined) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowJoinCode, idle) == RowAction::kViewJoin);
-    // Let in: the host's Let in view when somebody asks (or an invite code's answer codes); else, and a guest's,
-    // Settings and look (Resync from host is on the guest's Session view).
-    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kViewMenu);   // (a room, nobody asks)
-    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kViewMenu);   // (nobody asks, no answer codes)
-    CHECK(ActionFor(kRowLetIn, joined) == RowAction::kViewMenu);
-    CHECK(ActionFor(kRowLetIn, idle) == RowAction::kAutoRejoin);
-    Session resync = joined;
-    resync.can_resync = true;
-    CHECK(ActionFor(kRowLetIn, resync) == RowAction::kViewMenu);
-    CHECK(ActionFor(View::kSession, 3, resync) == RowAction::kResync);
-    idle.can_resync = true;   // (not in a session: nothing to resync from; the row is auto-rejoin's)
-    CHECK(ActionFor(kRowLetIn, idle) == RowAction::kAutoRejoin);
-    idle.can_resync = false;
-    // Each has words for the log.
-    for (RowAction a : {RowAction::kNone, RowAction::kOpenMain, RowAction::kCopyCode, RowAction::kAllow,
-                        RowAction::kHost, RowAction::kConfirmLeave}) {
-        CHECK(std::string(ActionWords(a)).size() > 3);
-    }
-}
-
-TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a waiting guest's Copy answer") {
-    // A host with an invite code (no relay room): a friend whose direct join failed sends back an answer code, which
-    // the Let in view's fourth row pastes (co-op's menu's Paste answer). The five rows keep Let in: a run showed
-    // players pressing "Paste answer code" there without knowing what it was (2026-11-19).
-    Session host;
-    host.hosting = host.in_one = host.code = host.invite = true;
-    CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
-    CHECK(ActionFor(View::kLetIn, 0, host) == RowAction::kPasteAnswer);   // (nobody asks: first, no gap)
-    CHECK(ActionFor(View::kLetIn, 3, host) == RowAction::kNone);
-    CHECK(ActionFor(kRowJoinCode, host) == RowAction::kCopyCode);
-    host.asking = true;
-    CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
-    // A relay room has no answer codes: Let in is its view (Let in or Refuse who asks).
-    Session relay;
-    relay.hosting = relay.in_one = relay.code = true;
-    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kViewMenu);   // (nobody asks yet: Settings and look)
-    relay.asking = true;
-    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kViewLetIn);
-    // A guest the host could not reach: Join code copies this game's answer code (co-op's menu's Copy answer).
+    // Co-op failed: the Host entry shows why (the Session view, which starts hosting again).
+    Session failed;
+    failed.failed = true;
+    CHECK(ActionFor(kRowHost, failed) == RowAction::kViewSession);
+    // A guest the host could not reach: the Join entry copies this game's answer code (co-op's menu's Copy answer).
     Session waiting;
     waiting.in_one = waiting.wait_host = true;
-    CHECK(ActionFor(kRowJoinCode, waiting) == RowAction::kCopyAnswer);
-    CHECK(ActionFor(kRowLeave, waiting) == RowAction::kConfirmLeave);
-    for (RowAction a : {RowAction::kPasteAnswer, RowAction::kCopyAnswer}) {
+    CHECK(ActionFor(kRowJoin, waiting) == RowAction::kCopyAnswer);
+    // Each has words for the log.
+    for (RowAction a : {RowAction::kNone, RowAction::kOpenMain, RowAction::kCopyCode, RowAction::kAllow,
+                        RowAction::kHost, RowAction::kConfirmLeave, RowAction::kViewHost}) {
         CHECK(std::string(ActionWords(a)).size() > 3);
     }
-
-    SessionView v;
-    v.s = Session{};
-    v.s.hosting = v.s.in_one = v.s.code = v.s.invite = true;
-    v.players = 1;
-    CHECK(RowTexts(v) ==
-          std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Let in: answer code", "Stop hosting"});
-    CHECK(RowTexts(View::kLetIn, v) == std::vector<std::string>{"Paste answer code", "", "Settings and look", "", "Back"});
-    v.asking = {"Saria"};
-    v.s.asking = true;
-    CHECK(RowTexts(v)[kRowLetIn] == "Let in Saria");
-    SessionView w;
-    w.s.in_one = w.s.wait_host = true;
-    w.connecting = true;
-    CHECK(RowTexts(w)[kRowSession] == "Connecting...");
-    CHECK(RowTexts(w)[kRowJoinCode] == "Copy answer code");
-    SessionView starting;   // (the page's own Host, still starting: a host's rows, not a guest's)
-    starting.s.in_one = starting.s.hosting = true;
-    starting.connecting = true;
-    CHECK(RowTexts(starting)[kRowSession] == "Starting to host...");
-    CHECK(RowTexts(starting)[kRowLeave] == "Stop hosting");
 }
 
-TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width") {
-    SessionView idle;
-    // (in no session nothing to leave: Settings and look on the last row)
-    CHECK(RowTexts(idle) == std::vector<std::string>{"Host a game", "Join by room or IP", "Browse games",
-                                                     "Auto-rejoin: Off", "Settings and look"});
-    idle.s.auto_rejoin = true;
-    CHECK(RowTexts(idle)[kRowLetIn] == "Auto-rejoin: On");
-    idle.s.rejoining = true;
-    CHECK(RowTexts(idle)[kRowLetIn] == "Auto-rejoin: trying...");
-    idle.s.auto_rejoin = idle.s.rejoining = false;
+TEST_CASE("pause tab (0.11.9): the Host view: Start hosting alone, the game's code, Let in, details and Stop hosting") {
+    Session idle;
+    CHECK(ActionFor(View::kHost, 0, idle) == RowAction::kHost);
+    CHECK(ActionFor(View::kHost, 1, idle) == RowAction::kViewMenu);   // (the host settings)
+    CHECK(ActionFor(View::kHost, 2, idle) == RowAction::kNone);
+    CHECK(ActionFor(View::kHost, kRows - 1, idle) == RowAction::kBack);
+    Session host;
+    host.hosting = host.in_one = true;
+    CHECK(ActionFor(View::kHost, 0, host) == RowAction::kViewSession);   // (the code still coming)
+    host.code = true;
+    CHECK(ActionFor(View::kHost, 0, host) == RowAction::kCopyCode);
+    CHECK(ActionFor(View::kHost, 1, host) == RowAction::kViewLetIn);     // (nobody asks: the view says so)
+    CHECK(ActionFor(View::kHost, 2, host) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kHost, kHostRowStop, host) == RowAction::kConfirmLeave);
+    Session guest;
+    guest.in_one = true;
+    CHECK(ActionFor(View::kHost, 0, guest) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kHost, 1, guest) == RowAction::kViewJoin);     // (leave there first)
 
+    SessionView v;
+    CHECK(RowTexts(View::kHost, v) == std::vector<std::string>{"Start hosting", "Host settings", "", "", "Back"});
+    v.s.hosting = v.s.in_one = v.s.code = v.s.invite = true;
+    v.players = 1;
+    CHECK(RowTexts(View::kHost, v) ==
+          std::vector<std::string>{"Copy invite code", "Let in: answer code", "Session details", "Stop hosting", "Back"});
+    v.s.invite = false;
+    v.room = "forest-gang";
+    CHECK(RowTexts(View::kHost, v)[0] == "Room: forest-gang");
+    CHECK(RowTexts(View::kHost, v)[1] == "Nobody asks to join");
+    v.asking = {"Saria"};
+    v.s.asking = true;
+    CHECK(RowTexts(View::kHost, v)[1] == "Let in Saria");
+    v.asking = {"Saria", "Mido", "Darunia"};
+    CHECK(RowTexts(View::kHost, v)[1] == "Let in Saria (+2)");
+    v.confirm_leave = true;
+    CHECK(RowTexts(View::kHost, v)[kHostRowStop] == "A again: stop hosting");
+    v.confirm_click = true;   // (the first a click: the second one too)
+    CHECK(RowTexts(View::kHost, v)[kHostRowStop] == "Click again to stop");
+    SessionView starting;   // (the page's own Host, still starting)
+    starting.s.in_one = starting.s.hosting = true;
+    starting.connecting = true;
+    CHECK(RowTexts(View::kHost, starting)[0] == "Starting to host...");
+    CHECK(RowTexts(View::kHost, starting)[kHostRowStop] == "Stop hosting");
+    CHECK(RowTexts(View::kLetIn, v).back() == "Back");
+}
+
+TEST_CASE("pause tab (0.11.9): the Join view in a friend's game: its details and Leave, a host goes to its game") {
+    Session guest;
+    guest.in_one = true;
+    CHECK(ActionFor(View::kJoin, 0, guest) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kJoin, kJoinRowLeave, guest) == RowAction::kConfirmLeave);
+    CHECK(ActionFor(View::kJoin, 2, guest) == RowAction::kNone);
+    Session waiting = guest;
+    waiting.wait_host = true;
+    CHECK(ActionFor(View::kJoin, 0, waiting) == RowAction::kCopyAnswer);
+    Session launcher;
+    launcher.by_launcher = true;
+    CHECK(ActionFor(View::kJoin, kJoinRowLeave, launcher) == RowAction::kConfirmLeave);   // (left here too)
+    Session host;
+    host.hosting = host.in_one = true;
+    CHECK(ActionFor(View::kJoin, 0, host) == RowAction::kViewHost);
+    CHECK(ActionFor(View::kJoin, 1, host) == RowAction::kNone);
+
+    SessionView g;
+    g.s.in_one = true;
+    CHECK(RowTexts(View::kJoin, g) == std::vector<std::string>{"Session details", "Leave the game", "", "", "Back"});
+    g.confirm_leave = true;
+    CHECK(RowTexts(View::kJoin, g)[kJoinRowLeave] == "A again: leave");
+    g.confirm_click = true;
+    CHECK(RowTexts(View::kJoin, g)[kJoinRowLeave] == "Click again to leave");
+    SessionView h;
+    h.s.in_one = h.s.hosting = true;
+    CHECK(RowTexts(View::kJoin, h)[0] == "Hosting: open Your game");
+}
+
+TEST_CASE("pause tab (0.11.9): the five entries' words, in at most a row's width") {
+    SessionView idle;
+    CHECK(RowTexts(idle) ==
+          std::vector<std::string>{"Find a game", "Host a game", "Join a game", "Players", "Co-op settings"});
     SessionView host;
     host.s.hosting = host.s.in_one = true;
     host.players = 1;
     CHECK(RowTexts(host) ==
-          std::vector<std::string>{"Hosting", "Room: coming...", "Players: just you", "Settings and look", "Stop hosting"});
-    host.room = "forest-gang";
+          std::vector<std::string>{"Find a game", "Your game", "Join a game", "Players: just you", "Co-op settings"});
     host.players = 3;
     host.asking = {"Saria"};
-    CHECK(RowTexts(host)[kRowJoinCode] == "Room: forest-gang");
+    CHECK(RowTexts(host)[kRowHost] == "Your game: Saria asks");
     CHECK(RowTexts(host)[kRowPlayers] == "Players: 3");
-    CHECK(RowTexts(host)[kRowLetIn] == "Let in Saria");
-    host.asking = {"Saria", "Mido", "Darunia"};
-    CHECK(RowTexts(host)[kRowLetIn] == "Let in Saria (+2)");
-
+    host.asking = {"Saria", "Mido"};
+    CHECK(RowTexts(host)[kRowHost] == "Your game: 2 ask");
     SessionView guest;
     guest.s.in_one = true;
     guest.players = 2;
     CHECK(RowTexts(guest) ==
-          std::vector<std::string>{"In a session", "Session details", "Players: 2", "Settings and look", "Leave"});
-    guest.s.can_resync = true;
-    CHECK(RowTexts(View::kSession, guest)[3] == "Resync from host");
-    guest.s.can_resync = false;
-    guest.confirm_leave = true;
-    CHECK(RowTexts(guest)[kRowLeave] == "A again: leave");
-    host.confirm_leave = true;
-    CHECK(RowTexts(host)[kRowLeave] == "A again: stop hosting");
-    host.confirm_click = true;   // (the first a click: the second one too)
-    CHECK(RowTexts(host)[kRowLeave] == "Click again to stop");
-    host.confirm_leave = false;
+          std::vector<std::string>{"Find a game", "Host a game", "Your session", "Players: 2", "Co-op settings"});
     SessionView joining;
     joining.connecting = true;
     joining.s.in_one = true;
-    CHECK(RowTexts(joining)[kRowSession] == "Connecting...");
+    CHECK(RowTexts(joining)[kRowJoin] == "Connecting...");
+    SessionView w;
+    w.s.in_one = w.s.wait_host = true;
+    CHECK(RowTexts(w)[kRowJoin] == "Copy answer code");
+    SessionView starting;
+    starting.s.in_one = starting.s.hosting = true;
+    starting.connecting = true;
+    CHECK(RowTexts(starting)[kRowHost] == "Starting to host...");
+    SessionView fv;
+    fv.s.failed = true;
+    CHECK(RowTexts(fv)[kRowHost] == "Co-op failed: why");
+    SessionView turned;
+    turned.s.in_one = true;
+    turned.turned_away = "full";
+    CHECK(RowTexts(turned)[kRowJoin] == "Turned away");
 
-    // A long room name is cut at a UTF-8 character's start, with "...".
+    // A long room name is cut at a UTF-8 character's start, with "..." (the Host view's first row).
+    host.asking.clear();
     host.room = std::string(30, 'a') + "\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9";
-    const std::string cut = RowTexts(host)[kRowJoinCode];
+    const std::string cut = RowTexts(View::kHost, host)[0];
     CHECK(cut.size() <= kRowChars);
     CHECK(cut.substr(cut.size() - 3) == "...");
     CHECK((static_cast<unsigned char>(cut[cut.size() - 4]) & 0xc0) != 0xc0);   // (no lead byte left alone)
-    for (const SessionView& v : {idle, host, guest, joining}) {
+    for (const SessionView& v : {idle, host, guest, joining, w, starting, fv, turned}) {
         for (const std::string& r : RowTexts(v)) CHECK(r.size() <= kRowChars);
+        for (const std::string& r : RowTexts(View::kHost, v)) CHECK(r.size() <= kRowChars);
+        for (const std::string& r : RowTexts(View::kJoin, v)) CHECK(r.size() <= kRowChars);
     }
 }
 
@@ -666,32 +672,33 @@ TEST_CASE("pause tab: co-op that came with the game's start, and a failed Host, 
     // (the launcher rule, as co-op's menu: Host.bat / Join.bat / coop.ini co-op is not started or stopped here)
     Session launcher;
     launcher.by_launcher = launcher.in_one = true;
-    CHECK(ActionFor(kRowSession, launcher) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kConfirmLeave);   // (left here too, after a second A)
+    CHECK(ActionFor(View::kHost, 0, launcher) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kJoin, kJoinRowLeave, launcher) == RowAction::kConfirmLeave);   // (left there, after a second A)
     launcher.in_one = false;   // (not connected yet: still not Host)
-    CHECK(ActionFor(kRowSession, launcher) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kConfirmLeave);
+    CHECK(ActionFor(View::kHost, 0, launcher) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kJoin, kJoinRowLeave, launcher) == RowAction::kConfirmLeave);
     SessionView lv;
     lv.s = launcher;
-    CHECK(RowTexts(lv)[kRowLeave] == "Leave");
+    CHECK(RowTexts(lv)[kRowJoin] == "Your session");
+    CHECK(RowTexts(View::kJoin, lv)[kJoinRowLeave] == "Leave the game");
     lv.confirm_leave = true;
-    CHECK(RowTexts(lv)[kRowLeave] == "A again: leave");
+    CHECK(RowTexts(View::kJoin, lv)[kJoinRowLeave] == "A again: leave");
     // A Host (or Join) that failed: the row says so (why: the details list), and A shows the Session view.
     Session failed;
     failed.failed = true;
-    CHECK(ActionFor(kRowSession, failed) == RowAction::kViewSession);
+    CHECK(ActionFor(kRowHost, failed) == RowAction::kViewSession);
     SessionView fv;
     fv.s = failed;
-    CHECK(RowTexts(fv)[kRowSession] == "Co-op failed");
+    CHECK(RowTexts(fv)[kRowHost] == "Co-op failed: why");
 }
 
 TEST_CASE("pause tab: a second A (Leave, Kick, Ban) is waited for only while the cursor stays on its row") {
-    CHECK(KeepConfirm(true, kRowLeave, kRowLeave));
-    CHECK_FALSE(KeepConfirm(true, kRowLetIn, kRowLeave));
-    CHECK_FALSE(KeepConfirm(true, -1, kRowLeave));
+    CHECK(KeepConfirm(true, kHostRowStop, kHostRowStop));
+    CHECK_FALSE(KeepConfirm(true, 1, kHostRowStop));
+    CHECK_FALSE(KeepConfirm(true, -1, kHostRowStop));
     CHECK_FALSE(KeepConfirm(true, -1, -1));       // (nothing waited for)
     CHECK(KeepConfirm(true, 2, 2));               // (Kick, on the host's controls)
-    CHECK_FALSE(KeepConfirm(false, kRowLeave, kRowLeave));   // (System back: no second A waited for)
+    CHECK_FALSE(KeepConfirm(false, kHostRowStop, kHostRowStop));   // (System back: no second A waited for)
 }
 
 TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same five rows, Back last") {
@@ -865,9 +872,9 @@ TEST_CASE("pause tab: the Session view: the host's lines to copy, a guest's host
     CHECK(ActionFor(View::kPassword, 1, guest_pw) == RowAction::kNone);
     hv.s.password_shown = host.password_shown = false;
     hv.host_password.clear();
-    // The main view's Join code row says what its copy did too.
+    // The Host view's code row says what its copy did too.
     hv.note = "No clipboard here";
-    CHECK(RowTexts(hv)[kRowJoinCode] == "No clipboard here");
+    CHECK(RowTexts(View::kHost, hv)[0] == "No clipboard here");
 
     // A guest: whose game, how many, Resync from host when its game can take the host's save, co-op's hint.
     Session guest;
@@ -1472,8 +1479,8 @@ TEST_CASE("pause tab: the focused row is the System button's number under it, by
 TEST_CASE("pause tab: the kit's release shows on the page's details, solo and in a session (0.11.6)") {
     SessionView solo;
     solo.version = "Squadala! v0.11.6";
-    CHECK(RowTexts(solo)[kRowLeave] == "Settings and look");   // co-op idle: the Leave row has nothing to do, not shown
-    CHECK(ActionFor(kRowLeave, solo.s) == RowAction::kViewMenu);
+    CHECK(RowTexts(solo)[kRowSettings] == "Co-op settings");
+    CHECK(ActionFor(kRowSettings, solo.s) == RowAction::kViewMenu);
     const auto last = [](const std::vector<ListLine>& d) {
         for (auto it = d.rbegin(); it != d.rend(); ++it) {
             if (!it->name.empty()) return *it;
@@ -1485,7 +1492,7 @@ TEST_CASE("pause tab: the kit's release shows on the page's details, solo and in
     SessionView guest = solo;
     guest.s.in_one = true;
     guest.players = 2;
-    CHECK(RowTexts(guest)[kRowLeave] == "Leave");    // in a session the row leaves, as before
+    CHECK(RowTexts(View::kJoin, guest)[kJoinRowLeave] == "Leave the game");   // in a session the Join view leaves
     CHECK(last(DetailLines(View::kSession, guest)).value == "v0.11.6");
     SessionView dev;                                  // a developer's build (no kit): no release line
     for (const ListLine& l : DetailLines(View::kMain, dev)) CHECK(l.name != "Release");
@@ -1662,9 +1669,11 @@ TEST_CASE("pause tab: a guest the host's game turned away: the rows say so and w
     SessionView v;
     v.s.in_one = true;   // (co-op is still on until Leave, as co-op's menu says)
     v.turned_away = "the host took you out of the game";
-    CHECK(RowTexts(v)[kRowSession] == "Turned away");
-    CHECK(ActionFor(kRowSession, v.s) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowLeave, v.s) == RowAction::kConfirmLeave);
+    CHECK(RowTexts(v)[kRowJoin] == "Turned away");
+    CHECK(ActionFor(kRowJoin, v.s) == RowAction::kViewJoin);
+    CHECK(RowTexts(View::kJoin, v)[0] == "Turned away: why");
+    CHECK(ActionFor(View::kJoin, 0, v.s) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kJoin, kJoinRowLeave, v.s) == RowAction::kConfirmLeave);
     CHECK(RowTexts(View::kSession, v)[0] == "Turned away");
     // (why, and to Leave, then join again: on the details list)
     const auto text = [](const std::vector<ListLine>& d) {
