@@ -179,6 +179,10 @@ bool Joiner::StarterStays(const Pending& p, const Here& here) {
            std::find(here.in_scene.begin(), here.in_scene.end(), p.player) != here.in_scene.end();
 }
 
+bool StackedScene(std::string_view scene) {
+    return scene.starts_with("GerudoFortress");
+}
+
 bool NotNearYet(std::string_view why) {
     return why == "we are in another scene" || why.starts_with("too far") ||
            why == "they are in another room of this dungeon" || why.starts_with("their room in this dungeon");
@@ -232,8 +236,9 @@ std::string Joiner::Why(const Pending& p, const Here& here, bool played) const {
             std::snprintf(text, sizeof text, "too far: %.0f m from them", d);
             return text;
         }
-        if (!here.dungeon && std::fabs(dy) > kJoinRiseM) {
-            // Report 200: on another level (a floor between us): its warp would move our Link through it.
+        if (!here.dungeon && StackedScene(here.scene) && std::fabs(dy) > kJoinRiseM) {
+            // Report 200: on another level of the fortress (a floor between us): its warp would move our Link
+            // through it.
             char text[64];
             std::snprintf(text, sizeof text, "too far: %.0f m %s them", std::fabs(dy), dy > 0 ? "above" : "below");
             return text;

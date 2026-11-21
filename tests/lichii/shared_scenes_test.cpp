@@ -575,4 +575,14 @@ TEST_CASE("report 200: the Gerudo cells' own scenes are not shared, and a joiner
     REQUIRE(got);
     CHECK(*got == "Dm_Gerudo_0000");
     CHECK(CoopSharedScenes::NotNearYet("too far: 12 m above them"));
+
+    // Only the fortress: every other scene joins as before, a joiner 12 m up a slope too.
+    CHECK(CoopSharedScenes::StackedScene("GerudoFortress_Adult"));
+    CHECK_FALSE(CoopSharedScenes::StackedScene("DeathMtTrail"));
+    CHECK_FALSE(CoopSharedScenes::StackedScene("GerudoTrainingGround"));
+    Joiner slope;
+    slope.Started(1, "Dm_Kokiri_0030", "KokiriForest", kBridge, 0);
+    const auto up = slope.Next(Free(100, Vec3{12.0f, 12.0f, 22.0f}), kNotPlayed);
+    REQUIRE(up);
+    CHECK(*up == "Dm_Kokiri_0030");
 }

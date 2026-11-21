@@ -109,14 +109,17 @@ inline constexpr float kRoomM = 30.0f;
 // starter must be in our room (Here::room, Started's room: coop_rooms.h);
 // where a room is not known (no room table), only this near.
 inline constexpr float kNoRoomM = 8.0f;
-// Player report 200: outside a dungeon the 30 m reach also goes through
-// floors. A joined cutscene warps our Link to its own place for the Player
-// (EventPlayerWarpTo*), so a joiner on another level (the Gerudo Fortress's
-// roofs and prison over the cells' rooms, 8 to 20 m) was moved into a room it
-// was not in. Outside a dungeon the starter must also be within this much
-// above or below our Link; one further waits as "too far" (NotNearYet), and
-// the result comes by the flags as for any player who could not join.
+// Player report 200: in the Gerudo Fortress the 30 m reach also goes through
+// floors: its roofs and outdoor prison are 8 to 20 m over the cells' rooms,
+// in the same scene. A joined cutscene warps our Link to its own place for the
+// Player (EventPlayerWarpTo*), so a joiner on another level would be moved into
+// a room it was not in. Only in that scene (StackedScene) the starter must
+// also be within this much above or below our Link; one further waits as "too
+// far" (NotNearYet), and the result comes by the flags as for any player who
+// could not join. Every other scene joins as before (slopes and stairs too).
 inline constexpr float kJoinRiseM = 6.0f;
+// The scenes with rooms stacked under their open ground (GerudoFortress_*).
+bool StackedScene(std::string_view scene);
 // How long a start waits while our game cannot take it (our own event, a
 // menu, a pause, a load) before it is skipped: a cutscene joined later than
 // this would be far behind the starter's.
