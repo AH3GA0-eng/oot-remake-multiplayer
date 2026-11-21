@@ -1,9 +1,26 @@
 # The official public game
 
 An always-on public game that anyone with the kit finds at the top of **Public games** as
-**Official public game** (room `squadala` on the kit's own relay). It is a plain `coop_server`
-with no hosting game: `--public --dedicated`. Only the owner deploys it; nobody else logs in to
+**Official public game** (room `squadala`). It is a plain `coop_server` with no hosting game:
+`--public --dedicated --official-key-file ...`. Only the owner deploys it; nobody else logs in to
 the relay's machine.
+
+## The official mark (signed)
+
+The server signs its listing with the official game's private key (Ed25519; Monocypher's): the
+room name, the listing's version and the time, again with every listing (every 5 seconds). The
+relay passes the proof on beside the room list (a kit asks for it after the list), and every kit
+has the public key built in (coop/protocol/official_mark.hpp). A kit shows **Official public
+game**, first in the list, only when the proof checks for that room and version and is at most 5
+minutes old by the kit's clock. So:
+
+- Someone who takes the room name `squadala` (while the server restarts, or on another relay) is
+  an ordinary public game: they have no key, and a proof copied from the list stops checking
+  within 5 minutes and never checks for another room or version.
+- Old kits and old relays (before 0.11.8) ignore the proofs: the official game shows there as an
+  ordinary public game, never an error and never a missing room. The relay needs this release's
+  `coop_server --relay` for the mark to show.
+- A PC whose clock is more than 5 minutes off sees no mark (the game still lists and joins).
 
 ## How it plays
 
@@ -26,11 +43,21 @@ the relay's machine.
    cmake --build build --target coop_server` and take `build/server/coop_server`.
 2. `sudo useradd --system --no-create-home coop`, then
    `sudo install -D -m 755 coop_server /opt/squadala-public/coop_server`.
-3. `sudo cp tools/official-game/squadala-public.service /etc/systemd/system/`, then
+   The relay: run this release's `coop_server --relay` (restart the relay's service with the new
+   binary) so it passes the proofs on.
+3. The key: copy the owner's key file (`official-game.key`, 64 hex digits; kept outside the repo)
+   to the box and lock it to the service's user:
+   `sudo install -D -m 600 -o coop -g coop official-game.key /etc/squadala-public/official-game.key`.
+   coop_server refuses a key file other users can read, never prints the key, and says at start
+   whether it is the kits' key (`official key: the listing is signed`). A new pair (if the key
+   is ever lost or leaked): `python tools/official-game/make_key.py PATH` writes a new key file
+   and prints its public key, which then goes into `kOfficialPublicKey` in a new release.
+4. `sudo cp tools/official-game/squadala-public.service /etc/systemd/system/`, then
    `sudo systemctl daemon-reload && sudo systemctl enable --now squadala-public`.
    If the relay was started with a host key, add it as the unit's comment says.
-4. Check: `journalctl -u squadala-public -n 20` says `room "squadala" is yours`, and a kit's
-   Public games shows **Official public game** first.
+5. Check: `journalctl -u squadala-public -n 20` says `room "squadala" is yours` and
+   `official key: the listing is signed`, and a kit's Public games shows **Official public game**
+   first.
 
 Updating for a new release: replace `/opt/squadala-public/coop_server`, then
 `sudo systemctl restart squadala-public`. Players in the game are disconnected and can rejoin.
@@ -58,7 +85,7 @@ The commands act on every player, also the one who hosts the session's progress.
 
 - Moderation from the owner's own game (an admin key that lets the Lobby tab act as host there).
 - A reserved room name: while the server restarts (about 2 seconds), someone else could take the
-  room `squadala` on the relay and show as official. The relay change that reserves it for the
-  relay's host key comes later.
+  room `squadala` on the relay. They show as an ordinary public game (no mark); the server takes
+  the name back when they leave.
 - Rate limits: the per-player message limits and the relay's per-address limits only; no word
   filter, no report button.

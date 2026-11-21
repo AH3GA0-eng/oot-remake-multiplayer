@@ -17,7 +17,8 @@ ExecStartPre=/bin/sh -c 'rm -f /run/squadala-public/console && mkfifo -m 600 /ru
 # If the relay needs a host key, add: Environment=COOP_RELAY_KEY=... and --relay-key-env COOP_RELAY_KEY
 ExecStart=/bin/sh -c 'exec 3<>/run/squadala-public/console && exec /opt/squadala-public/coop_server \
   --port 27610 --relay-via 127.0.0.1:27530 --relay-room squadala --relay-list "Squadala public game" \
-  --public --dedicated --max-players 16 --bans-file /var/lib/squadala-public/bans.txt <&3'
+  --public --dedicated --max-players 16 --bans-file /var/lib/squadala-public/bans.txt \
+  --official-key-file /etc/squadala-public/official-game.key <&3'
 Restart=always
 RestartSec=2
 NoNewPrivileges=yes

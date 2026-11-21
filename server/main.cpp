@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -21,9 +24,12 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/stat.h>
 #endif
 
 #include "coop/protocol/join_password.hpp"
+#include "coop/protocol/official_mark.hpp"
 #include "coop/protocol/messages.hpp"
 #include "console_out.hpp"
 #include "enet_server.hpp"
@@ -117,6 +123,32 @@ class TypedLines {
   std::mutex mutex_;
   std::deque<std::string> queue_;
 };
+
+// The official game's key file (--official-key-file): 64 hex digits. Never printed. On POSIX a file group or others
+// can read is refused (chmod 600), as ssh does with its keys.
+std::optional<coop::protocol::OfficialSeed> read_official_key(const std::string& path, std::string& why) {
+#ifndef _WIN32
+  struct stat st {};
+  if (::stat(path.c_str(), &st) != 0) {
+    why = "cannot read " + path;
+    return std::nullopt;
+  }
+  if ((st.st_mode & 077) != 0) {
+    why = path + " can be read by other users: chmod 600 it";
+    return std::nullopt;
+  }
+#endif
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    why = "cannot read " + path;
+    return std::nullopt;
+  }
+  std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  auto seed = coop::protocol::official_seed_from_text(text);
+  std::fill(text.begin(), text.end(), '\0');
+  if (!seed) why = path + " is not a key file (64 hex digits)";
+  return seed;
+}
 
 // coop_server --join: Join.bat's helper for an invite code (join_helper.hpp).
 int run_join(const coop::server::CommandLine& line) {
@@ -331,6 +363,18 @@ int main(int argc, char** argv) {
     config.relay_room = line->relay_room;
     config.relay_list = line->relay_list;
     config.public_game = line->public_game;
+    if (!line->official_key_file.empty()) {
+      std::string why;
+      config.official_key = read_official_key(line->official_key_file, why);
+      if (!config.official_key) {
+        std::fprintf(stderr, "coop_server: --official-key-file: %s\n", why.c_str());
+        return 2;
+      }
+      const auto pub = coop::protocol::official_public_key(*config.official_key);
+      say(pub == coop::protocol::kOfficialPublicKey
+              ? "official key: the listing is signed (kits show the official public game)"
+              : "official key: NOT the kits' built-in key: the listing is signed, but no kit shows it as official");
+    }
     std::vector<std::string> bans = read_ban_file(line->bans_file);
     config.session.kept_bans = bans;
     config.log = say;

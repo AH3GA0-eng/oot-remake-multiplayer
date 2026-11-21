@@ -274,6 +274,16 @@ bool HostService::start(std::string& error) {
           e.version = config_.public_game ? protocol::public_listing_version() : protocol::kProtocolVersion;
           return e;
         };
+        if (config_.public_game && config_.official_key) {
+          const protocol::OfficialSeed key = *config_.official_key;
+          c.proof = [key](const std::string& room, const relay::RoomEntry& listed) -> std::optional<relay::RoomProof> {
+            const protocol::OfficialProof p = protocol::official_sign(key, room, listed.version, protocol::official_now_s());
+            relay::RoomProof out;
+            out.time_s = p.time_s;
+            out.signature = p.signature;
+            return out;
+          };
+        }
       }
       c.log = [this](const std::string& text) { say("relay: " + text); };
       const std::string relay_text = config_.relay_via;

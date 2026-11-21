@@ -35,6 +35,8 @@ bool Joinable(const Room& r, int my_protocol) {
     return r.protocol == my_protocol && (r.max <= 0 || r.players < r.max);
 }
 
+static_assert(kPublicListingBit == coop::protocol::kPublicListingBit);
+
 Room FromListing(std::string room, std::string host, int players, int max, int version) {
     Room r{std::move(room), std::move(host), players, max, version & ~int{coop::protocol::kPublicListingBit}, false, false};
     r.is_public = (version & coop::protocol::kPublicListingBit) != 0;
@@ -90,7 +92,11 @@ void Ask(std::string relay) {
                     s.rooms.push_back(FromListing(e.room, e.host, e.players, e.max_players, e.version));
                 }
                 // (the official game, then public games, as every viewer shows them; the relay's order kept)
-                Order(s.rooms, relay == CoopTitleMenu::kDefaultRelay);
+                std::vector<Proof> proofs;
+                for (const auto& p : list->proofs) {
+                    proofs.push_back(Proof{p.room, coop::protocol::OfficialProof{p.time_s, p.signature}});
+                }
+                Order(s.rooms, proofs, coop::protocol::official_now_s());
                 if (s.rooms.empty()) s.state = kNoGames;
             } else {
                 s.state = kCantReach;   // (no answer: no internet, the server down, or one from before the list)

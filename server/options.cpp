@@ -195,6 +195,12 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       ++i;
     } else if (arg == "--public") {
       line.public_game = true;
+    } else if (arg == "--official-key-file") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--official-key-file needs the path of the official game's key file";
+        return std::nullopt;
+      }
+      line.official_key_file = args[++i];
     } else if (arg == "--dedicated") {
       line.dedicated = true;
     } else if (arg == "--bans-file") {
@@ -230,6 +236,10 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
   }
   if (line.dedicated && !line.public_game) {
     error = "--dedicated is the always-on public game: it needs --public";
+    return std::nullopt;
+  }
+  if (!line.official_key_file.empty() && !line.public_game) {
+    error = "--official-key-file signs the public listing: it needs --public";
     return std::nullopt;
   }
   if (line.dedicated && line.approve_joins) {
@@ -321,6 +331,8 @@ const char* usage() {
          "                   /players, /kick N, /ban N, /unban KEYID,\n"
          "                   /mute N voice|chat, /unmute N voice|chat\n"
          "  --bans-file PATH  keep bans by player key in this file across runs\n"
+         "  --official-key-file PATH  with --public: sign the listing with the\n"
+         "                   official game's key (docs/official-game.md)\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
          "                   (UDP port 27530 unless --port), not a game server\n"
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"

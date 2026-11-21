@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/protocol/official_mark.hpp"
 #include "enet_server.hpp"
 #include "nat_codes.hpp"
 
@@ -71,6 +72,10 @@ struct HostServiceConfig {
   // same-network door, and the game port listens on 127.0.0.1 only, so nobody reaches it but through the relay
   // and no player learns the host's address. A private game (false) may not use a password of the public shape.
   bool public_game = false;
+  // The official game's key (coop_server --official-key-file, docs/official-game.md): with a public game, each
+  // listing goes with a fresh signed proof (protocol::official_sign: room, listing version, time), so kits show the
+  // room as the official public game. Never logged.
+  std::optional<protocol::OfficialSeed> official_key;
   // coop_server's window shows the invite code (the host copies it from
   // there). The game's log must not have it: it holds the join password and
   // logs are shared (collect-logs). false: the code is only in status().

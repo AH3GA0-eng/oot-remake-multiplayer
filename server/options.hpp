@@ -59,6 +59,10 @@ struct CommandLine {
   // --bans-file PATH: the bans by player key kept across runs (one key id a
   // line, read_ban_file); rewritten when a ban is made or lifted.
   std::string bans_file;
+  // --official-key-file PATH: the official game's private key (64 hex digits; docs/official-game.md): each
+  // listing goes with a signed proof, so kits mark the room official. Needs --public. On Linux the file must
+  // not be readable by group or others (chmod 600).
+  std::string official_key_file;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;

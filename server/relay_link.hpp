@@ -41,6 +41,9 @@ struct RelayLinkConfig {
   // protocol version; its room field is not used). Nothing from it takes the
   // room off the list. Needs a room name; never sends the join password.
   std::function<std::optional<RoomEntry>()> listing;
+  // Set (the official game, --official-key-file): a proof for the room as listed, sent right after each listing
+  // (kRoomProof). Given the room name and the listing as sent.
+  std::function<std::optional<RoomProof>(const std::string& room, const RoomEntry& listed)> proof;
   // The session token; std::random_device when empty.
   std::function<std::uint64_t()> random;
 };
@@ -81,6 +84,9 @@ std::string lookup_text(std::optional<LookupResult> result, const RelayJoin& joi
 struct RoomList {
   std::vector<RoomEntry> rooms;
   std::size_t total = 0;
+  // The listed rooms' proofs (kListProofs, asked once after the pages): empty from a relay before 0.11.8, which
+  // does not answer (a short wait, then the list as it is).
+  std::vector<RoomProof> proofs;
 };
 // Asks the relay at `relay` (ENet's form) for its room list, a page at a time
 // (about 20 rooms a page; three tries a second apart for each, from a socket
