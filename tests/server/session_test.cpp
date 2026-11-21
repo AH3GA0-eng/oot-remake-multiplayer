@@ -361,7 +361,9 @@ TEST_CASE("another co-op release on the same protocol joins, an older or a newer
     Hello guest = hello_from("Zelda");
     guest.build_id = other;
     h.receive(2, guest, kChannelSession);
-    CHECK_FALSE(only_message_to<Refused>(h, 2).has_value());
+    bool refused = false;
+    for (const Sent& sent : h.to(2)) refused = refused || std::holds_alternative<Refused>(sent.message);
+    CHECK_FALSE(refused);
     CHECK(h.session.player_count() == 2);
     CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) {
       return l.find("joins the host's v0.11.7") != std::string::npos;
