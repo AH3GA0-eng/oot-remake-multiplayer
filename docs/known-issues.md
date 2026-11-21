@@ -58,6 +58,7 @@ Merged for the next release. Watched working in a two-game run (marked *seen*): 
 ## Known issues
 
 - **Linux: away/paused state, Map page and HUD refresh** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150)): fixed in the code, not yet checked on Linux.
+- **Nucleus split screen keeps each instance's own `coop-options.ini`**: a `LICHII_COOP_*` switch edited later in the kit's `coop-options.ini`, and new keys from a newer kit, do not reach an instance until its `coop-options.ini` is deleted. Character Select is not affected.
 - **The title shows Continue only after a restart** after a new save (tracker row 124). 0.11.6 has the fix in the code (Continue shows right away after a new save or a save-folder switch), not yet checked in a game; if it still happens, start the game again.
 - **Masks are not drawn on other players** ([#91](https://github.com/daurosk/oot-remake-multiplayer/issues/91)): the mask shows in the HUD slot but not on their Link. 0.11.6 has the fix in the code (the game's own armor-link draw byte, set where the game puts a mask on); our test could not put a mask on yet, so it is not yet checked in a game: tell us.
 - **Bosses aim at the first player** ([#150](https://github.com/daurosk/oot-remake-multiplayer/issues/150), tracker rows 13 and 177): Phantom Ganon's light orbs and some other boss attacks go at the host's Link (or player 1), also when another player is nearer. Being designed for 0.11.8: the boss picks a different player at each attack.
