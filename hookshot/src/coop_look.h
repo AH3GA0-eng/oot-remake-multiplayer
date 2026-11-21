@@ -115,9 +115,11 @@ std::vector<std::pair<std::uint8_t, std::uint32_t>> Wire(const Look& look);
 // A received look; parts this build does not know are passed over.
 Look FromWire(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& parts);
 
-// The tunic's colour as the puppet pack names it (coop_look/<name>.bin): the
-// pack colour nearest it (CoopColors::TunicOf), lower case; "green", the
-// game's own, when unset.
+// The tunic's colour as the puppet pack names it (coop_look/<name>.bin, the
+// puppets' CoopTunic_<Age>_<Colour> models): the pack colour nearest it
+// (CoopColors::TunicOf), lower case; "green", the game's own, when unset.
+// The other players' puppets of you wear it. Your own Link is painted in the
+// exact colour instead (CoopLookParts::TunicPainting).
 std::string TunicName(const std::optional<std::uint32_t>& colour);
 
 // The tunic colour your own Link wears: the chosen one; with none chosen
@@ -128,9 +130,11 @@ std::optional<std::uint32_t> OwnTunic(const std::optional<std::uint32_t>& chosen
 
 // The colour your own Link's tunic files in the puppet pack give it when the
 // game starts (colour-agree): at each start the kit (Set-KitSelfTunic,
-// puppet_pack/self_tunic.py for Linux and the autotest) copies your colour's
-// coop_self/ files in: your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an
-// older pack: over the game's Angin_Tile_A_Alb). A start that skipped it
+// puppet_pack/self_tunic.py for Linux and the autotest) copies coop_self/
+// files in: green's when the pack has coop_look/green.bin (the module paints
+// your colour on them: CoopLookParts::TunicPainted), else your colour's;
+// your own tile romfs/Tex/Angin_Tile_S_Alb.bntx.zs (an older pack: over the
+// game's Angin_Tile_A_Alb). A start that skipped it
 // leaves whatever was copied last, and the game draws what is in the pack, so
 // that is the start colour, not LICHII_COOP_SELF_TUNIC: `tile` is the pack's
 // tile (nothing: none, "green", the game's own), `self_tile` a colour's

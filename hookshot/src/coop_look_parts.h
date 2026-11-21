@@ -105,6 +105,40 @@ using CopyLooks = std::vector<std::optional<CoopLook::Look>>;
 inline constexpr const char* kCopiesBase = "puppets";
 std::string CopiesName(const CopyLooks& looks);
 
+// Your own Link's Kokiri tunic in any colour, painted while the game runs as
+// the gear is. The pack's coop_look/green.bin holds the game's own texels of
+// every tunic texture of both ages (marked as your own Link's green copies
+// are, tools/puppet_pack/look_live.py); the kit puts green's files in for your
+// own Link at every start, so those are the texels the game's memory holds,
+// and the tunic wardrobe draws them painted in the exact colour chosen. The
+// other players' puppets of you keep the pack's tunic colours (TunicName).
+//
+// The rules are the pack tool's (tools/puppet_pack/tunic.py, tunic_extra.py):
+// the tile is recoloured whole, the other textures only in their green
+// (CoopLookPaint::IsGreen), every one shaded against the tile's average, so
+// each keeps its brightness against the tile (the child's dark tile stays
+// about 0.64 of it, tunic.py DARK_SCALE).
+struct TunicTexture {
+    const char* name;   // in the game and in green.bin ("Angin_Tile_A_Alb")
+    CoopLookPaint::Format format;
+    CoopLookPaint::Takes takes;
+};
+// Every tunic texture (tools/puppet_pack/tunic.py TILE, DARK and
+// tunic_extra.py EXTRA: the same names, in the same order as green.bin).
+const std::vector<TunicTexture>& TunicTextures();
+// The tile whose average every tunic texture is shaded against.
+inline constexpr const char* kTunicTile = "Angin_Tile_A_Alb";
+// The tunic wardrobe's base: the game's own green (green.bin).
+inline constexpr const char* kTunicBase = "green";
+// The name a tunic colour's painting goes by in the wardrobe: kTunicBase for
+// none (the game's own), "tunic-RRGGBB" for a colour; TunicColour reads it
+// back (nothing for any other name).
+std::string TunicPainting(const std::optional<std::uint32_t>& colour);
+std::optional<std::uint32_t> TunicColour(const std::string& name);
+// The tunic texels of `green` painted in `colour` (0xRRGGBB): the same
+// textures, sizes and order; a texture not in TunicTextures as it is.
+CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, std::uint32_t colour);
+
 // The boots in Link's own model (the adult's Kokiri boots, the child's
 // leather, which holds his belts too): not an item, so no item copies. Every
 // Link draws one texture of a name; the pack's puppet body models, one per

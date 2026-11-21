@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_look_parts.h"
 
+#include "coop/protocol/messages.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -185,6 +187,75 @@ CoopLookTunic::Texels Painted(const CoopLookTunic::Texels& gear, const CoopLook:
         }
         if (!rules.empty()) {
             CoopLookPaint::Recolour(entry->format, t.texels, t.texels, rules);
+        }
+    }
+    return out;
+}
+
+const std::vector<TunicTexture>& TunicTextures() {
+    // Formats as the game's files have them (green.bin holds those texels).
+    static const std::vector<TunicTexture> kTunic = {
+        {kTunicTile, Format::bc3, T::Takes::all},   // hat and upper body, both ages
+        // The child's tunic body: the game's is ASTC 5x4 and some 0.64 as bright as the tile; shaded against
+        // the tile it stays that much darker (the pack's own colour files hold a BC3 copy of the tile instead).
+        {"Angin_Tile_A_Dark_Alb", Format::astc, T::Takes::all},
+        {"Mt_Vest_Player_Adult_Alb", Format::astc, T::Takes::green},        // lower tunic and back
+        {"Mt_Angin_Acs_Player_Adult_Alb", Format::bc1, T::Takes::green},    // rope and hood parts
+        {"Mt_Cloth_Parts_Player_Child_Alb", Format::astc, T::Takes::green}, // cap knot, headband, collar
+        {"Mt_Vest_Player_Child_Alb", Format::astc, T::Takes::green},        // the string at the back
+        {"Mt_PantsParts_Player_Child_Alb", Format::bc1, T::Takes::green},   // straps
+    };
+    return kTunic;
+}
+
+namespace {
+constexpr std::string_view kTunicPrefix = "tunic-";
+}  // namespace
+
+std::string TunicPainting(const std::optional<std::uint32_t>& colour) {
+    // (none, and the preset green: the game's own green, its own texels; painted, the preset's 30D040 was a lime
+    // green brighter than the game's tunic, seen in a test run 2026-11-20)
+    if (!colour || (*colour & 0xFFFFFFu) == coop::protocol::slot_color(3)) {
+        return kTunicBase;
+    }
+    char piece[8];
+    std::snprintf(piece, sizeof piece, "%06X", static_cast<unsigned>(*colour & 0xFFFFFFu));
+    return std::string(kTunicPrefix) + piece;
+}
+
+std::optional<std::uint32_t> TunicColour(const std::string& name) {
+    if (name.size() != kTunicPrefix.size() + 6 || name.compare(0, kTunicPrefix.size(), kTunicPrefix) != 0) {
+        return std::nullopt;
+    }
+    std::uint32_t v = 0;
+    for (std::size_t i = kTunicPrefix.size(); i < name.size(); ++i) {
+        const char c = name[i];
+        const int d = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        if (d < 0) {
+            return std::nullopt;   // (TunicPainting writes upper case only)
+        }
+        v = v << 4 | static_cast<std::uint32_t>(d);
+    }
+    return v;
+}
+
+CoopLookTunic::Texels TunicPainted(const CoopLookTunic::Texels& green, std::uint32_t colour) {
+    // The tile's average (tunic.py average_luma); with no tile in the file each texture its own.
+    double base = 0;
+    for (const CoopLookTunic::Texture& t : green) {
+        if (t.name == kTunicTile) {
+            base = CoopLookPaint::AverageLuma(Format::bc3, t.texels);
+            break;
+        }
+    }
+    CoopLookTunic::Texels out = green;
+    for (CoopLookTunic::Texture& t : out) {
+        for (const TunicTexture& entry : TunicTextures()) {
+            if (t.name == entry.name) {
+                CoopLookPaint::Recolour(entry.format, t.texels, t.texels,
+                                        {{0, colour & 0xFFFFFFu, entry.takes, base}});
+                break;
+            }
         }
     }
     return out;

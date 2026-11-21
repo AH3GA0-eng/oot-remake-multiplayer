@@ -440,7 +440,12 @@ function Get-KitTunic([string]$Color) {
 # tools/puppet_pack/self_tunic.py, the same steps. Green, no colour or a
 # pack without them: takes every copy away, the game's own green. Only the Kokiri tunic: the
 # Goron and Zora tunics have their own textures. Returns the colour put in, or ''.
-function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
+# -Painted (Longshot): the co-op module paints your exact colour on green's files while the game
+# runs (hookshot/src/coop_look_live.cpp, from the pack's coop_look/green.bin), so a pack that has
+# green's own files and coop_look/green.bin gets green's whatever the colour: what the game's memory
+# holds is then always the texels the module paints from. Without -Painted (the emulator, which has
+# no such module) or with an older pack: your colour's files, the nearest preset.
+function Set-KitSelfTunic([string]$PackDir, [string]$Color, [switch]$Painted) {
     $romfs = Join-Path $PackDir 'romfs'
     $tile = 'Tex/Angin_Tile_A_Alb.bntx.zs'
     $dark = 'Tex/Angin_Tile_A_Dark_Alb.bntx.zs'
@@ -451,6 +456,12 @@ function Set-KitSelfTunic([string]$PackDir, [string]$Color) {
     $json = $null
     try {
         $json = [System.IO.File]::ReadAllText((Join-Path $PackDir 'coop_puppet.json')) | ConvertFrom-Json -ErrorAction Stop
+    } catch { }
+    try {
+        if ($Painted -and $json -and $json.self_files -and $json.self_files.green -and $json.look_files -and
+            $json.look_files.green -and (Test-Path -LiteralPath (Join-Path $PackDir $json.look_files.green) -PathType Leaf)) {
+            $tunic = 'green'
+        }
     } catch { }
     $ok = { param($rel) $rel -is [string] -and ($rel -match '^Tex/[A-Za-z0-9_]+\.bntx\.zs$' -or
             $rel -match '^Model/Player_(Adult|Child)\.Player_(Adult|Child)\.bfres\.zs$') }
@@ -524,8 +535,9 @@ function Set-KitDefaultColor([string]$Mode, [string]$Server) {
 # no pack the puppets off. $Manifest: the pack's coop_puppet.json (the emulator's load\<title>\coop-puppet,
 # Hookshot's mods\contents\<title>\coop-puppet). $Missing: the lines to say when there is no pack.
 # Hookshot indexes its mod files once at start, so this runs before Start-Process there too.
-# Returns $true when the pack is there.
-function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing) {
+# Returns $true when the pack is there. -Painted: Longshot's co-op module paints your colour on green's
+# tunic files (Set-KitSelfTunic -Painted).
+function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missing, [switch]$Painted) {
     if (Test-Path -LiteralPath $Manifest) {
         Write-Host 'Puppet pack: found.'
         # Made before sound or before the kit's pack tool changed: say so, start anyway.
@@ -533,10 +545,14 @@ function Use-KitPuppetPack([string]$Manifest, [string]$ToolDir, [string[]]$Missi
         if ($hint) { Write-Host $hint }
         # Your own Link in your colour (#202); LICHII_COOP_TUNICS=0 keeps everyone green.
         $want = if ($env:LICHII_COOP_TUNICS -match '^(0|off)$') { '' } else { $env:LICHII_COOP_COLOR }
-        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want
+        $self = Set-KitSelfTunic (Split-Path -Parent $Manifest) $want -Painted:$Painted
         if ($self) {
             $env:LICHII_COOP_SELF_TUNIC = $self
-            Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            if ($self -eq 'green' -and $want -and (Get-KitTunic $want) -and (Get-KitTunic $want) -ne 'green') {
+                Write-Host "Your Link: your tunic colour ($want) is painted on in the game (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            } else {
+                Write-Host "Your Link: the $self tunic (coop-options.ini color; the Goron and Zora tunics stay as they are)."
+            }
         }
         elseif ($env:LICHII_COOP_SELF_TUNIC) { Remove-Item env:LICHII_COOP_SELF_TUNIC }
         if ($want -and -not $self -and (Get-KitTunic $want) -ne 'green') {
