@@ -1091,7 +1091,8 @@ function Invoke-KitUpdate {
             $line = 'failed ' + (Get-KitErrorText $_)
         }
         if (-not $line -and $newest -and (& $wanted $newest.Tag)) { $line = "newer $($newest.Tag)" }
-        if ($line) { [Console]::Out.WriteLine($line) }
+        # (nothing to say is a line too, 'current': a check cut off after this point is an answer, not a silence)
+        [Console]::Out.WriteLine($(if ($line) { $line } else { 'current' }))
         [Console]::Out.Flush()
         [void](Update-KitStartLinks $dir)
         return 0
