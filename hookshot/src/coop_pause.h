@@ -80,11 +80,6 @@ std::string PageSays(std::uint64_t* gen);
 // room name, relay, port, approval), as the menu's Host does; and leaving (or stopping hosting), as its Leave does.
 // Co-op that came with the game's start (ByLauncher) is neither started nor stopped (PageSays why). A Host refused or
 // failed: PageSays why.
-// The Character tab (0.11.9): co-op's Customize page in pages of six (on), or the whole list (off: the overlay,
-// System's Customize Link button).
-void SetCustomizePaged(bool on);
-// ZL / ZR on the Character tab: co-op's Customize page to its next (+1) or last (-1) page of six.
-void TurnCustomizePage(int step);
 void HostNow();
 void LeaveNow();
 // Co-op came with the game's start (Host.bat, Join.bat, coop.ini): the page's rows open the menu instead.

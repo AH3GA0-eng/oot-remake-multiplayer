@@ -249,7 +249,6 @@ void RefreshSession(bool now) {
         g_next_session_ms = NowMs() + 250;
         g_menu.SetSession(SessionNow());
         g_menu.SetCharacter(CoopCharColours::ShownCharacter() != 0);   // (#308's Customize page: Link's colours wait)
-        g_menu.SetShownCharacter(CoopCharColours::ShownCharacter());     // (the Character tab's pages: rows that work)
     }
 }
 
@@ -1525,16 +1524,6 @@ bool ByLauncher() {
 bool HostStarted() {
     std::lock_guard lock(g_mutex);
     return g_doing == "hosting";
-}
-
-void SetCustomizePaged(bool on) {
-    std::lock_guard lock(g_mutex);
-    g_menu.SetCustomizePaged(on);
-}
-
-void TurnCustomizePage(int step) {
-    std::lock_guard lock(g_mutex);
-    g_menu.TurnCustomize(step);
 }
 
 void HostNow() {

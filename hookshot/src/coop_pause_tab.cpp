@@ -210,7 +210,6 @@ void Page::Hide(const char* why, bool keep) {
     sub_ = false, back_ = false;
     typing_ = -1;
     slide_ = 0;   // (gone at once; L sets its slide after)
-    if (!keep) character_ = false;   // (kept with the page for the menu's next opening on it)
     again_ = keep;
     why_ = why;
     // Every button held now stays the module's until let go, so none reaches System as a fresh press (an A held
@@ -229,8 +228,6 @@ std::uint64_t Page::Track(const Facts& f) {
         s.screen = f.screen, s.layout = f.layout, s.gen = ++next_gen_;
         if (f.kind == Kind::kPages) {
             page_set_ = -1, texts_set_ = false;
-        } else {
-            tabs_set_ = -1;   // (the strip: its Character tab filled and set again in this opening)
         }
     }
     s.state = f.state;
@@ -311,21 +308,6 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
                 minus_set_ = state;
             }
         }
-        // (the Character tab: shown in the Plus menu while the strip is open, lit with its page; System's lit while
-        // System is the page, ours in its place included. Set when it changes, and filled once per opening)
-        if (tab_ok_) {
-            const bool open = f.mode == kPlusMode && (f.state == 1 || f.state == 2);
-            const bool lit = open && shown_ && character_;
-            const bool system_lit = open && !lit && f.lit == kSystemPage;
-            const int state = (open ? 1 : 0) | (lit ? 2 : 0) | (system_lit ? 4 : 0);
-            const std::uint64_t gen = strip_seen_.gen;
-            if (state != tabs_set_ || (open && tabs_gen_ != gen)) {
-                d.set_tabs = true, d.tab_shown = open, d.tab_lit = lit;
-                d.fill_tab = open && tabs_gen_ != gen;
-                if (d.fill_tab) tabs_gen_ = gen;
-                tabs_set_ = state;
-            }
-        }
         return d;
     }
     case Kind::kOther:
@@ -345,24 +327,11 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     }
     if (!shown_ && CanMinus(now_ms)) return MinusPad(buttons, down);   // (the - menu: its tabs of ours)
     if (!shown_) {
-        if ((down & (kPadR | kPadZR)) != 0 && tab_ok_ && CanShow(now_ms)) {
-            // (R on System: the Character tab, sliding in from the right with the game's own tab sound; the game's R
-            // on its last page does nothing, and is never its: kept until let go)
-            shown_ = true, decide_ = false, why_.clear(), which_ = 0, sub_ = false, back_ = false;
-            character_ = true, customize_open_ = true;
-            opened_from_ = -1;
-            slide_ = 1;
-            opened_ = true;
-            strip_sound_ = "mc_TabToRight";
-            swallow_ |= buttons & ~kPadPassed;
-            return buttons & kPadPassed & ~swallow_;
-        }
         if ((down & kPadA) != 0 && system_button_ >= 0 && (system_button_ != 1 || settings_ok_) && CanShow(now_ms)) {
             // (A on one of System's buttons of ours: its page in System's place, at once; the game's own A never
             // reaches the button, whose name its selectors do not know. Customize Link's is the Multiplayer page,
             // opened on Settings and look's Customize page)
             shown_ = true, decide_ = false, why_.clear(), which_ = system_button_ == 1 ? 1 : 0, sub_ = false, back_ = false;
-            character_ = false;
             opened_from_ = system_button_;
             customize_open_ = system_button_ == 2;
             slide_ = 0;
@@ -383,27 +352,6 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
         TypingPad(down, buttons, now_ms);
         swallow_ |= buttons;
         return 0;
-    }
-    if (character_ && (down & (kPadZL | kPadZR)) != 0) {
-        // (the Character tab: ZL and ZR turn its Customize pages, as on Snail's Characters page; never the game's)
-        page_turn_ = (down & kPadZR) != 0 ? 1 : -1;
-        swallow_ |= buttons & (kPadZL | kPadZR);
-        return buttons & kPadPassed & ~swallow_;
-    }
-    if (character_ && (down & (kPadL | kPadR)) != 0) {
-        // (the Character tab: L slides back to System with the game's tab sound, and is never the game's (it would step
-        // on from System); R past the last tab does nothing, as the game's on System)
-        if ((down & kPadL) != 0) {
-            Hide("L on the Character tab");
-            slide_ = -1;
-            strip_sound_ = "mc_TabToLeft";
-        }
-        swallow_ |= buttons & (kPadL | kPadZL | kPadR | kPadZR);
-        return buttons & ~swallow_;
-    }
-    if (character_ && !sub_ && (down & kPadB) != 0) {
-        // (B on the Character tab's own rows: the game's, which closes the menu, as on any tab; the page goes with it)
-        return buttons & kPadPassed & ~swallow_;
     }
     if ((down & (kPadL | kPadZL | kPadR | kPadZR)) != 0) {
         // (our pages are in System's place: System back at once, and the L or R is the game's, on to its next page)
