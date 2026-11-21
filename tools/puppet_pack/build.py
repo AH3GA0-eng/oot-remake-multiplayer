@@ -1301,6 +1301,9 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         except tunic.TunicError as e:
             raise BuildError(f"{tile_rel}: {e}")
         look = [(tunic.TILE, tile if own is None else own)]
+        # (0.11.9, exact puppet tunics: the puppets' copy as the pack writes it, to be found in memory and repainted
+        # live in its wearer's exact colour; the same textures, in the same order, as green.bin's)
+        pup = [(name, data)]
         if own is not None and self_dir and c != "green":
             # Same size as the game's tile once unpacked: its size-table entry stands. (Packs
             # before colour-agree put this one over the game's tile; the kit now uses self_files.)
@@ -1341,6 +1344,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
                 own_rel = strip_zs(f"Tex/{own_name}.bntx.zs")
                 own_sizes[own_rel] = max(own_sizes.get(own_rel, 0), (size or len(own_dark) + PACK_SIZE_MARGIN)
                                          if c == "green" else tile_size or len(own_dark) + PACK_SIZE_MARGIN)
+            pup.append((tunic.dark_name(c), ddata))
             if look_dir:
                 # In memory: the game's ASTC dark tile (green), else the BC3 copy your own Link
                 # wears for that colour; without those, the ASTC one recoloured in place.
@@ -1363,6 +1367,7 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
             except tunic.TunicError as e:
                 raise BuildError(f"{e_rel}: {e}")
             look.append((name, e_own))
+            pup.append((tunic_extra.extra_name(name, c), e_pup))
             if own_set:
                 # Same size and layout as the game's file.
                 own_name = tunic_extra.extra_name(name, c, tunic.SELF_LETTER)
@@ -1412,6 +1417,9 @@ def write_tunics(romfs, out_romfs, dicts, table, colors, log=print, self_dir=Non
         if look_dir:
             write(os.path.join(look_dir, f"{c}.bin"), look_live.pack(look))
             look_files[c] = f"{look_live.DIR}/{c}.bin"
+            if c != "green":   # (the plain puppet's tunic is the game's own: never repainted)
+                write(os.path.join(look_dir, f"puppet-{c}.bin"), look_live.pack(pup))
+                look_files[f"puppet-{c}"] = f"{look_live.DIR}/puppet-{c}.bin"
         out[c] = paths
         log(f"tunic {c}: {tunic.tile_name(c)} and {len(models)} models")
     if look_dir and out and "green" not in out:

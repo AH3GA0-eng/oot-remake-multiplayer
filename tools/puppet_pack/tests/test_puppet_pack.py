@@ -2518,7 +2518,16 @@ class FullBuildTest(unittest.TestCase):
         # your colour changed while the game runs (look_live): per colour, green too, the texels of
         # every tunic texture your Link wears, each as long as the game's own (written over them)
         from puppet_pack import look_live, tunic_extra
-        self.assertEqual(m["look_files"], {c: f"coop_look/{c}.bin" for c in ("red", "blue", "green")})
+        expect = {c: f"coop_look/{c}.bin" for c in ("red", "blue", "green")}
+        expect.update({f"puppet-{c}": f"coop_look/puppet-{c}.bin" for c in ("red", "blue")})   # (not green: the game's)
+        self.assertEqual(m["look_files"], expect)
+        # (0.11.9, exact puppet tunics) the puppets' copies as written: found in memory by these texels, the same
+        # textures in the same order as green.bin's
+        pup_red = look_live.unpack(build.read(os.path.join(mod, "coop_look/puppet-red.bin")))
+        self.assertEqual(pup_red[0], ("Angin_Tile_R_Alb", _ll.texels(pup_tile)))
+        green_look = look_live.unpack(build.read(os.path.join(mod, "coop_look/green.bin")))
+        self.assertEqual(len(pup_red), len(green_look))
+        self.assertFalse(os.path.exists(os.path.join(mod, "coop_look/puppet-green.bin")))
         names = ["Angin_Tile_A_Alb", "Angin_Tile_A_Dark_Alb"] + list(tunic_extra.EXTRA)
         game = {n: look_live.texels(d.decompress(build.read(os.path.join(self.romfs, f"Tex/{n}.bntx.zs"))))
                 for n in names}
@@ -2549,7 +2558,7 @@ class FullBuildTest(unittest.TestCase):
         # green is always there (to go back to), marked as your own green copies would be: never the
         # game's own texels, which Mido's model shares (npc-colour)
         from puppet_pack import tunic
-        self.assertEqual(sorted(m["look_files"]), ["green", "red"])
+        self.assertEqual(sorted(m["look_files"]), ["green", "puppet-red", "red"])   # (0.11.9: the puppets' red copy)
         green = look_live.unpack(build.read(os.path.join(mod, "coop_look", "green.bin")))
         self.assertEqual(green[0][0], "Angin_Tile_A_Alb")
         d = zs.Dicts.from_romfs(self.romfs)
