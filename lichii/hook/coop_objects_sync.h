@@ -231,7 +231,7 @@ struct LifeWrite {
 
 // Shared: enemies, animals (a cucco is Animal_Cucco), townspeople (Npc_, but
 // not Navi, held equipment or invisible helpers) and the breakable world
-// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle).
+// objects (coop_world.h). Not the order-puzzle actors (IsOwnPuzzle) or the followers (IsOwnFollower).
 bool IsShared(std::string_view name);
 
 // A puzzle or minigame each game runs on its own (issues 149, 151): the Scrub Brothers
@@ -240,6 +240,12 @@ bool IsShared(std::string_view name);
 // solve or the prize is shared (docs/dungeon.md, docs/items.md). The pond's
 // fish are shared (IsFish).
 bool IsOwnPuzzle(std::string_view name);
+
+// Row 214: an actor whose own AI goes with the local Link (waits for it, runs ahead of it, comes to it, is
+// carried by it): the Ganon's Castle escape's Zelda (Npc_Hylia_Zelda_Adult*), child Ruto, the dogs, Epona
+// and the ranch horses. Each game runs its own, never shared, so no owner's escort is put over a game whose
+// own Link and story flags are elsewhere, and a leave, a join or an owner change mid-escort moves nothing.
+bool IsOwnFollower(std::string_view name);
 
 // Issue 151 (fishing-2, fishing-3): a fish (Animal_Fish_*). Shared like any animal, with
 // one owner game; the lure rules in Sync (SetLures, FISH_LURE) move a fish to the game
