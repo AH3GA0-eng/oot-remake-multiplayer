@@ -42,6 +42,8 @@ typedef struct HosCoopHostOptions {
     uint32_t public_game;   /* 1: a public game (anyone can join, no password): needs relay_via and relay_room; the
                                password is made from the room (password ignored), the room is listed (relay_list,
                                or the room name), relay only (upnp, invite and same_network_open off) */
+    const char *bans_file;  /* the host's kept bans (one player key a line, coop-bans.txt beside coop.ini): read at
+                               the start, written when a ban by key is made; NULL or "": none kept */
 } HosCoopHostOptions;
 
 typedef struct HosCoopJoinOptions {

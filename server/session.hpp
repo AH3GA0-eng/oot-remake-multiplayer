@@ -107,6 +107,11 @@ struct SessionConfig {
   // At most max_held_joins wait at once; one more is told the server is full.
   // Off: everyone with the password joins at once, as before.
   bool approve_joins = false;
+  // Bans the host made in earlier sessions, kept by their player key (lobby
+  // ids "k:<hex>", the host's ban file): in force from the start and kept when
+  // the session empties. Names are never kept (one is easy to change, and
+  // someone else may have it).
+  std::vector<std::string> kept_bans;
   // Players on the host's own network join without the password
   // (docs/protocol.md "Same network"): a proof with the same-network key
   // (protocol::kSameNetworkPassword) is taken from a private address only
@@ -814,6 +819,9 @@ class Session {
   std::string lobby_id(const Connection& c) const;
   // A ban of a player known by name (no key, or a key another player had)
   // holds for that name whatever key comes with it.
+  // The bans by player key now (the kept ones and this session's), for the
+  // host's ban file; sorted.
+  std::vector<std::string> key_bans() const;
   bool lobby_banned(const std::string& id, const std::string& nickname,
                     std::optional<std::uint32_t> address) const;
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);

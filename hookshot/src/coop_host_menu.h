@@ -89,6 +89,7 @@ private:
         std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;
         bool public_game = false;   // (HosCoopHostOptions::public_game)
+        std::string bans_file;      // (HosCoopHostOptions::bans_file)
     };
     struct JoinJob {
         std::string name, password;

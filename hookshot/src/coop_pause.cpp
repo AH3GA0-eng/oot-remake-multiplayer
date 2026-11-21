@@ -415,7 +415,9 @@ void Follow(const HosCoopStatus& st) {
         const CoopLobby::Seen seen = CoopLobby::Now();
         if (local_port != 0 && seen.connected && seen.self != 0 && seen.self == seen.host) launcher_port = local_port;
     }
-    if ((host && st.state == HOS_COOP_HOSTING) || launcher_port != 0) {
+    // (a public game, in the game or Host.bat's (coop-options.ini public_game): the relay only, no LAN line)
+    if ((host && st.state == HOS_COOP_HOSTING && !g_hosted_public) ||
+        (launcher_port != 0 && !g_menu.options().public_game)) {
         const CoopTitleMenu::Options& o = g_menu.options();
         CoopLan::Game g;
         g.name = o.name;
@@ -556,6 +558,9 @@ bool Host() {
     h.relay_list = o.list_room && !o.relay_room.empty() ? shown.c_str() : nullptr;
     // A public game (the Host page's Game row): anyone joins with no password, relay only, always listed.
     h.public_game = o.public_game ? 1u : 0u;
+    // The host's kept bans (by player key), beside coop.ini: a player banned once stays out of every game hosted here.
+    const std::string bans_file = CoopFiles::Utf8Path(CoopRuntime::GameDir() / "coop-bans.txt");
+    h.bans_file = bans_file.c_str();
     if (o.public_game) h.relay_list = shown.c_str();
     g_hosted_public = o.public_game;
     g_doing = "hosting";
