@@ -263,11 +263,13 @@ TEST_CASE("look menu (0.11.9): the Character page: three pages of six, ZL and ZR
     page.Press(Input::kPagePrev);
     page.Press(Input::kPagePrev);
     CHECK(page.GroupShown() == 2u);
-    // Every part is on exactly one page.
+    // Every part is on exactly one page, but the hair: no row (0.11.9 lane, its tint too weak; on the wire still).
     std::vector<Part> seen;
     for (const auto& g : CoopLookMenu::Groups()) seen.insert(seen.end(), g.parts.begin(), g.parts.end());
-    CHECK(seen.size() == CoopLook::kParts);
-    for (const auto& info : CoopLook::Parts()) CHECK(std::count(seen.begin(), seen.end(), info.part) == 1);
+    CHECK(seen.size() == CoopLook::kParts - 1);
+    for (const auto& info : CoopLook::Parts()) {
+        CHECK(std::count(seen.begin(), seen.end(), info.part) == (info.part == Part::hair ? 0 : 1));
+    }
     // A on a part: the colour mixer, which a page turn leaves alone; X resets every part.
     page.Press(Input::kDown);
     page.Press(Input::kDown);
