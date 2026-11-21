@@ -551,7 +551,7 @@ CoopLookTunic::Texels PuppetTunicsTexels(const std::vector<std::pair<std::string
             CoopLookTunic::Texture t = texels[i];   // (its name and offset: the copy's)
             if (i < painted.size() && painted[i].texels.size() == t.texels.size()) {
                 t.texels = painted[i].texels;
-            } else if (i == 1 && t.name.find("_Dark_") != std::string::npos && !painted.empty() &&
+            } else if (t.name.find("_Dark_") != std::string::npos && !painted.empty() &&   // (by its name: any order)
                        texels[0].texels.size() == t.texels.size()) {
                 if (!darker) {
                     const std::uint32_t c = paint->second;
