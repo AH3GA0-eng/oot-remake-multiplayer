@@ -149,7 +149,7 @@ make_game() {
 
 # OoT Character Select by Snail (data/longshot/CHARACTER-SELECT.txt; owner, 0.11.8), as kit-paths.ps1's
 # Invoke-KitCharacterSelectStep: asked once (Enter, y or 15 s: yes; no terminal: yes; data/coop-options.ini
-# character_select = yes|no|ask wins, data/character-select.txt keeps the answer). On yes Snail's own release and his
+# character_select = yes|no|ask wins, data/character-select-answer.txt keeps the answer). On yes Snail's own release and his
 # characters.json are downloaded from his GitHub pages onto this PC, SHA-256 checked, and the mod's folder goes into
 # data/game/mods, on (the Mods tab switches it off; the list is never written here). The kit carries none of its
 # files. Before the game's stamp below: the build takes in its code patch (patches 0034/0035), the pack its characters.
@@ -201,8 +201,8 @@ charsel_step() {
     [[ -n $iurl && ( ! $iurl =~ ^https:// || ! $isha =~ ^[0-9a-fA-F]{64}$ ) ]] && iurl=''
     zsha=${zsha,,} osha=${osha,,} isha=${isha,,}
     line=$(sed -n 's/^[[:space:]]*character_select[[:space:]]*=[[:space:]]*\(yes\|no\|ask\)[[:space:]]*\([#;].*\)\{0,1\}$/\1/p' "$DATA/coop-options.ini" 2>/dev/null | head -n1 || true)
-    if [[ -n $line ]]; then choice=$line; [[ $choice == ask ]] && rm -f "$DATA/character-select.txt"
-    else choice=$(head -n1 "$DATA/character-select.txt" 2>/dev/null | tr -d '\r[:space:]' || true); [[ $choice == yes || $choice == no ]] || choice=ask
+    if [[ -n $line ]]; then choice=$line; [[ $choice == ask ]] && rm -f "$DATA/character-select-answer.txt"
+    else choice=$(head -n1 "$DATA/character-select-answer.txt" 2>/dev/null | tr -d '\r[:space:]' || true); [[ $choice == yes || $choice == no ]] || choice=ask
     fi
     if [[ $choice == ask ]]; then
         say ''
@@ -222,7 +222,7 @@ charsel_step() {
         else
             say "$q y (no terminal: yes)"
         fi
-        printf '%s\n' "$choice" >"$DATA/character-select.txt"
+        printf '%s\n' "$choice" >"$DATA/character-select-answer.txt"
         [[ $choice == no ]] && say '  Not installed. To get it later: character_select = yes in data/coop-options.ini.'
     fi
     dir=$GAME/mods/$folder

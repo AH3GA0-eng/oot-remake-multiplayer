@@ -997,14 +997,16 @@ try {
         Check (-not (Remove-KitCharacterSelect $ck $cm) -and (Test-Path -LiteralPath $csDir)) 'Character Select: character_select = no leaves the player''s own copy'
         Write-File (Join-Path $csDir 'coop-charsel.txt') "$want`n"
         # The answer: coop-options.ini wins, else the kept answer, else asked (Enter, Y or 15 s: yes; N: no).
-        Remove-Item -LiteralPath (Join-Path $ck 'hookshot\character-select.txt') -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $ck 'hookshot\character-select-answer.txt') -Force -ErrorAction SilentlyContinue
         Check ((Get-KitCharacterSelectChoice $ck) -eq 'ask') 'Character Select choice: nothing kept -> ask'
         Set-KitCharacterSelectChoice $ck 'no'
         Check ((Get-KitCharacterSelectChoice $ck) -eq 'no') 'Character Select choice: the kept answer is used (no question again)'
+        # (Windows names ignore case: the kept answer must never be the pin, hookshot\CHARACTER-SELECT.txt; CI bb5e5059)
+        Check ([bool](Get-KitCharacterSelectPin $ck)) 'Character Select choice: keeping the answer leaves the pin as it is'
         Write-File (Join-Path $ck 'coop-options.ini') "# x`n character_select = yes  # mine`n"
         Check ((Get-KitCharacterSelectChoice $ck) -eq 'yes') 'Character Select choice: coop-options.ini wins over the kept answer'
         Write-File (Join-Path $ck 'coop-options.ini') "character_select = ask`n"
-        Check ((Get-KitCharacterSelectChoice $ck) -eq 'ask' -and -not (Test-Path -LiteralPath (Join-Path $ck 'hookshot\character-select.txt'))) 'Character Select choice: ask in coop-options.ini asks again'
+        Check ((Get-KitCharacterSelectChoice $ck) -eq 'ask' -and -not (Test-Path -LiteralPath (Join-Path $ck 'hookshot\character-select-answer.txt'))) 'Character Select choice: ask in coop-options.ini asks again'
         Check (-not (Read-KitCharacterSelectAnswer 5 { [pscustomobject]@{ Key = 'N' } })) 'Character Select question: N is no'
         Check (Read-KitCharacterSelectAnswer 5 { [pscustomobject]@{ Key = 'Enter' } }) 'Character Select question: Enter is yes'
         Check (Read-KitCharacterSelectAnswer 1 { $null }) 'Character Select question: no key in time is yes'

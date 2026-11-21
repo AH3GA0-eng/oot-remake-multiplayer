@@ -1249,17 +1249,18 @@ function Get-KitCharacterSelectWant($Op) {
 }
 
 # The player's answer: coop-options.ini 'character_select = yes|no|ask' wins (ask: the question again); else the answer
-# kept in hookshot\character-select.txt (written at the question; no kit file has that name, so Update.bat keeps it);
+# kept in hookshot\character-select-answer.txt (written at the question; no kit file has that name, so Update.bat keeps it;
+# not character-select.txt: Windows names ignore case, and that is the pin CHARACTER-SELECT.txt);
 # else 'ask'.
 function Get-KitCharacterSelectChoice([string]$Kit) {
     foreach ($line in @(Get-Content -LiteralPath (Join-Path $Kit 'coop-options.ini') -ErrorAction SilentlyContinue)) {
         if ($line -match '^\s*character_select\s*=\s*(yes|no|ask)\s*([#;].*)?$') {
             $v = $Matches[1].ToLowerInvariant()
-            if ($v -eq 'ask') { Remove-Item -LiteralPath (Join-Path $Kit 'hookshot\character-select.txt') -Force -ErrorAction SilentlyContinue }
+            if ($v -eq 'ask') { Remove-Item -LiteralPath (Join-Path $Kit 'hookshot\character-select-answer.txt') -Force -ErrorAction SilentlyContinue }
             return $v
         }
     }
-    $kept = Join-Path $Kit 'hookshot\character-select.txt'
+    $kept = Join-Path $Kit 'hookshot\character-select-answer.txt'
     if (Test-Path -LiteralPath $kept) {
         $v = (Read-KitFirstLine $kept).ToLowerInvariant()
         if ($v -eq 'yes' -or $v -eq 'no') { return $v }
@@ -1268,7 +1269,7 @@ function Get-KitCharacterSelectChoice([string]$Kit) {
 }
 
 function Set-KitCharacterSelectChoice([string]$Kit, [string]$Value) {
-    try { [System.IO.File]::WriteAllText((Join-Path $Kit 'hookshot\character-select.txt'), "$Value`n") } catch { }
+    try { [System.IO.File]::WriteAllText((Join-Path $Kit 'hookshot\character-select-answer.txt'), "$Value`n") } catch { }
 }
 
 # The question at a start (owner, 0.11.8): Enter, Y or no key in $Seconds is yes; N is no. No console (input

@@ -244,7 +244,7 @@ printf '{"format": 1, "mod": "OoT Character Select", "characters": []}' >"$D/bui
 cs_zsha=$(sha256sum "$D/builder/charsel/CS-v1.zip" | cut -d' ' -f1) cs_osha=$(sha256sum "$D/builder/charsel/characters.json" | cut -d' ' -f1)
 printf 'release=v1\nurl=https://example.invalid/cs\nzip=CS-v1.zip\nzip_sha256=%s\nzip_folder=CS-v1/mods/OoT Character Select\nfolder=OoT Character Select\noverlay_url=https://example.invalid/characters.json\noverlay_sha256=%s\nips_url=\nips_sha256=\n' \
     "$cs_zsha" "$cs_osha" >"$kit/data/longshot/CHARACTER-SELECT.txt"
-rm -f "$D/character-select.txt"
+rm -f "$D/character-select-answer.txt"
 CS="$D/game/mods/OoT Character Select"
 # review-geno-0118: the game build after the install fails -> the mods folder goes back to what the game was built
 # with, one line says so, and the start goes on with the game as it was (not stopped).
@@ -257,7 +257,7 @@ OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs1.txt"
 check 'Character Select: his folder alone in data/game/mods with characters.json, stamped, credited, the answer kept' \
     bash -c '[ $CODE -eq 0 ] && [ -f "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ -f "$2/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips" ] &&
         [ -f "$2/characters.json" ] && [ ! -e "$2/INSTALL.txt" ] && grep -q "^v1 " "$2/coop-charsel.txt" && grep -q "belong to Nintendo" "$2/CREDITS-coop.txt" &&
-        grep -qx yes "$3/character-select.txt" && [ ! -e "$3/builder/charsel/CS-v1.zip" ] && [ ! -e "$3/game/mods/coop-mods.list" ]' _ "$tmp/build-cs1.txt" "$CS" "$D"
+        grep -qx yes "$3/character-select-answer.txt" && [ ! -e "$3/builder/charsel/CS-v1.zip" ] && [ ! -e "$3/game/mods/coop-mods.list" ]' _ "$tmp/build-cs1.txt" "$CS" "$D"
 check 'Character Select: its code patch is in the game stamp (the build takes it in: patches 0034/0035)' grep -q 'exefs=OoT Character Select/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips:' "$D/game/coop-built-from.txt"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs2.txt" 2>&1
 check 'Character Select: a built game confirms the change (no kept state left)' bash -c '[ ! -e "$1/_OoT Character Select.none" ] && [ ! -e "$1/_OoT Character Select.prev" ]' _ "$D/game/mods"
@@ -267,7 +267,7 @@ OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs3.txt"
 check 'Character Select: character_select = no takes the kit'"'"'s copy out and the game is built without its code' \
     bash -c '[ $CODE -eq 0 ] && grep -q "taken out" "$1" && [ ! -e "$2" ] && ! grep -q "exefs=" "$3/game/coop-built-from.txt"' _ "$tmp/build-cs3.txt" "$CS" "$D"
 sed -i '/^character_select = no$/d' "$D/coop-options.ini"
-rm -f "$kit/data/longshot/CHARACTER-SELECT.txt" "$D/character-select.txt"
+rm -f "$kit/data/longshot/CHARACTER-SELECT.txt" "$D/character-select-answer.txt"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs4.txt" 2>&1; export CODE=$?
 check 'Character Select: a kit without CHARACTER-SELECT.txt asks nothing and fetches nothing' bash -c '[ $CODE -eq 0 ] && ! grep -q "Character Select" "$1"' _ "$tmp/build-cs4.txt"
 
