@@ -7505,3 +7505,85 @@ TEST_CASE("dedicated: the player who hosts the progress has no host powers, the 
   // The console still acts.
   CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: done");
 }
+
+// Row 221: a child and an adult in the two eras of one place (Graveyard_Child, Graveyard_Adult) draw each other's
+// puppet, so everything between the two players goes by place (coop/protocol/scene_place.hpp), as in one scene.
+TEST_CASE("interest by place: the two eras of one place get every pose and sample, another place none (row 221)") {
+  Harness h;
+  h.join(1, "Adult");
+  h.join(2, "Child");
+  h.join(3, "Elsewhere");
+  h.receive(1, sample_at("Graveyard_Adult", 0.0f), kChannelPlayerSamples);
+  h.receive(2, sample_at("Graveyard_Child", 500.0f), kChannelPlayerSamples);
+  h.receive(3, sample_at("KokiriForest_Child", 0.0f), kChannelPlayerSamples);
+  h.clear();
+  const std::uint8_t channel = channel_of(Message{a_pose()});
+  for (int i = 0; i < 30; ++i) {
+    h.now += 33'000;
+    h.receive(1, a_pose(), channel);
+  }
+  CHECK(count_to<PlayerPose>(h, 2) == 30);  // before: 0, the child's copy slid on AS names
+  CHECK(count_to<PlayerPose>(h, 3) == 0);
+  h.clear();
+  for (int i = 0; i < 60; ++i) {
+    h.now += 16'000;
+    h.receive(2, sample_at("Graveyard_Child", 500.0f), kChannelPlayerSamples);
+  }
+  CHECK(count_to<PlayerSample>(h, 1) == 60);  // before: every 6th
+  CHECK(count_to<PlayerSample>(h, 3) == 10);
+}
+
+TEST_CASE("player lift by place: an adult lifts a child in the other era's scene of one place (row 221)") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.receive(1, LiftShare{true}, kChannelOwnership);
+  h.receive(2, LiftShare{true}, kChannelOwnership);
+  h.receive(1, young_at("Graveyard_Adult", Vec3{1, 0, 0}, Age::adult), kChannelPlayerSamples);
+  h.receive(2, young_at("Graveyard_Child", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(only_message_to<LiftAsk>(h, 2) == LiftAsk{1, 2});
+  // Another place, either era: still too far.
+  h.receive(2, young_at("Kakariko_Child", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, LiftAsk{0, 2}, kChannelOwnership);
+  CHECK(h.to(2).empty());
+  CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::too_far});
+}
+
+TEST_CASE("pvp native by place: a strike and its result cross the two eras of one place, not two places (row 221)") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.receive(1, sample_at("Graveyard_Adult", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("Graveyard_Child", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(3, sample_at("Kakariko_Child", Vec3{1, 0, 0}), kChannelPlayerSamples);
+  h.receive(1, PvpNative{0, true}, kChannelOwnership);
+  h.receive(2, PvpNative{0, true}, kChannelOwnership);
+  h.receive(1, PvpMode{0, true}, kChannelSession);
+  h.clear();
+  h.receive(1, strike_on(2, 1), kChannelOwnership);
+  CHECK(messages_to<PvpStrike>(h, 2).size() == 1);
+  h.clear();
+  h.receive(2, result_for(1, 1), kChannelOwnership);
+  CHECK(messages_to<PvpResult>(h, 1).size() == 1);  // the attacker, in the adult scene
+  CHECK(h.to(3).empty());                           // another place
+  CHECK(h.session.stats().pvp_strikes_dropped == 0);
+}
+
+TEST_CASE("voice by place: the two eras of one place hear each other in range, another place does not (row 221)") {
+  ObjectHarness h;  // voice_range_m 35 by default
+  h.receive(1, sample_at("Graveyard_Adult", Vec3{0, 0, 0}), kChannelPlayerSamples);
+  h.receive(2, sample_at("Graveyard_Child", Vec3{20, 0, 0}), kChannelPlayerSamples);
+  h.receive(3, sample_at("KokiriForest_Adult", Vec3{0, 0, 0}), kChannelPlayerSamples);
+  h.clear();
+  h.receive(1, voice_frame(1), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+  CHECK(messages_to<VoiceFrame>(h, 3).empty());
+  h.clear();
+  h.receive(1, voice_frame(2, voice::end), kChannelVoice);
+  CHECK(messages_to<VoiceFrame>(h, 2).size() == 1);
+  CHECK(messages_to<VoiceFrame>(h, 3).empty());
+}

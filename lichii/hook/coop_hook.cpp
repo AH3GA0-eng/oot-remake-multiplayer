@@ -12,6 +12,7 @@
 // view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
+#include "coop/protocol/scene_place.hpp"
 #include "coop_caller_orders.h"
 #include "coop_version.h" // LICHII_COOP_VERSION, written on each build (cmake/coop_version.cmake)
 
@@ -2636,7 +2637,8 @@ private:
             }
             const auto& s = *it->second;
             text += ": " + s.scene.value_or("?");
-            const bool same = s.scene && frame.scene && *s.scene == *frame.scene;
+            // Either era of one place counts (row 221).
+            const bool same = s.scene && frame.scene && coop::protocol::same_place(*s.scene, *frame.scene);
             if (same && frame.position) {
                 const auto& a = s.position;
                 const auto& b = *frame.position;

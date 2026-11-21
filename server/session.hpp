@@ -75,6 +75,8 @@ struct SessionConfig {
   std::uint8_t max_players = kDefaultMaxPlayers;
   // Interest (16 players, docs/protocol.md "Who gets which stream"): each
   // PLAYER_SAMPLE and PLAYER_POSE goes to a player by where the two are.
+  // "Same scene" here is the same PLACE in either era (Graveyard_Child and
+  // Graveyard_Adult: each draws the other's puppet; row 221).
   // Same scene within near_distance (game units), or either place unknown:
   // all of them. Same scene, farther: every far_pose_every-th pose (samples
   // all: they are small). Another scene: every other_scene_sample_every-th
@@ -979,6 +981,10 @@ class Session {
   // one and its PLAYER_SAMPLE position is fresh.
   bool place_known_in(const Connection& c, const std::string& scene,
                       std::uint64_t now_us) const;
+  // The same for a place between two PLAYERS (lifting, PvP): `scene` in either era counts, as both games draw
+  // the other's puppet there (coop/protocol/scene_place.hpp). Objects keep place_known_in's exact scene.
+  bool place_known_near(const Connection& c, const std::string& scene,
+                        std::uint64_t now_us) const;
   bool unfit_owner(const Connection& c, std::uint64_t now_us) const;
   void mark_fight(Object& o, std::uint64_t now_us);
   bool in_fight(const Object& o, std::uint64_t now_us) const;
@@ -1004,6 +1010,9 @@ class Session {
   void forget(Objects::iterator it);
   void unlink(const protocol::ObjectId& oid, Object& o);
   void announce_owner(const protocol::ObjectId& oid, const Object& o);
+  // To the joined players in `scene`'s place, either era (none when it is empty): for what is between players.
+  void send_to_place(const std::string& scene, std::optional<ConnectionId> except,
+                     std::uint8_t channel, const protocol::Message& m);
   // To every joined player in `scene` but `except`; empty scene: everyone.
   void send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
                      std::uint8_t channel, const protocol::Message& m);

@@ -10,6 +10,7 @@
 // - the Life step (Hookshot patch 0007) asks the guard for our Link only.
 
 #include "coop_dbno_game.h"
+#include "coop/protocol/scene_place.hpp"
 
 #include <array>
 #include <atomic>
@@ -456,7 +457,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     if (!threatened && CoopPvp::On() && reading) {
         std::vector<Vec3> rivals;
         for (const Teammate& t : team) {
-            if (t.state == State::up && t.in_game && t.scene && scene && *t.scene == *scene && t.position) {
+            if (t.state == State::up && t.in_game && t.scene && scene && coop::protocol::same_place(*t.scene, *scene) &&
+                t.position) {
                 rivals.push_back(*t.position);
             }
         }
@@ -472,7 +474,7 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     if (out.state == State::spectating && reading && scene) {
         static const CoopRooms::Table rooms = CoopFairy::RoomTable();
         for (const Teammate& t : team) {
-            if (t.number == out.watching && t.scene && *t.scene == *scene && t.position &&
+            if (t.number == out.watching && t.scene && coop::protocol::same_place(*t.scene, *scene) && t.position &&
                 CoopTeleport::CheckMove(rooms, *scene, CoopTeleport::Vec{in.position[0], in.position[1], in.position[2]},
                                         CoopTeleport::Vec{(*t.position)[0], (*t.position)[1], (*t.position)[2]}) ==
                     CoopTeleport::MoveCheck::ok) {
