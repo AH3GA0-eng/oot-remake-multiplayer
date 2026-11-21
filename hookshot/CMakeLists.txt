@@ -40,7 +40,7 @@ if(COOP_HOOK_STRICT AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     -Wno-error=unused -Wno-error=unused-function
     -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
     -Wno-cast-function-type -Wno-shadow -Wno-implicit-fallthrough
-    -Wno-error=range-loop-construct -Wno-error=maybe-uninitialized)
+    -Wno-error=missing-declarations -Wno-error=range-loop-construct -Wno-error=maybe-uninitialized)
 endif()
 
 add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_map_page.cpp src/coop_dbno_draw.cpp src/coop_png.cpp src/coop_window_brand.cpp src/coop_chatbox.cpp src/coop_cheats_panel.cpp
