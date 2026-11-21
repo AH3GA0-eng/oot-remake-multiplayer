@@ -81,6 +81,9 @@ struct Seen {
     // our game last set them (sent in its samples).
     std::uint64_t bsa_component = 0;
     std::optional<coop::protocol::BossBsa> bsa;
+    // Boss turns (0.11.8): an enemy's attack as its own game says (CoopBossNative::AttackFlagsAt: its BSA's current
+    // action verb attribute Attack). nullopt: not read (no BSA, not an enemy).
+    std::optional<bool> attacking;
     // Where a boss copy's own new hit landed (its game's hit record, +0x27c; IsBoss only, never one we replayed,
     // checked near the boss): sent with our DAMAGE so the owner's replay lands there (boss-intro).
     std::optional<coop::protocol::Vec3> hit_at{};
@@ -293,8 +296,13 @@ struct BossLifeSeen {
     std::int32_t life = 0;
     bool removed = false;  // a delete request for `address` came after that reading
 };
-using BossLives = std::map<std::string, BossLifeSeen, std::less<>>;
+// One reading per body: a name may have several bodies at once (Gohma's eggs, a boss's two hands), each read by
+// its own address. (Row 191: kept by name alone, two eggs took turns in the one reading, and the dead one logged
+// "read at life 0 here (from 1): its death" on every walk until it was deleted, as if it had been revived.)
+using BossLives = std::map<std::string, std::vector<BossLifeSeen>, std::less<>>;
 void NoteBossLives(const std::vector<Seen>& walk, BossLives& last);
+// The last reading of the body `name` at `address`; nullptr: never read.
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address);
 void NoteBossRemoved(std::uint64_t address, BossLives& last);
 std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const std::string_view> bodies,
                                   const BossLives& last);
@@ -509,6 +517,9 @@ bool IsBossPart(std::string_view name);
 // A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
 // (its life, its hits, its slots and animations, its own native boss sync entry).
 bool IsBossOrPart(std::string_view name);
+// Boss turns (0.11.8): a sample's object_state bits for an enemy's attack as its game read it (Seen::attacking):
+// attack_read whenever it was read, attacking with it while the attack runs; 0 when not read.
+std::uint8_t AttackBits(std::optional<bool> attacking);
 // Row 149: the root a boss part follows in a walk (PartOf's roots in order, the nearest in reach; on a tie the
 // the first in the walk), as GroupsOf picks it; nothing for no boss part or no root in the walk. `names` and `places`
 // are the walk's, one per actor.
@@ -1208,6 +1219,7 @@ private:
         std::optional<coop::protocol::Animation> animation;
         std::vector<coop::protocol::SlotAnimation> slots;  // issue 150: a boss's, as last read
         std::optional<coop::protocol::BossBsa> bsa;         // native boss sync: ours, as last read
+        std::optional<bool> attacking;                       // boss turns: its game's Attack attribute (Seen)
         std::optional<coop::protocol::BossBsa> bsa_in;      // native boss sync: a copy's, the owner's latest
         bool boss_native = false;  // a bsa came for it once: its AI runs (never held), across owners
         coop::protocol::Vec3 velocity{};

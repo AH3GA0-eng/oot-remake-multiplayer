@@ -133,13 +133,35 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
 
 void NoteBossLives(const std::vector<Seen>& walk, BossLives& last) {
     for (const Seen& s : walk) {
-        if (s.life) last[s.name] = BossLifeSeen{s.address, s.life->life, false};
+        if (!s.life) continue;
+        auto& bodies = last[s.name];
+        const auto it = std::find_if(bodies.begin(), bodies.end(),
+                                     [&](const BossLifeSeen& b) { return b.address == s.address; });
+        if (it != bodies.end()) {
+            *it = BossLifeSeen{s.address, s.life->life, false};
+        } else {
+            // A new body of that name: the readings of deleted ones are over (the newest body speaks for the
+            // name, as one reading per name did).
+            std::erase_if(bodies, [](const BossLifeSeen& b) { return b.removed; });
+            bodies.push_back(BossLifeSeen{s.address, s.life->life, false});
+        }
     }
 }
 
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address) {
+    const auto it = last.find(name);
+    if (it == last.end()) return nullptr;
+    for (const BossLifeSeen& b : it->second) {
+        if (b.address == address) return &b;
+    }
+    return nullptr;
+}
+
 void NoteBossRemoved(std::uint64_t address, BossLives& last) {
-    for (auto& [name, seen] : last) {
-        if (address != 0 && seen.address == address) seen.removed = true;
+    for (auto& [name, bodies] : last) {
+        for (BossLifeSeen& seen : bodies) {
+            if (address != 0 && seen.address == address) seen.removed = true;
+        }
     }
 }
 
@@ -156,12 +178,14 @@ std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const
     for (const std::string_view body : bodies) {
         const auto it = last.find(body);
         if (it == last.end()) continue;  // never read here
-        if (it->second.life <= 0) {
-            died = true;
-        } else if (!it->second.removed) {
-            return true;  // away: alive
-        } else {
-            removed_alive = true;
+        for (const BossLifeSeen& seen : it->second) {  // (each body of that name)
+            if (seen.life <= 0) {
+                died = true;
+            } else if (!seen.removed) {
+                return true;  // away: alive
+            } else {
+                removed_alive = true;
+            }
         }
     }
     if (died) return false;
@@ -179,7 +203,8 @@ bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_vie
     }
     for (const std::string_view body : bodies) {
         const auto it = last.find(body);
-        if (it != last.end() && it->second.life <= 0) {
+        if (it != last.end() && std::any_of(it->second.begin(), it->second.end(),
+                                            [](const BossLifeSeen& seen) { return seen.life <= 0; })) {
             return true;
         }
     }
@@ -207,7 +232,7 @@ std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std:
 }
 
 bool IsPreBattleAnimation(std::string_view name) {
-    return name == "Sleep" || name.starts_with("Pre_Battle_");
+    return coop::protocol::anim::IsPreBattle(name);
 }
 
 std::optional<bool> BossPreBattle(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
@@ -491,6 +516,14 @@ bool OnBrainPath(std::string_view name) {
 
 bool EnemyBrainSwitch(std::string_view value) {
     return !value.empty() && value != "0";
+}
+
+std::uint8_t AttackBits(std::optional<bool> attacking) {
+    if (!attacking) {
+        return 0;
+    }
+    return static_cast<std::uint8_t>(proto::object_state::attack_read |
+                                     (*attacking ? proto::object_state::attacking : 0));
 }
 
 bool IsBossOrPart(std::string_view name) {
@@ -1456,8 +1489,12 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
+    state.state = AttackBits(o.attacking);  // boss turns: its game's own Attack attribute
     if (o.own_event_until > now_us) {
-        state.state = proto::object_state::in_event;  // S2: our Link's event binds it
+        state.state = static_cast<std::uint8_t>(state.state.value_or(0) | proto::object_state::in_event);  // S2
+    }
+    if (state.state && *state.state == 0) {
+        state.state.reset();
     }
     return state;
 }
@@ -2115,6 +2152,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         o.slots = s.slots;
         o.bsa = s.bsa;
+        o.attacking = s.attacking;
         o.event_member = s.event_member;  // row 97
         o.sensor_in_area = s.sensor_in_area;  // row 138(8)
         if (s.hit_at) {
@@ -2502,6 +2540,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s->animation;
         o.slots = s->slots;
         o.bsa = s->bsa;
+        o.attacking = s->attacking;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
@@ -3783,6 +3822,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             const std::int32_t life = sample->state.life->life;
             o->owner_life_zero = life <= 0;
+            if (o->owner_life && life > *o->owner_life) {
+                // The owner's life went back up (a boss's refill for its next phase, Ganondorf's or Twinrova's; a
+                // new owner's higher count): the drops from here are new hits, each shown by its stand-in again.
+                // Kept, the old mark hid every hit of the refilled life down to the life before the refill.
+                o->boss_stand_in_life = 0;
+            }
             o->owner_life = life;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding =

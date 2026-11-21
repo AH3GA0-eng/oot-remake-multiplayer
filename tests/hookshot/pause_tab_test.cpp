@@ -16,6 +16,8 @@ namespace {
 
 using namespace CoopPauseTab;
 
+constexpr int kMinusMode = 0;   // (the strip's mode in the - menu: any mode but kPlusMode; one for every case)
+
 Facts Strip(std::uint64_t screen, int tabs, int lit, int mode = kPlusMode, int state = 2) {
     Facts f;
     f.kind = Kind::kStrip;
@@ -2378,7 +2380,6 @@ TEST_CASE("pause tab: the fourth tab's place and fades taken one update ahead, n
 }
 
 TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R and L among ours, L back to Map") {
-    constexpr int kMinusMode = 0;
     Page p = UsablePage();
     std::uint64_t now = 1000;
     // Without the pack's tabs: the - menu's R and L stay the game's.
@@ -2446,4 +2447,136 @@ TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R a
     // In the + menu nothing of ours there.
     d = p.OnScreen(Strip(0x9000, 8, kSystemPage), now + 120);
     CHECK_FALSE(d.minus_shown);
+}
+
+TEST_CASE("pause tab (0.11.9): the - menu's own page: up and down among its rows shown, A picks one, then the + menu") {
+    Page p = UsablePage();
+    p.SetMinusTabsUsable(true);
+    std::uint64_t now = 1000;
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now);
+    p.OnPad(kPadR, now + 10), p.OnPad(0, now + 12);
+    REQUIRE(p.MinusTab() == 0);
+    p.TakeStripSound();
+    // No rows yet (the module has not set them): A and the d-pad do nothing, and stay kept from the game.
+    CHECK(p.OnPad(kPadDown, now + 14) == 0);
+    p.OnPad(0, now + 16);
+    CHECK(p.OnPad(kPadA, now + 18) == 0);
+    CHECK(p.TakeMinusDecide() == -1);
+    p.OnPad(0, now + 20);
+    // Rows 0, 1 and 3 (2 empty): down skips the empty one, stops at the last, up stops at the first; the game's sound.
+    p.SetMinusRows(0b1011);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 22), p.OnPad(0, now + 24);
+    CHECK(p.MinusRow() == 1);
+    CHECK(std::string(p.TakeStripSound()) == "button_on");
+    p.OnPad(kPadStickDown, now + 26), p.OnPad(0, now + 28);
+    CHECK(p.MinusRow() == 3);
+    p.OnPad(kPadDown, now + 30), p.OnPad(0, now + 32);
+    CHECK(p.MinusRow() == 3);
+    CHECK(p.TakeStripSound() != nullptr);   // (the move to 3's)
+    CHECK(p.TakeStripSound() == nullptr);   // (none at the end)
+    // The row under the cursor gone (out of a game): the next shown one around.
+    p.SetMinusRows(0b0011);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 34), p.OnPad(0, now + 36);
+    p.OnPad(kPadUp, now + 38), p.OnPad(0, now + 40);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 42), p.OnPad(0, now + 44);
+    // A: the row, once, with the game's decide sound; never the game's A.
+    CHECK(p.OnPad(kPadA, now + 46) == 0);
+    CHECK(p.TakeMinusDecide() == 1);
+    CHECK(p.TakeMinusDecide() == -1);
+    CHECK(std::string(p.TakeStripSound()) == "button_decide");
+    p.OnPad(0, now + 48);
+    // Another tab: its first row, its rows set again.
+    p.OnPad(kPadR, now + 50), p.OnPad(0, now + 52);
+    CHECK(p.MinusTab() == 1);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 54), p.OnPad(0, now + 56);
+    CHECK(p.MinusRow() == 0);   // (no rows set for it yet)
+    // The + menu: the game gets one press of - (down, then let go), nothing else of the pad meanwhile.
+    p.SetMinusRows(0b111);
+    p.GoToPlus();
+    CHECK(p.GoingToPlus());
+    CHECK(p.ViewKept());
+    CHECK(p.OnPad(kPadA, now + 58) == kPadMinus);
+    CHECK(p.OnPad(kPadA, now + 60) == 0);
+    CHECK(p.GoingToPlus());   // (lane R1: that - closes the - menu; the + press comes once it is closed)
+    // The - menu goes (closing: still up, no + yet), then its updates stop: one press of + (down, then let go).
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 70);
+    CHECK(p.MinusTab() == -1);
+    // (the pad every frame, as in the game: a jump of more than the stale time with no call is a game stall, which
+    // Page::AfterStall carries the strip's last update over, so the closed - menu would still read up)
+    int pluses = 0;
+    std::uint64_t plus_at = 0;
+    for (std::uint64_t t = now + 72; t < now + 400; t += 16) {   // (the next step comes at now + 410)
+        if (p.OnPad(0, t) == kPadPlus) ++pluses, plus_at = t;
+    }
+    CHECK(pluses == 1);                    // (one press of +: down, then let go)
+    CHECK(plus_at >= now + 70 + 250);      // (only once the - menu's updates have stopped: its last at now + 70)
+    CHECK_FALSE(p.GoingToPlus());
+    CHECK(p.ViewKept());
+    // The + menu opens on System: the Multiplayer page shows there.
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 410);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 410);
+    CHECK(p.Shown());
+    CHECK(p.Which() == 0);
+    CHECK_FALSE(p.ViewKept());   // (shown: the view is the page's own again)
+}
+
+TEST_CASE("pause tab (0.11.9): after our - the + press waits for the - menu to close, and gives up after a while") {
+    Page p;
+    p.SetMinusTabsUsable(true);
+    const std::uint64_t now = 1000;
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now);
+    p.OnPad(kPadR, now + 10), p.OnPad(0, now + 12);
+    p.SetMinusRows(0b111);
+    p.GoToPlus();
+    CHECK(p.OnPad(0, now + 14) == kPadMinus);
+    CHECK(p.OnPad(0, now + 16) == 0);
+    // The - menu stays open (its updates go on): never a +, and after the wait the view is not kept.
+    std::uint64_t t = now + 16;
+    for (; t < now + 3200; t += 100) {
+        p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), t);
+        CHECK(p.OnPad(0, t + 1) != kPadPlus);
+    }
+    CHECK_FALSE(p.GoingToPlus());
+    CHECK_FALSE(p.ViewKept());
+}
+
+TEST_CASE("pause tab (0.11.9): the - menu's Lobby and Multiplayer pages: every row opens something, none empty-handed") {
+    SessionView idle;
+    CHECK(RowTexts(MinusPage::kLobby, idle) == std::vector<std::string>{"Find a game", "Host a game", "Join a game", "", ""});
+    CHECK(RowTexts(MinusPage::kMultiplayer, idle) ==
+          std::vector<std::string>{"Players", "Co-op settings", "Local co-op", "", ""});   // (not in a game: no row 3)
+    Session s;
+    CHECK(ActionFor(MinusPage::kLobby, 0, s) == RowAction::kViewLan);
+    CHECK(ActionFor(MinusPage::kLobby, 1, s) == RowAction::kViewHost);
+    CHECK(ActionFor(MinusPage::kLobby, 2, s) == RowAction::kViewJoin);
+    CHECK(ActionFor(MinusPage::kLobby, 3, s) == RowAction::kNone);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 0, s) == RowAction::kViewPlayers);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 1, s) == RowAction::kViewMenu);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 2, s) == RowAction::kViewLocal);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 3, s) == RowAction::kNone);
+    // Hosting: the Multiplayer page has your game (Let in, Stop there); a guest: your session (Leave there).
+    SessionView host;
+    host.s.hosting = host.s.in_one = true;
+    host.asking = {"Saria"};
+    CHECK(RowTexts(MinusPage::kMultiplayer, host)[3] == "Your game: Saria asks");
+    CHECK(ActionFor(MinusPage::kMultiplayer, 3, host.s) == RowAction::kViewHost);
+    SessionView guest;
+    guest.s.in_one = true;
+    CHECK(RowTexts(MinusPage::kMultiplayer, guest)[3] == "Your session");
+    CHECK(ActionFor(MinusPage::kMultiplayer, 3, guest.s) == RowAction::kViewJoin);
+    // Every row with words opens something; every row without opens nothing.
+    for (const SessionView& v : {idle, host, guest}) {
+        for (MinusPage p : {MinusPage::kLobby, MinusPage::kMultiplayer}) {
+            const auto rows = RowTexts(p, v);
+            for (int r = 0; r < kRows; ++r) {
+                CHECK(rows[static_cast<std::size_t>(r)].empty() == (ActionFor(p, r, v.s) == RowAction::kNone));
+            }
+        }
+    }
+    CHECK(std::string(ActionWords(RowAction::kViewLocal)).size() > 3);
+    CHECK(RowTexts(MinusPage::kMods, idle) == std::vector<std::string>(kRows));
 }

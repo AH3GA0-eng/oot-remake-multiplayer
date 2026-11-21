@@ -5,6 +5,8 @@ game files, as the puppets are.
 
 Writes into the puppet mod's romfs:
   UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs
+      MenuOverlay_00.buil (the tab strip): the - menu's tabs of ours (Pa_Category_04..06) and their page,
+          Pa_CoopMinus_00: a part of the System page's layout where a shown + page sits (add_minus_page)
       PlusMenu_00.buil (the pages): Pa_Coop_00 and Pa_Settings_00, copies of the System page, where
           a page shows (the Multiplayer page, and Longshot Settings: Longshot's options)
       PaSystemMenu_00.buil (the System page's own layout, which all three pages use): Pa_List_00..07,
@@ -113,6 +115,45 @@ def add_tab(d):
     src_off = ui_pack.frame_offset(d, MINUS_SOURCE, TAB_ROOT)
     return ui_pack.clone_parts(d, [ui_pack.Copy(MINUS_SOURCE, name, ((i + 1) * step + src_off[0], src_off[1]),
                                                 parent=TAB_ROOT, hidden=True) for i, name in enumerate(MINUS_TABS)],
+                               new_id=_new_id)
+
+
+MINUS_PAGE = "Pa_CoopMinus_00"   # the - menu's page of ours (CoopPauseTab: Multiplayer and Lobby's rows)
+MINUS_PAGE_SOURCE = MINUS_SOURCE  # (a part of the strip's own, in whose place it is made)
+
+
+def shown_page(pages_layout):
+    """((x, y), (w, h)) of a shown + page in the frame of PlusMenu_00's root: where the System page sits once the
+    strip has slid to it (add_page's place, N_InOut_00's own place added), and the System page's size."""
+    panes, _ = ui_pack.read_layout(pages_layout)
+    p = next((p for p in panes if p.name == SYSTEM_PAGE), None)
+    if p is None:
+        raise PauseMenuError("the layout has no %s" % SYSTEM_PAGE)
+    full = ui_pack.frame_offset(pages_layout, SYSTEM_PAGE, TAB_ROOT)
+    off = ui_pack.frame_offset(pages_layout, SYSTEM_PAGE, PAGE_PARENT)
+    _, y = struct.unpack_from("<ff", pages_layout, p.record + 0x1c)
+    return (full[0] - off[0], full[1] + y), struct.unpack_from("<ff", pages_layout, p.record + 0x2c)
+
+
+def add_minus_page(d, place, size):
+    """MenuOverlay_00.buil with the - menu's page of ours: MINUS_PAGE, a part of the System page's own layout
+    (PaSystemMenu_00, the same Options rows Pa_List_00..07 add_rows makes, in the game's System look) under the root,
+    at `place` and `size` (shown_page: where and how big a shown + page is; both layouts fill the screen from the same
+    centre), stored hidden. The - menu's pages of the game draw from other layouts (the Map page: MapMenu_00), so no
+    page layout of the - menu has room for ours; the tab strip's layout shows over every - page, so the module shows
+    ours there while one of our tabs is lit and hides the game's page under it. No code of the game binds it (the
+    strip binds its Pa_Category parts by name): its rows are the module's alone."""
+    panes, _ = ui_pack.read_layout(d)
+    names = {p.name for p in panes}
+    for name in (TAB_ROOT, MINUS_PAGE_SOURCE):
+        if name not in names:
+            raise PauseMenuError("the layout has no %s" % name)
+    if MINUS_PAGE in names:
+        raise PauseMenuError("the layout has %s already" % MINUS_PAGE)
+    sx, sy = _xy(d, MINUS_PAGE_SOURCE)
+    move = (place[0] - sx, place[1] - sy)   # (the copy's translate under the root is the source's plus the move)
+    return ui_pack.clone_parts(d, [ui_pack.Copy(MINUS_PAGE_SOURCE, MINUS_PAGE, move, parent=TAB_ROOT, hidden=True,
+                                                part_layout=SYSTEM_LAYOUT[:-len(".buil")], size=tuple(size))],
                                new_id=_new_id)
 
 
@@ -231,8 +272,13 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
     raw = reader.read(COMMON_ARCHIVE)
     plain = dicts.decompress(raw)
     entries = sarc.read_entries(plain)
-    # (the tab strip, MenuOverlay_00, gets the - menu's tabs; our other pages open from System's buttons)
-    for layout, edit in ((OVERLAY_LAYOUT, add_tab), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, _system_layout)):
+    # (the tab strip, MenuOverlay_00, gets the - menu's tabs and their page; our other pages open from System's buttons)
+    pages = [data for name, data in entries if name == PAGES_LAYOUT]
+    if not pages:
+        raise PauseMenuError("%s has no %s" % (COMMON_ARCHIVE, PAGES_LAYOUT))
+    place, size = shown_page(pages[0])
+    overlay = lambda d: add_minus_page(add_tab(d), place, size)
+    for layout, edit in ((OVERLAY_LAYOUT, overlay), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, _system_layout)):
         olds = [data for name, data in entries if name == layout]
         if not olds:
             raise PauseMenuError("%s has no %s" % (COMMON_ARCHIVE, layout))
