@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -741,6 +742,29 @@ const char* ActionWords(RowAction a);   // for the log
 
 // The log lines a run needs (the first step's probe, kept): a screen object's first update, its updates over its
 // first second, and every change of what it shows. Pages and strip only.
+// The - menu research (ui-tabs-0119, COOP_TEST_SCREEN_PROBE=1): every screen that updates, by its vtable's offset in main,
+// and the menu manager's Plus and Minus categories, logged when a screen is first seen, when its state changes, and
+// when the categories change; a screen not seen for kCensusGoneMs is said gone. Log only: nothing in the game is set.
+class Census {
+public:
+    static constexpr std::uint64_t kCensusGoneMs = 1500;
+    struct Menu {
+        int plus = -1, minus = -1, minus_on = -1;   // manager +0x530, +0x52c, +0x53c
+        bool operator==(const Menu& o) const { return plus == o.plus && minus == o.minus && minus_on == o.minus_on; }
+    };
+    // One screen update: the lines to log (none for most).
+    std::vector<std::string> Seen(std::uint64_t vtable_offset, int state, const Menu& menu, std::uint64_t now_ms);
+
+private:
+    struct Screen {
+        std::uint64_t vtable = 0;
+        int state = -1;
+        std::uint64_t last_ms = 0;
+    };
+    std::vector<Screen> screens_;
+    std::optional<Menu> menu_;
+};
+
 class Probe {
 public:
     std::vector<std::string> Seen(const Facts& f, std::uint64_t now_ms);

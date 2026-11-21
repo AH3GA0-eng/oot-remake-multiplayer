@@ -2229,6 +2229,31 @@ void TestPouch(std::uint64_t manager) {
     }
 }
 
+// The - menu research (ui-tabs-0119): with COOP_TEST_SCREEN_PROBE=1 every screen update is counted (Census) and the
+// changes logged, with the menu manager's Plus and Minus categories. Off: one cached read of the variable.
+static void CensusUpdate(std::uint64_t screen, std::uint64_t vtable_offset) {
+    static const bool on = [] {
+        const char* v = std::getenv("COOP_TEST_SCREEN_PROBE");
+        return v != nullptr && v[0] == '1';
+    }();
+    if (!on) return;
+    static std::mutex census_mutex;
+    static Census census;
+    Census::Menu m;
+    if (const std::uint64_t manager = Read<std::uint64_t>(CoopRuntime::MainBase() + kMenuManager); manager != 0) {
+        m.plus = Read<std::int32_t>(manager + kManagerPage);
+        m.minus = Read<std::int32_t>(manager + 0x52c);
+        m.minus_on = Read<std::uint8_t>(manager + 0x53c);
+    }
+    const int state = Read<std::uint8_t>(screen + kScreenState);
+    std::vector<std::string> lines;
+    {
+        std::lock_guard lock(census_mutex);
+        lines = census.Seen(vtable_offset, state, m, NowMs());
+    }
+    for (const auto& l : lines) LOG_INFO(Core, "coop: pause tab: {}", l);
+}
+
 void OnScreen(void* ctx, std::uint64_t screen) noexcept {
     try {
         if (screen == 0) return;
@@ -2239,6 +2264,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (vtable < base) return;
         Facts f;
         f.kind = KindOf(vtable - base);
+        CensusUpdate(screen, vtable - base);   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
         if (f.kind == Kind::kOther) return;   // (most updates: the HUD's and the other screens', once a frame each)
         f.screen = screen;
         f.state = Read<std::uint8_t>(screen + kScreenState);

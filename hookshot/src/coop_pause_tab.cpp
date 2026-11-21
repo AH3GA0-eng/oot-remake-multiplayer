@@ -1139,6 +1139,44 @@ ScreenGuard::~ScreenGuard() {
 
 // --- Probe ---
 
+std::vector<std::string> Census::Seen(std::uint64_t vtable_offset, int state, const Menu& menu, std::uint64_t now_ms) {
+    std::vector<std::string> out;
+    char line[160];
+    const auto menu_words = [&](const Menu& m) {
+        std::snprintf(line, sizeof line, "census: menu plus=%d minus=%d minus_on=%d", m.plus, m.minus, m.minus_on);
+        return std::string(line);
+    };
+    if (!menu_ || !(*menu_ == menu)) {
+        menu_ = menu;
+        out.push_back(menu_words(menu));
+    }
+    for (auto it = screens_.begin(); it != screens_.end();) {
+        if (it->vtable != vtable_offset && now_ms > it->last_ms + kCensusGoneMs) {
+            std::snprintf(line, sizeof line, "census: screen 0x%llx gone", static_cast<unsigned long long>(it->vtable));
+            out.emplace_back(line);
+            it = screens_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    auto it = std::find_if(screens_.begin(), screens_.end(), [&](const Screen& s) { return s.vtable == vtable_offset; });
+    if (it == screens_.end()) {
+        screens_.push_back({vtable_offset, state, now_ms});
+        std::snprintf(line, sizeof line, "census: screen 0x%llx seen, state %d", static_cast<unsigned long long>(vtable_offset),
+                      state);
+        out.emplace_back(line);
+        return out;
+    }
+    if (it->state != state) {
+        std::snprintf(line, sizeof line, "census: screen 0x%llx state %d -> %d", static_cast<unsigned long long>(vtable_offset),
+                      it->state, state);
+        out.emplace_back(line);
+        it->state = state;
+    }
+    it->last_ms = now_ms;
+    return out;
+}
+
 std::vector<std::string> Probe::Seen(const Facts& f, std::uint64_t now_ms) {
     std::vector<std::string> out;
     if ((f.kind != Kind::kPages && f.kind != Kind::kStrip) || f.screen == 0) {

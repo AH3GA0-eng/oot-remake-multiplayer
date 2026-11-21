@@ -2304,3 +2304,23 @@ TEST_CASE("pause tab: Settings and look shows co-op's own menu's pages on the li
     CHECK(MenuHeadingOf(parts, -1).empty());
     CHECK(MenuHeadingOf(CoopPauseMenu::View{}, 0).empty());
 }
+
+TEST_CASE("census (the - menu research): screens first seen, state changes, gone, and the menu's categories") {
+    CoopPauseTab::Census c;
+    CoopPauseTab::Census::Menu plus{4, 1, 0};
+    auto lines = c.Seen(0x4bebaa8, 1, plus, 0);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0] == "census: menu plus=4 minus=1 minus_on=0");
+    CHECK(lines[1] == "census: screen 0x4bebaa8 seen, state 1");
+    CHECK(c.Seen(0x4bebaa8, 1, plus, 16).empty());              // the same again: nothing
+    CHECK(c.Seen(0x4be8aa0, 1, plus, 20) == std::vector<std::string>{"census: screen 0x4be8aa0 seen, state 1"});
+    CHECK(c.Seen(0x4bebaa8, 2, plus, 30) == std::vector<std::string>{"census: screen 0x4bebaa8 state 1 -> 2"});
+    CoopPauseTab::Census::Menu minus{4, 2, 1};
+    CHECK(c.Seen(0x4be8aa0, 1, minus, 40) == std::vector<std::string>{"census: menu plus=4 minus=2 minus_on=1"});
+    // The pages screen stops updating (the - menu): said gone once, at the next update after kCensusGoneMs.
+    lines = c.Seen(0x4be8aa0, 1, minus, 40 + CoopPauseTab::Census::kCensusGoneMs);
+    CHECK(lines == std::vector<std::string>{"census: screen 0x4bebaa8 gone"});
+    CHECK(c.Seen(0x4be8aa0, 1, minus, 50 + CoopPauseTab::Census::kCensusGoneMs).empty());
+    CHECK(c.Seen(0x4bebaa8, 1, minus, 60 + CoopPauseTab::Census::kCensusGoneMs) ==
+          std::vector<std::string>{"census: screen 0x4bebaa8 seen, state 1"});   // back: seen anew
+}
