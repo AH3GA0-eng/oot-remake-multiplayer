@@ -42,7 +42,8 @@ void Share::SetCustom(std::uint32_t options) {
         return;
     }
     custom_ = options;
-    due_ = due_ || character_ != 0;   // (with Link nothing of it is sent)
+    custom_said_ = custom_said_ || options != 0;
+    due_ = true;   // (Link's own options go out too: hair and eyes show on his puppet)
 }
 
 std::uint32_t Share::CustomOf(std::uint8_t number) const {
@@ -94,12 +95,12 @@ bool Share::OnEvent(const coop::net::Event& event) {
         for (std::size_t i = 0; i < kSlots; ++i) {
             Forget(i);
         }
-        due_ = ours_.has_value() || character_said_;
+        due_ = ours_.has_value() || character_said_ || custom_said_;
         return had;
     }
     case EventKind::reconnected:
     case EventKind::player_joined:
-        due_ = ours_.has_value() || character_said_;   // the newcomer (or a server that lost us) has not got it
+        due_ = ours_.has_value() || character_said_ || custom_said_;   // the newcomer (or a server that lost us) has not got it
         return false;
     case EventKind::player_left:
         Free(event.player);
@@ -125,9 +126,6 @@ bool Share::OnEvent(const coop::net::Event& event) {
                 }
                 it = parts.erase(it);
             }
-            if (character == 0) {
-                custom = 0;   // (the options are a character's)
-            }
             auto& theirs = their_character_[look->player_number];
             auto& their_custom = their_custom_[look->player_number];
             auto& worn = theirs_[look->player_number];
@@ -149,16 +147,16 @@ bool Share::OnEvent(const coop::net::Event& event) {
 }
 
 std::optional<coop::protocol::PlayerLook> Share::TakeSend() {
-    if (!due_ || (!ours_ && !character_said_)) {
+    if (!due_ || (!ours_ && !character_said_ && !custom_said_)) {
         return std::nullopt;
     }
     due_ = false;
     Parts parts = ours_ ? *ours_ : Parts{};
     if (character_ != 0) {
         parts.push_back({kCharacterPart, kCharacterMark | character_});
-        if (custom_ != 0) {
-            parts.push_back({kCustomPart, custom_});
-        }
+    }
+    if (custom_ != 0) {
+        parts.push_back({kCustomPart, custom_});   // (with Link too: a kit before 0.11.9 drops it for Link)
     }
     return coop::protocol::PlayerLook{coop::protocol::kPlayerSelf, std::move(parts)};
 }

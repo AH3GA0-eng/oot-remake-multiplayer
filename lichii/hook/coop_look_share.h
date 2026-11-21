@@ -60,8 +60,9 @@ inline constexpr std::uint32_t kCharacterMark = 0x010000;
 inline constexpr std::uint16_t kCharacterMax = 0x0FFF;
 // That mod's Customize options for the picked character (hair, eye and clothing colours, gear shown or
 // hidden) ride along the same way, as part kCustomPart: its "colour" is the six options, four bits each,
-// in the order of kCustomFlags (the mod's GameData Ints that hold them). Sent only with a character and
-// only when one of them is set; taken out of the parts on arrival (CustomOf has it).
+// in the order of kCustomFlags (the mod's GameData Ints that hold them). Sent when one of them is set, with
+// Link too (0.11.9: his hair and eyes show on his puppet; a kit before it drops the part for Link); taken out
+// of the parts on arrival (CustomOf has it).
 inline constexpr std::uint8_t kCustomPart = 62;
 inline constexpr std::array<const char*, 6> kCustomFlags = {
     "CharacterMenu_CustomHair",    "CharacterMenu_CustomEyes",     "CharacterMenu_CustomGear",
@@ -127,6 +128,7 @@ private:
     std::map<std::uint8_t, Parts> theirs_;
     std::map<std::uint8_t, std::uint16_t> their_character_;
     std::uint32_t custom_ = 0;
+    bool custom_said_ = false;   // options were set once: a look goes out to newcomers (Link too)
     std::map<std::uint8_t, std::uint32_t> their_custom_;
     bool slots_on_ = false;
     std::array<std::uint8_t, kSlots> slots_{};   // the player in each slot, 0 for none

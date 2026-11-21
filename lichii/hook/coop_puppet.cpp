@@ -197,7 +197,7 @@ std::vector<Director::DressView> Director::DressTargets() const {
         const Target* t = Wanted(s.number);
         const bool character = IsCharacterActor(s.actor_name);
         out.push_back({s.number, s.actor, s.block + block::kDress,
-                       t != nullptr && character ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
+                       t != nullptr ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
                        character && character_apply_ != 0 && character_apply_state_ == 1, s.actor_name});
     }
     return out;
@@ -2304,7 +2304,9 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         if (r.number >= 1 && r.number < 32 && (PvpCopies() & (1u << r.number)) != 0) {
             t.actor = CoopPvpNative::PvpActor(t.actor);  // PvP on real bodies (phase 4)
         }
-        if (r.character != 0 && IsCharacterActor(t.actor)) {
+        // (Link's options too, 0.11.9: the wardrobe puts his hair and eye colours on a Link puppet; the mod's routine
+        // only ever takes a character's, Dress)
+        if ((r.character != 0 && IsCharacterActor(t.actor)) || (r.character == 0 && (r.custom & 0xFFFFFFu) != 0)) {
             t.custom = (static_cast<std::uint64_t>(r.character) << 32) | (r.custom & 0xFFFFFFu);
         }
         t.position = r.position;
