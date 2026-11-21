@@ -1009,8 +1009,7 @@ TEST_CASE("title menu: list_room is off unless coop-options.ini turns it on, and
 TEST_CASE("title menu: public_game (the Host view's Private / Public choice) is private unless chosen, and remembered") {
     using CoopTitleMenu::Options;
     CHECK_FALSE(Options::Read("", "").public_game);   // private: the default
-    CHECK(Options::Read("", "public_game = on
-").public_game);
+    CHECK(Options::Read("", "public_game = on\r\n").public_game);
     Options o = Options::Read("", "");
     std::string coop, options;
     o.public_game = true;
