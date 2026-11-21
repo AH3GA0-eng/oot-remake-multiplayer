@@ -680,7 +680,7 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 17);   // (the port, relay, room, network password and chat key rows before them, New Game+, Saves and Original game after)
+    REQUIRE(v.rows.size() == 16);   // (the port, relay, room, network password and chat key rows before them, New Game+, Saves and Original game after)
     CHECK(v.rows[11].kind == RowKind::kToggle);
     CHECK(v.rows[11].on);
     CHECK(v.rows[12].on);
@@ -874,7 +874,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 17);   // (with the port, the relay and room rows, the network password, two map rows, New Game+, Saves and Original game)
+    CHECK(Names(m).size() == 16);   // (with the port, the relay and room rows, the network password, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 
