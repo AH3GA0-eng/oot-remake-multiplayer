@@ -1018,7 +1018,7 @@ TEST_CASE("title menu: public_game (the Host view's Private / Public choice) is 
     o.public_game = false;
     o.Write(coop, options);
     CHECK_FALSE(Options::Read(coop, options).public_game);
-    CHECK(options.find("public_game") == std::string::npos);
+    CHECK_FALSE(CoopTitleMenu::IniGet(options, "public_game").has_value());   // (the line is commented out, as others)
 }
 
 TEST_CASE("title menu: a ready room name for a public game is a word, a dash and four digits") {

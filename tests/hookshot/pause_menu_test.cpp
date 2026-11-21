@@ -136,10 +136,10 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     REQUIRE(Selected(m) == "Stop hosting");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.view().rows[5].value == "Press again to confirm");
+    CHECK(m.view().rows[6].value == "Press again to confirm");   // (Stop hosting is after the Game row)
     m.Press(Input::kUp);   // anything else: not confirmed
     m.Press(Input::kDown);
-    CHECK(m.view().rows[5].value == "Stop");
+    CHECK(m.view().rows[6].value == "Stop");
     m.Press(Input::kDecide);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kLeave);

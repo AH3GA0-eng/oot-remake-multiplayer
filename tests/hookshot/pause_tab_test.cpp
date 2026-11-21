@@ -1559,11 +1559,11 @@ TEST_CASE("pause tab: the game browser: the rows choose the list, search, filter
     rows = RowTexts(View::kLan, v);
     CHECK(rows[0] == "Public games (10)");
     lines = ListLines(v);
-    CHECK(lines[0].name == "Online games  < 1 of 2 >");   // (more than a page: the heading pages it)
+    CHECK(lines[0].name == "Public games  < 1 of 2 >");   // (more than a page: the heading pages it)
     CHECK(lines[2].name == "kokiri (Saria)");
     v.s.cell_page = 1;   // (the second page: the 7th to 10th rooms)
     lines = ListLines(v);
-    CHECK(lines[0].name == "Online games  < 2 of 2 >");
+    CHECK(lines[0].name == "Public games  < 2 of 2 >");
     CHECK(lines[1].name == "kokiri (Saria)");
     CHECK(lines[2].name == "a room with a very long nam...");   // (cut to kListNameChars)
     CHECK(lines[2].name.size() <= kListNameChars);

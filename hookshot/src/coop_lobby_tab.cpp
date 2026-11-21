@@ -278,7 +278,13 @@ void Tab::Hide() {
 }
 
 void Tab::Set(Lobby lobby) {
+    const bool was_connected = lobby_.connected;
     lobby_ = std::move(lobby);
+    // In or out of a game, the page is another list (out of one: Public games): it starts at its top again.
+    if (lobby_.connected != was_connected) {
+        selected_ = 0;
+        confirm_ = Act::kNone;
+    }
     if (player_ != 0 && (Shown() == nullptr || !lobby_.connected)) {
         player_ = 0;
         selected_ = 0;

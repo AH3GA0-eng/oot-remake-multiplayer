@@ -1523,6 +1523,13 @@ void Menu::Change(Act act, int step) {
             options_.relay_room = CoopTitleMenu::Options::RandomRoomName(static_cast<std::uint64_t>(
                 std::chrono::steady_clock::now().time_since_epoch().count()));
         }
+        // (while hosting, the page shows the session's lines in place of a row's help: the note says it plainly)
+        if (session_.hosting) {
+            note_.clear();
+            if (options_.public_game != session_.public_game) {
+                note_ = {"Applies at your next Host: stop hosting, then start again."};
+            }
+        }
         request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kMic: {
