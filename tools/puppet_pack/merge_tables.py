@@ -316,6 +316,44 @@ def rows_of(data):
     return rows
 
 
+def put_back_stale(root, keep_name, target_of, touched, say, label, mark=None):
+    """Review of player report 206: a merged file stayed merged when the mod it was merged with was switched off,
+    taken out or moved over the winner, since only --undo put the winner's own copy back. Before each merge, every
+    kept copy (under any mod's `keep_name` folder, mods that are off too) that this start does not write again
+    (`touched`: the kept copies of this start's winners) goes back over the file the merge wrote (target_of(mod path,
+    path under the keep)), the same check as undo: a file put there since stays. The kept copy and its stamp go."""
+    for name, path in sorted(find_mods(root).items()):
+        keep = os.path.join(path, keep_name)
+        if not os.path.isdir(keep):
+            continue
+        back, gone = [], 0
+        for dirpath, _, fnames in os.walk(keep):
+            for f in sorted(fnames):
+                kept = os.path.join(dirpath, f)
+                if f.endswith((".txt", ".tmp")) or os.path.normcase(os.path.abspath(kept)) in touched:
+                    continue
+                rel = os.path.relpath(kept, keep)
+                stamp = read_text(kept + ".txt")
+                out = next((l[4:] for l in (stamp or "").split("\n") if l.startswith("out ")), None)
+                target = target_of(path, rel)
+                if out and os.path.isfile(target) and out == file_line(root, target):
+                    shutil.copyfile(kept, target + ".tmp")
+                    os.replace(target + ".tmp", target)
+                    back.append(rel.replace(os.sep, "/"))
+                os.remove(kept)
+                if os.path.isfile(kept + ".txt"):
+                    os.remove(kept + ".txt")
+                gone += 1
+        for dirpath, dirnames, fnames in os.walk(keep, topdown=False):
+            if not os.listdir(dirpath):
+                os.rmdir(dirpath)
+        if gone and mark and not os.path.isdir(keep) and os.path.isfile(os.path.join(path, mark)):
+            os.remove(os.path.join(path, mark))  # (no merged table left in this mod: no mark for the module)
+        if back:
+            say(f"{label}: {name}'s own {', '.join(sorted(back))} back (what it was merged with is off, gone or "
+                "above it now).")
+
+
 def merge_rows(root, romfs, say=print):
     """Player report 144/145: the puppet pack adds rows to RSDB tables (ActorInfo, GameActorInfo: CoopPuppet_*,
     CoopShot_*, ...). Longshot serves each RSDB file from the mod indexed last, like the size table, so a mod that
@@ -335,47 +373,58 @@ def merge_rows(root, romfs, say=print):
     pack_path = next((p for n, p in order if fold(n) == PACK), None)
     codec = Codec(romfs)
     failed, fit, marks = 0, {}, {}
-    for fname in sorted({f for _, p in order for f in rsdb_tables_of(p)}):
-        having = [(n, p) for n, p in order if fname in rsdb_tables_of(p)]
-        if len(having) < 2:
-            continue
-        win_name, win_path = having[-1]
-        pack = pack_path if any(p == pack_path for _, p in having[:-1]) else None
-        # Player report 206: the rows of every other mod under the winner too (SHARED_NOTE).
-        game = os.path.join(romfs, "RSDB", fname) if romfs else ""
-        others = [(n, p) for n, p in having[:-1] if p != pack_path]
-        if others and not os.path.isfile(game):
-            say(f"Actor tables: {win_name} and {', '.join(n for n, _ in others)} both ship RSDB/{fname}; the game "
-                f"reads {win_name}'s. Not merged without the game's own copy (--romfs): the others' rows are "
-                "missing.")
-            others = []
-        if pack is None and not others:
-            continue
-        if fold(win_name).startswith("contents/") and fold(win_name) != PACK:  # (a title's own mod: never rewritten)
-            if pack is not None:
-                say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the puppet pack's rows: the "
-                    "other players can't be shown with it on. Turn it off.")
-                failed += 1
-            else:
-                say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the rows of "
-                    f"{', '.join(n for n, _ in others)}: a mod under contents is not rewritten.")
-            continue
-        try:
-            line, need = merge_rows_one(root, codec, fname, win_name, win_path, pack, say, others, game)
-        except (OSError, ValueError, KeyError, IndexError, MergeError) as e:
-            if pack is not None:
-                say(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the puppet pack's rows ({e}): "
-                    "the other players can't be shown with it on.")
-                failed += 1
-                marks.setdefault(win_path, [])
-            else:
-                say(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the rows of "
-                    f"{', '.join(n for n, _ in others)} ({e}): their rows are missing.")
-            continue
-        if line is not None:
-            marks.setdefault(win_path, []).append(line)
-        if need:
-            fit[size_key(fname)] = max(fit.get(size_key(fname), 0), need)
+    touched = set()
+    for step in ("plan", "merge"):
+        failed, fit, marks = 0, {}, {}
+        tell = say if step == "merge" else (lambda line: None)
+        if step == "merge":
+            put_back_stale(root, ROWS_KEEP, lambda path, rel: os.path.join(path, *RSDB, rel), touched, say,
+                           "Actor tables", ROWS_MARK)
+        for fname in sorted({f for _, p in order for f in rsdb_tables_of(p)}):
+            having = [(n, p) for n, p in order if fname in rsdb_tables_of(p)]
+            if len(having) < 2:
+                continue
+            win_name, win_path = having[-1]
+            pack = pack_path if any(p == pack_path for _, p in having[:-1]) else None
+            # Player report 206: the rows of every other mod under the winner too (SHARED_NOTE).
+            game = os.path.join(romfs, "RSDB", fname) if romfs else ""
+            others = [(n, p) for n, p in having[:-1] if p != pack_path]
+            if others and not os.path.isfile(game):
+                tell(f"Actor tables: {win_name} and {', '.join(n for n, _ in others)} both ship RSDB/{fname}; the game "
+                    f"reads {win_name}'s. Not merged without the game's own copy (--romfs): the others' rows are "
+                    "missing.")
+                others = []
+            if pack is None and not others:
+                continue
+            if fold(win_name).startswith("contents/") and fold(win_name) != PACK:  # (a title's own mod: never rewritten)
+                if pack is not None:
+                    tell(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the puppet pack's rows: the "
+                        "other players can't be shown with it on. Turn it off.")
+                    failed += 1
+                else:
+                    tell(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the rows of "
+                        f"{', '.join(n for n, _ in others)}: a mod under contents is not rewritten.")
+                continue
+            kept = os.path.join(win_path, ROWS_KEEP, fname)
+            if step == "plan":
+                touched.add(os.path.normcase(os.path.abspath(kept)))
+                continue
+            try:
+                line, need = merge_rows_one(root, codec, fname, win_name, win_path, pack, say, others, game)
+            except (OSError, ValueError, KeyError, IndexError, MergeError) as e:
+                if pack is not None:
+                    tell(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the puppet pack's rows ({e}): "
+                        "the other players can't be shown with it on.")
+                    failed += 1
+                    marks.setdefault(win_path, [])
+                else:
+                    tell(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the rows of "
+                        f"{', '.join(n for n, _ in others)} ({e}): their rows are missing.")
+                continue
+            if line is not None:
+                marks.setdefault(win_path, []).append(line)
+            if need:
+                fit[size_key(fname)] = max(fit.get(size_key(fname), 0), need)
     for win_path, lines in marks.items():
         mark = os.path.join(win_path, ROWS_MARK)
         if lines:
@@ -543,47 +592,58 @@ def merge_members(root, romfs, say=print):
     files += sorted({rel for _, p in order for rel in archives_of(p)} - set(files))
     codec = Codec(romfs)
     failed, fit = 0, {}
-    for rel in files:
-        having = [(n, p) for n, p in order if os.path.isfile(os.path.join(p, "romfs", *rel.split("/")))]
-        if len(having) < 2:
-            continue
-        win_name, win_path = having[-1]
-        pack = pack_path if any(p == pack_path for _, p in having[:-1]) else None
-        others = [(n, p) for n, p in having[:-1] if p != pack_path]
-        names = ", ".join(n for n, _ in others)
-        if fold(win_name).startswith("contents/") and fold(win_name) != PACK:  # (a title's own mod: never rewritten)
-            if pack is not None:
-                say(f"Menus: the game reads {win_name}'s {rel}, not the puppet pack's: the co-op menus' text and "
-                    "panes are missing with it on.")
-                failed += 1
-            else:
-                say(f"Menus: the game reads {win_name}'s {rel}, without what {names} changed in it: a mod under "
-                    "contents is not rewritten.")
-            continue
-        game = os.path.join(romfs, *rel.split("/")) if romfs else ""
-        if not os.path.isfile(game):
-            if pack is not None:
-                say(f"Menus: {win_name} ships {rel} too and wins it; not merged without the game's own copy "
-                    "(--romfs): the co-op menus' text and panes are missing with it on.")
-                failed += 1
-            else:
-                say(f"Menus: {win_name} and {names} both ship {rel}; the game reads {win_name}'s. Not merged without "
-                    "the game's own copy (--romfs): the others' changes are missing.")
-            continue
-        try:
-            need = merge_members_one(root, codec, rel, win_name, win_path, pack, game, say, others)
-        except (OSError, ValueError, KeyError, IndexError, MergeError, sarc.SarcError) as e:
-            if pack is not None:
-                say(f"Menus: {win_name}'s {rel} could not be merged with the puppet pack's ({e}): the co-op menus' "
-                    "text and panes are missing with it on.")
-                failed += 1
-            else:
-                say(f"Menus: {win_name}'s {rel} could not be merged with what {names} changed ({e}): their changes "
-                    "are missing.")
-            continue
-        if need:
-            k = rel[:-3] if rel.endswith(".zs") else rel
-            fit[k] = max(fit.get(k, 0), need)
+    touched = set()
+    for step in ("plan", "merge"):
+        failed, fit = 0, {}
+        tell = say if step == "merge" else (lambda line: None)
+        if step == "merge":
+            put_back_stale(root, MEMBERS_KEEP, lambda path, rel: os.path.join(path, "romfs", rel), touched,
+                           say, "Menus")
+        for rel in files:
+            having = [(n, p) for n, p in order if os.path.isfile(os.path.join(p, "romfs", *rel.split("/")))]
+            if len(having) < 2:
+                continue
+            win_name, win_path = having[-1]
+            pack = pack_path if any(p == pack_path for _, p in having[:-1]) else None
+            others = [(n, p) for n, p in having[:-1] if p != pack_path]
+            names = ", ".join(n for n, _ in others)
+            if fold(win_name).startswith("contents/") and fold(win_name) != PACK:  # (a title's own mod: never rewritten)
+                if pack is not None:
+                    tell(f"Menus: the game reads {win_name}'s {rel}, not the puppet pack's: the co-op menus' text and "
+                        "panes are missing with it on.")
+                    failed += 1
+                else:
+                    tell(f"Menus: the game reads {win_name}'s {rel}, without what {names} changed in it: a mod under "
+                        "contents is not rewritten.")
+                continue
+            game = os.path.join(romfs, *rel.split("/")) if romfs else ""
+            if not os.path.isfile(game):
+                if pack is not None:
+                    tell(f"Menus: {win_name} ships {rel} too and wins it; not merged without the game's own copy "
+                        "(--romfs): the co-op menus' text and panes are missing with it on.")
+                    failed += 1
+                else:
+                    tell(f"Menus: {win_name} and {names} both ship {rel}; the game reads {win_name}'s. Not merged without "
+                        "the game's own copy (--romfs): the others' changes are missing.")
+                continue
+            kept = os.path.join(win_path, MEMBERS_KEEP, *rel.split("/"))
+            if step == "plan":
+                touched.add(os.path.normcase(os.path.abspath(kept)))
+                continue
+            try:
+                need = merge_members_one(root, codec, rel, win_name, win_path, pack, game, say, others)
+            except (OSError, ValueError, KeyError, IndexError, MergeError, sarc.SarcError) as e:
+                if pack is not None:
+                    tell(f"Menus: {win_name}'s {rel} could not be merged with the puppet pack's ({e}): the co-op menus' "
+                        "text and panes are missing with it on.")
+                    failed += 1
+                else:
+                    tell(f"Menus: {win_name}'s {rel} could not be merged with what {names} changed ({e}): their changes "
+                        "are missing.")
+                continue
+            if need:
+                k = rel[:-3] if rel.endswith(".zs") else rel
+                fit[k] = max(fit.get(k, 0), need)
     return failed, fit
 
 
@@ -1061,30 +1121,41 @@ def merge_gamedata(root, romfs, say=print):
     order = load_order(root)
     codec = Codec(romfs)
     fit = {}
-    for fname in sorted({f for _, p in order for f in gamedata_of(p)}):
-        having = [(n, p) for n, p in order if fname in gamedata_of(p)]
-        if len(having) < 2:
-            continue
-        (win_name, win_path), others = having[-1], having[:-1]
-        names = ", ".join(n for n, _ in others)
-        game = os.path.join(romfs, "GameData", fname) if romfs else ""
-        if fold(win_name).startswith("contents/") and fold(win_name) != PACK:
-            say(f"Saved values: the game reads {win_name}'s GameData/{fname}, without what {names} changed in it: a "
-                "mod under contents is not rewritten.")
-            continue
-        if not os.path.isfile(game):
-            say(f"Saved values: {win_name} and {names} both ship GameData/{fname}; the game reads {win_name}'s. Not "
-                "merged without the game's own copy (--romfs): the others' values are missing.")
-            continue
-        try:
-            need = merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say)
-        except (OSError, ValueError, KeyError, IndexError, TypeError, MergeError) as e:
-            say(f"Saved values: {win_name}'s GameData/{fname} could not be merged with what {names} changed ({e}): "
-                "their values are missing. Turn one of these mods off.")
-            continue
-        if need:
-            key = "GameData/" + fname[:-3]
-            fit[key] = max(fit.get(key, 0), need)
+    touched = set()
+    for step in ("plan", "merge"):
+        fit = {}
+        tell = say if step == "merge" else (lambda line: None)
+        if step == "merge":
+            put_back_stale(root, GAMEDATA_KEEP, lambda path, rel: os.path.join(path, *GAMEDATA, rel), touched,
+                           say, "Saved values")
+        for fname in sorted({f for _, p in order for f in gamedata_of(p)}):
+            having = [(n, p) for n, p in order if fname in gamedata_of(p)]
+            if len(having) < 2:
+                continue
+            (win_name, win_path), others = having[-1], having[:-1]
+            names = ", ".join(n for n, _ in others)
+            game = os.path.join(romfs, "GameData", fname) if romfs else ""
+            if fold(win_name).startswith("contents/") and fold(win_name) != PACK:
+                tell(f"Saved values: the game reads {win_name}'s GameData/{fname}, without what {names} changed in it: a "
+                    "mod under contents is not rewritten.")
+                continue
+            if not os.path.isfile(game):
+                tell(f"Saved values: {win_name} and {names} both ship GameData/{fname}; the game reads {win_name}'s. Not "
+                    "merged without the game's own copy (--romfs): the others' values are missing.")
+                continue
+            kept = os.path.join(win_path, GAMEDATA_KEEP, fname)
+            if step == "plan":
+                touched.add(os.path.normcase(os.path.abspath(kept)))
+                continue
+            try:
+                need = merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say)
+            except (OSError, ValueError, KeyError, IndexError, TypeError, MergeError) as e:
+                tell(f"Saved values: {win_name}'s GameData/{fname} could not be merged with what {names} changed ({e}): "
+                    "their values are missing. Turn one of these mods off.")
+                continue
+            if need:
+                key = "GameData/" + fname[:-3]
+                fit[key] = max(fit.get(key, 0), need)
     return fit
 
 
@@ -1130,8 +1201,11 @@ def merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say
                 continue
             if k not in decided:
                 decided[k] = e
-            elif not same(decided[k], e) and k not in both:
-                both.append(k)
+            elif not same(decided[k], e):
+                if k[1] == "":   # (a kind without hashes is one block: two mods' blocks cannot be put together)
+                    raise MergeError(f"two mods change the {k[0]} values, which cannot be told apart")
+                if k not in both:
+                    both.append(k)
     changed = base is not loaded[0]
     new_root, base_saved = base[3], base[4]
     for (kind, h), e in decided.items():
@@ -1142,7 +1216,9 @@ def merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say
             new_root["Data"][kind] = e
         else:
             entries = new_root["Data"][kind]
-            i = next(i for i, x in enumerate(entries) if str(x["Hash"]) == h)
+            i = next((i for i, x in enumerate(entries) if str(x["Hash"]) == h), None)
+            if i is None:   # (the mod that adds values took this one out of its list)
+                raise MergeError(f"{base[0]}'s list has no {kind} value {h} that another mod changed")
             entries[i] = e
     if changed:
         new_data = byml.dumps(new_root, big=base[2][:2] == b"BY")   # (the game's list is big-endian: kept so)

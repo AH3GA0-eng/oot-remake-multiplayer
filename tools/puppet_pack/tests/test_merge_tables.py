@@ -781,6 +781,49 @@ class MergeRowsBetweenModsTest(MergeRowsTest):
         self.assertEqual(read(self.path(self.HAND, "romfs", "RSDB", AI)), seed)
         self.assertTrue(any("Not merged without the game's own copy" in line for line in self.lines))
 
+    def write_list(self, text):
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\n" + text)
+
+    def test_the_other_mod_off_gone_or_moved_up_gives_the_winner_its_own_table_back(self):
+        cs, seed = self.both_mods()
+        seed_file, cs_file = self.path(self.HAND, "romfs", "RSDB", AI), self.path(self.CS, "romfs", "RSDB", AI)
+        self.run_all()
+        self.assertNotEqual(read(seed_file), seed)
+        self.write_list(f"on {self.HAND}\noff {self.CS}\n")   # switched off in the Mods tab
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(read(seed_file), seed)
+        self.assertFalse(os.path.exists(self.path(self.HAND, mt.ROWS_KEEP)))
+        self.assertTrue(any("own" in line and "back" in line for line in self.lines))
+        self.write_list(f"on {self.HAND}\non {self.CS}\n")
+        self.run_all()
+        self.assertNotEqual(read(seed_file), seed)
+        self.write_list(f"on {self.CS}\non {self.HAND}\n")    # moved over the seed: the mod wins now
+        self.run_all()
+        self.assertEqual(read(seed_file), seed)
+        self.assertEqual(self.heaps(self.CS), {"Npc_Mido": 1, "Player_Child": 22, "Rando_Item": 5})
+        shutil.rmtree(self.path(self.HAND))                    # the seed taken out
+        self.run_all()
+        self.assertEqual(read(cs_file), cs)
+
+    def test_a_pack_taken_out_gives_the_seed_its_own_table_back_and_no_mark(self):
+        own = self.seed_with_own_tables()
+        self.run_all()
+        self.assertTrue(os.path.exists(self.path(SEED, mt.ROWS_MARK)))
+        shutil.rmtree(self.path(PACK))
+        self.run_all()
+        self.assertEqual(read(self.path(SEED, "romfs", "RSDB", AI)), own)
+        self.assertFalse(os.path.exists(self.path(SEED, mt.ROWS_MARK)))
+
+    def test_a_table_put_in_since_the_merge_is_not_overwritten_by_the_kept_copy(self):
+        self.both_mods()
+        self.run_all()
+        new = self.put_rows(self.HAND, self.game_rows() + [{"__RowId": "Other_Seed", "Heap": 8}])
+        shutil.rmtree(self.path(self.CS))
+        self.run_all()
+        self.assertEqual(read(self.path(self.HAND, "romfs", "RSDB", AI)), read(new))
+        self.assertFalse(os.path.exists(self.path(self.HAND, mt.ROWS_KEEP)))
+
     def test_a_mod_switched_off_gives_no_rows(self):
         cs, seed = self.both_mods()
         with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
@@ -879,6 +922,40 @@ class MergeGameDataTest(unittest.TestCase):
         self.assertEqual(self.merge(), {})
         self.assertIn("each add saved values", self.lines[0])
         self.assertEqual(read(os.path.join(self.mods, self.HAND, "romfs", "GameData", GD)), raw)
+
+    def test_the_other_mod_off_gone_or_moved_up_gives_the_winner_its_own_list_back(self):
+        seed_file = os.path.join(self.mods, self.HAND, "romfs", "GameData", GD)
+        cs_file = os.path.join(self.mods, self.CS, "romfs", "GameData", GD)
+
+        def write_list(text):
+            with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+                f.write("coop-mods 1\n" + text)
+        self.merge()
+        self.assertNotEqual(read(seed_file), self.seed_raw)
+        write_list(f"on {self.HAND}\noff {self.CS}\n")   # switched off in the Mods tab
+        self.merge()
+        self.assertEqual(read(seed_file), self.seed_raw)
+        self.assertFalse(os.path.exists(os.path.join(self.mods, self.HAND, mt.GAMEDATA_KEEP)))
+        write_list(f"on {self.HAND}\non {self.CS}\n")
+        self.merge()
+        self.assertNotEqual(read(seed_file), self.seed_raw)
+        write_list(f"on {self.CS}\non {self.HAND}\n")    # moved over the seed: the mod wins now
+        self.merge()
+        self.assertEqual(read(seed_file), self.seed_raw)
+        self.assertEqual(self.served(self.CS)[0][("Bool", 2)], True)   # the seed's default, from its own list
+        shutil.rmtree(os.path.join(self.mods, self.HAND))               # the seed taken out
+        self.merge()
+        self.assertEqual(read(cs_file), self.cs_raw)
+
+    def test_a_value_the_adding_mod_took_out_is_said_not_a_stop(self):
+        cs = self.game_list()
+        del cs["Data"]["Bool"][1]   # (the value the seed changes)
+        cs["Data"]["Int"].append({"Hash": byml.UInt(900), "DefaultValue": 0})
+        self.put(os.path.join(self.mods, self.CS, "romfs", "GameData", GD), cs)
+        self.assertEqual(self.merge(), {})
+        self.assertIn("could not be merged", self.lines[-1])
+        self.assertIn("has no Bool value", self.lines[-1])
+        self.assertEqual(read(os.path.join(self.mods, self.HAND, "romfs", "GameData", GD)), self.seed_raw)
 
     def test_without_the_games_own_list_nothing_is_written(self):
         os.remove(os.path.join(self.romfs, "GameData", GD))
@@ -1006,8 +1083,37 @@ class MergeMembersTest(unittest.TestCase):
         got = self.served_by(self.HAND)
         self.assertEqual((got["X.msbt"], got["Char.msbt"], got["Hdr.msbt"], got["A.msbt"]),
                          (b"seed X", b"mod only", b"mod header", b"game A"))
+        seed_own = read(os.path.join(self.mods, self.HAND, mt.MEMBERS_KEEP, *MALS.split("/")))
         self.assertEqual(self.merge(romfs="")[0], 0)   # without the game's copy: said, no failure of the puppets
-        self.assertIn("Not merged without the game's own copy", self.lines[0])
+        self.assertTrue(any("Not merged without the game's own copy" in line for line in self.lines))
+        # ... and what this start cannot merge is not left merged from an earlier one: the seed's own archive is back.
+        self.assertEqual(read(os.path.join(self.mods, self.HAND, "romfs", *MALS.split("/"))), seed_own)
+
+    def write_list(self, text):
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\n" + text)
+
+    def test_the_other_mod_off_gone_or_moved_up_gives_the_winner_its_own_archive_back(self):
+        seed = self.put_seed()
+        shutil.rmtree(self.pack)
+        seed_file = os.path.join(self.mods, self.HAND, "romfs", *MALS.split("/"))
+        self.merge()
+        self.assertNotEqual(read(seed_file), seed)
+        self.write_list(f"on {self.HAND}\noff {self.MOD}\n")   # switched off in the Mods tab
+        self.merge()
+        self.assertEqual(read(seed_file), seed)
+        self.assertFalse(os.path.exists(os.path.join(self.mods, self.HAND, mt.MEMBERS_KEEP)))
+        self.write_list(f"on {self.HAND}\non {self.MOD}\n")
+        self.merge()
+        self.assertNotEqual(read(seed_file), seed)
+        self.write_list(f"on {self.MOD}\non {self.HAND}\n")    # moved over the seed: the mod wins now
+        self.merge()
+        self.assertEqual(read(seed_file), seed)
+        got = self.served_by(self.MOD)
+        self.assertEqual((got["X.msbt"], got["Char.msbt"]), (b"seed X", b"mod only"))   # from the seed's own archive
+        shutil.rmtree(os.path.join(self.mods, self.HAND))       # the seed taken out
+        self.merge()
+        self.assertEqual(read(os.path.join(self.mod, "romfs", *MALS.split("/"))), self.mod_raw)
 
     def test_the_pack_that_wins_gets_the_mods_members(self):
         os.rename(self.mod, os.path.join(self.mods, "a-menu-mod"))
