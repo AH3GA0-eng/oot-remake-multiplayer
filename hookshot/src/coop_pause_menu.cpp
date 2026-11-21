@@ -78,7 +78,7 @@ const char* const kPrivateHelp =
     "Private game (the default): friends join with your code or room name and the password. Nobody else can join.";
 // (each one literal: coop_i18n's table finds it whole)
 const char* const kPublicHelp =
-    "Public game: shows in Public games and anyone can join, no password. Only through the game list's server, so players never see your internet address. Kick or ban players from the Lobby tab.";
+    "Public game: shows in Public games and anyone can join, no password. Only through the game list's server, so players never see your internet address. Kick or ban players from the Lobby tab. Players can change the shared progress of the save you host from.";
 
 // A join password is never drawn: one star per character.
 std::string Masked(const std::string& password) {
