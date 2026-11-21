@@ -1084,6 +1084,8 @@ try {
         Check (-not (Read-KitCharacterSelectToggle 'yes' 2 { [pscustomobject]@{ Key = 'Enter' } })) 'Character Select toggle: another key goes on at once, no change'
         Check ((Read-KitOptions (Join-Path $ck 'coop-options.ini')).Count -eq 0) 'Character Select: coop-options.ini''s character_select is no game switch (not passed, not "skipped")'
         $csIps = Join-Path $csDir 'exefs\E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips'
+        # (the pin back at v2, the folder's release, after the refused v3 above)
+        $want = & $New_CsPin 'v2' $csJson; [void](Install-KitCharacterSelect $ck $cm); Confirm-KitCharacterSelect $ck $cm
         Write-File (Join-Path $ck 'coop-options.ini') "character_select = no`n"
         Check ((Invoke-KitCharacterSelectStep $ck $cg) -and (Read-KitFirstLine (Join-Path $csDir 'coop-charsel.txt')) -eq ($want -replace ' full ', ' ui ') -and
                @($csNpcFiles | Where-Object { Test-Path -LiteralPath (Join-Path $csDir $_) }).Count -eq 0 -and
@@ -1116,6 +1118,7 @@ try {
                @(Get-KitIpsRecords ([System.IO.File]::ReadAllBytes($csIps))).Count -eq 2 -and
                @(Get-KitIpsRecords ([System.IO.File]::ReadAllBytes((Join-Path $csDir 'coop-charsel-code.ips')))).Count -eq 2 + $KitCharselCustomizer.Count) "Character Select: a 0.11.8 full copy keeps its NPC part, his patch stripped, his own kept aside, no download [$($r.Lines -join ' | ')]"
         Confirm-KitCharacterSelect $ck $cm
+        Remove-Item -LiteralPath $csDir -Recurse -Force
         # The puppet pack follows the mod: put in, colours changed, or taken out -> made again (Get-PuppetPackHint).
         $pm = Join-Path $cm 'contents\0400486024DEC000\coop-puppet\coop_puppet.json'
         Check ((Get-KitCharacterSelectSeen $pm) -eq '') 'Character Select seen: none in mods'
