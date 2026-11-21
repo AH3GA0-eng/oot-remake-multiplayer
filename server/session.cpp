@@ -66,15 +66,16 @@ bool hidden_characters(const std::string& name) {
 
 
 // For the server's window when a game of another protocol version is refused:
-// which side is out of date, and what to do about it.
-std::string version_note(std::uint16_t theirs) {
+// which side is out of date, the host's co-op release when known, and what to do about it.
+std::string version_note(std::uint16_t theirs, const std::string& host_release = {}) {
   const std::string other = std::to_string(theirs);
   const std::string mine = std::to_string(kProtocolVersion);
+  const std::string host = host_release.empty() ? std::string() : " (the host runs co-op " + host_release + ")";
   if (theirs < kProtocolVersion) {
-    return "the game speaks protocol " + other + ", older than this server's " + mine +
+    return "the game speaks protocol " + other + ", older than this server's " + mine + host +
            ": that player runs Update.bat in their kit";
   }
-  return "the game speaks protocol " + other + ", newer than this server's " + mine +
+  return "the game speaks protocol " + other + ", newer than this server's " + mine + host +
          ": run Update.bat in this kit (the host's)";
 }
 
@@ -152,7 +153,7 @@ void Session::received(ConnectionId id, std::uint8_t channel,
   if (c.state == State::awaiting_hello) {
     if (auto version = hello_protocol_version(bytes);
         version && *version != kProtocolVersion) {
-      refuse(id, c, RefuseReason::wrong_protocol_version, now_us, version_note(*version));
+      refuse(id, c, RefuseReason::wrong_protocol_version, now_us, version_note(*version, session_release_));
       return;
     }
   }
@@ -210,7 +211,7 @@ void Session::on_hello(ConnectionId id, Connection& c, const Hello& hello,
                        std::uint64_t now_us) {
   if (hello.protocol_version != kProtocolVersion) {
     refuse(id, c, RefuseReason::wrong_protocol_version, now_us,
-           version_note(hello.protocol_version));
+           version_note(hello.protocol_version, session_release_));
     return;
   }
   // The password comes before every other check, so someone without it
@@ -360,9 +361,17 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   }
   if (auto reason = check_hello(hello, expected)) {
     refuse(id, c, *reason, now_us,
-           *reason == RefuseReason::wrong_protocol_version ? version_note(hello.protocol_version)
+           *reason == RefuseReason::wrong_protocol_version ? version_note(hello.protocol_version, session_release_)
                                                            : std::string());
     return;
+  }
+  // Another co-op release than the host's on the same protocol plays (owner, 2026-11-21: refuse only when the wire
+  // data differs, which is what the protocol version says; releases that changed it raised it). Logged, so a
+  // desync between two releases can be told apart.
+  if (const std::string theirs = coop_release(hello.build_id); player_count() != 0 && !theirs.empty() &&
+                                                                 !session_release_.empty() && theirs != session_release_) {
+    log("co-op " + theirs + " joins the host's " + session_release_ + " (the same protocol " +
+        std::to_string(kProtocolVersion) + ")");
   }
   if (blank_name(hello.nickname) || hidden_characters(hello.nickname)) {
     refuse(id, c, RefuseReason::bad_name, now_us);
@@ -467,7 +476,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.voice_budget = 2.0 * config_.voice_per_second;
   c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
-  if (player_count() == 1) session_game_build_ = hello.game_build_id;
+  if (player_count() == 1) {
+    session_game_build_ = hello.game_build_id;
+    session_release_ = coop_release(hello.build_id);
+  }
 
   send(id, kChannelSession, welcome);
   c.rejoin_claim.reset();
@@ -3024,6 +3036,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
       (!why.empty() ? " (" + why + ")" : reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
+    session_release_.clear();
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;

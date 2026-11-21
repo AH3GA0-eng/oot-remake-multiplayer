@@ -28,6 +28,8 @@ struct Look {
     std::array<int, kButtons> rows{-1, -1, -1, -1};   // the menu's row each button shows (-1: none, or Back)
     int focus = 0;                                     // the button the menu's selected row is on
     int top = 0;                                       // the first row shown, among the rows shown (kept)
+    int back = kButtons - 1;                           // Back's button: right under the last row
+    int buttons = kButtons;                            // the title's buttons shown (the rows and Back)
 };
 // The buttons for the menu's view, the rows scrolled so its selected row shows (`top`: the last look's). Headings are
 // left out; notes show (the menu never selects them).

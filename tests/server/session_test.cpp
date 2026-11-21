@@ -343,6 +343,95 @@ TEST_CASE("a game build other than the session's is refused") {
   }
 }
 
+TEST_CASE("another co-op release on the same protocol joins, an older or a newer one, and the log says so") {
+  // (owner, 2026-11-21: refused only when the wire data differs, which the protocol version says)
+  for (const char* other : {"coop hookshot v0.11.6", "coop hookshot v0.11.8-3-gab12cd34"}) {
+    CAPTURE(other);
+    std::vector<std::string> lines;
+    SessionConfig config;
+    config.log = [&lines](const std::string& line) { lines.push_back(line); };
+    Harness h(config);
+    h.connect(1);
+    Hello host = hello_from("Link");
+    host.build_id = "coop hookshot v0.11.7-86-gab12cd34";
+    h.receive(1, host, kChannelSession);
+    REQUIRE(h.session.player_count() == 1);
+    h.clear();
+    h.connect(2);
+    Hello guest = hello_from("Zelda");
+    guest.build_id = other;
+    h.receive(2, guest, kChannelSession);
+    CHECK_FALSE(only_message_to<Refused>(h, 2).has_value());
+    CHECK(h.session.player_count() == 2);
+    CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) {
+      return l.find("joins the host's v0.11.7") != std::string::npos;
+    }));
+  }
+}
+
+TEST_CASE("a protocol refusal names the host's co-op release in the log, with Update.bat") {
+  std::vector<std::string> lines;
+  SessionConfig config;
+  config.log = [&lines](const std::string& line) { lines.push_back(line); };
+  Harness h(config);
+  h.connect(1);
+  Hello host = hello_from("Link");
+  host.build_id = "coop hookshot v0.11.8";
+  h.receive(1, host, kChannelSession);
+  REQUIRE(h.session.player_count() == 1);
+  lines.clear();
+  h.connect(2);
+  Bytes older = {1, 0, 2, 0, 1, 0};  // a HELLO of protocol 1
+  h.receive_raw(2, older, kChannelSession);
+  CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) {
+    return l.find("the host runs co-op v0.11.8") != std::string::npos && l.find("Update.bat") != std::string::npos;
+  }));
+  CHECK(h.session.player_count() == 1);
+}
+
+TEST_CASE("the same co-op release joins whatever its commit, and a build naming none is let in") {
+  Harness h;
+  h.connect(1);
+  Hello host = hello_from("Link");
+  host.build_id = "coop hookshot v0.11.7-86-gab12cd34";
+  h.receive(1, host, kChannelSession);
+  const char* others[] = {"coop hookshot v0.11.7", "coop hookshot v0.11.7-90-gffffffff-dirty",
+                          "coop hookshot b614270-dirty (Navi)"};
+  ConnectionId id = 2;
+  for (const char* other : others) {
+    CAPTURE(other);
+    h.connect(id);
+    Hello guest = hello_from("P" + std::to_string(id));
+    guest.build_id = other;
+    h.receive(id, guest, kChannelSession);
+    bool refused = false;
+    for (const Sent& sent : h.to(id)) refused = refused || std::holds_alternative<Refused>(sent.message);
+    CHECK_FALSE(refused);
+    ++id;
+  }
+  CHECK(h.session.player_count() == 4);
+}
+
+TEST_CASE("the session's co-op release is the first player's, and goes with the last") {
+  Harness h;
+  h.connect(1);
+  Hello first = hello_from("Link");
+  first.build_id = "coop hookshot v0.11.6";
+  h.receive(1, first, kChannelSession);
+  REQUIRE(h.session.player_count() == 1);
+  h.session.disconnected(1, h.now);
+  REQUIRE(h.session.player_count() == 0);
+  h.clear();
+  h.connect(2);
+  Hello next = hello_from("Zelda");
+  next.build_id = "coop hookshot v0.11.7";
+  h.receive(2, next, kChannelSession);
+  bool refused = false;
+  for (const Sent& sent : h.to(2)) refused = refused || std::holds_alternative<Refused>(sent.message);
+  CHECK_FALSE(refused);
+  CHECK(h.session.player_count() == 1);
+}
+
 TEST_CASE("crossplay: players on different clients of the same game build share one session") {
   // docs/crossplay.md: what a game runs the module in (this kit's Longshot, Hookshot, another launcher's build) is
   // never a reason to refuse it; only the protocol version, the game build and the join password are.

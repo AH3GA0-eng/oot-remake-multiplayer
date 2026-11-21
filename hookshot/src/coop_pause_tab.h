@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 
+#include "coop_pause_menu.h"
 #include "hos_coop_api.h"
 
 namespace CoopPauseTab {
@@ -139,14 +140,16 @@ struct Facts {
 // takes them in any case), 3 to 24. A join password: any printable character but a space, at most 128.
 class TextField {
 public:
-    enum class Kind { kRoom, kPassword };
+    enum class Kind { kRoom, kPassword, kPort, kAddress };   // (kPort: digits; kAddress: a relay's host[:port])
     explicit TextField(Kind kind) : kind_(kind) {}
     Kind kind() const { return kind_; }
     const std::string& text() const { return text_; }
     std::size_t cursor() const { return cursor_; }
-    std::size_t Max() const { return kind_ == Kind::kRoom ? 24 : 128; }
+    std::size_t Max() const { return kind_ == Kind::kRoom ? 24 : kind_ == Kind::kPort ? 5 : kind_ == Kind::kAddress ? 64 : 128; }
     // A room name the relay takes (3 or more of its letters); a password: any, none included.
     bool Ready() const { return kind_ == Kind::kRoom ? text_.size() >= 3 : true; }
+    // A port typed: 1 to 65535, else 0.
+    int PortValue() const;
     bool Allowed(char c) const;
     // The letters a pad cycles through, in order.
     const std::string& Letters() const;
@@ -221,6 +224,10 @@ public:
     // (TakeBack), instead of closing the menu. Off whenever the page goes.
     void SetSubView(bool on) { sub_ = on && shown_; }
     bool TakeBack();
+    // An A on one of System's buttons of ours came while the page could not show (kept from the game): once.
+    bool TakeRefusedA() { const bool r = refused_a_; refused_a_ = false; return r; }
+    bool CanShowNow(std::uint64_t now_ms) const { return CanShow(now_ms); }
+    void Leave(const char* why) { Hide(why); }   // (back to System at once: the module's way back to the title)
 
     bool Shown() const { return shown_; }
     // A pressed on our page since the last call (the row is the System page's focused button).
@@ -234,12 +241,19 @@ public:
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
-    // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password.
-    TextField& Field(int which) { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
-    const TextField& Field(int which) const { return which == 2 ? new_password_ : which == 1 ? password_ : room_; }
+    // The fields: 0 the room name, 1 the join password (Join view, a game's view), 2 the host's new join password,
+    // 3 the port when hosting (the details' Router line), 4 the relay's address (the browser's online list), 5 the
+    // browser's search, 6 this game's room name when it hosts (the main view's details).
+    static constexpr int kFields = 7;
+    TextField& Field(int which) {
+        return which == 6 ? room_name_ : which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+    }
+    const TextField& Field(int which) const {
+        return which == 6 ? room_name_ : which == 5 ? search_ : which == 4 ? relay_ : which == 3 ? port_ : which == 2 ? new_password_ : which == 1 ? password_ : room_;
+    }
     // Typing into a field turns the list on the right into its keys (TypingLines: the game's own Options rows, the
     // game has no keyboard of its own): up and down pick a key, Left and Right the letter on Letter, A presses the key
-    // picked, B deletes (with nothing typed: Cancel), + is OK, L and R move in the text.
+    // picked, B is Cancel, Y deletes, + is OK, L and R move in the text.
     void StartTyping(int which);
     int Typing() const { return typing_; }
     // A key pressed some other way (the mouse's click on its row): as A on it.
@@ -255,13 +269,15 @@ public:
 private:
     void TypingPad(std::uint64_t down, std::uint64_t held, std::uint64_t now_ms);
     TextField room_{TextField::Kind::kRoom}, password_{TextField::Kind::kPassword},
-        new_password_{TextField::Kind::kPassword};
+        new_password_{TextField::Kind::kPassword}, port_{TextField::Kind::kPort}, relay_{TextField::Kind::kAddress},
+        search_{TextField::Kind::kRoom}, room_name_{TextField::Kind::kRoom};
     int typing_ = -1, typed_ = -1;
     int key_ = 0;                // the key picked while typing (TypeKey)
     std::size_t letter_ = 0;     // Letter's letter: its place in the field's Letters()
     std::string typing_was_;   // (the field before typing: Cancel puts it back)
     void EndTyping(bool ok);
-    std::uint64_t repeat_since_ = 0, repeat_last_ = 0;   // a held direction: when it went down, its last step
+    std::uint64_t repeat_since_ = 0, repeat_last_ = 0;
+    std::uint64_t pad_ms_ = 0, typing_from_ms_ = 0;   // (the last pad read; when typing began: its first A is not a key's)   // a held direction: when it went down, its last step
 
     bool CanShow(std::uint64_t now_ms) const;
     bool CanStay(std::uint64_t now_ms) const;
@@ -280,6 +296,7 @@ private:
                                  // game stalled (AfterStall)
     std::uint64_t swallow_ = 0;   // buttons the module took, kept from the game until let go
     bool decide_ = false;
+    bool refused_a_ = false;
     int slide_ = 0;   // the next set_page's Do::slide
     int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
     bool settings_ok_ = false;
@@ -305,7 +322,7 @@ private:
 // a player, Let in, Join). Only a Paste answer, a refused Host or Join, and co-op that came with the game's start open
 // co-op's menu (Hookshot's menu, over the game's pause menu) on its main page, whose note or help says why.
 // The game has no text entry or keyboard of its own (docs/game-ui.md, "Frames for a text field"), so a code is pasted.
-enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword };
+enum class View { kMain, kPlayers, kLetIn, kJoin, kSession, kPlayer, kPlayerHost, kLan, kLanGame, kPassword, kMenu };
 // Where B (or Back) goes from a view: a player's host controls to that player, a player to the Players view, a game on
 // this network to the list of them, else the five rows.
 View BackOf(View view);
@@ -354,7 +371,10 @@ enum class RowAction {
                      // (only on A: friends who found the game on this network type it)
     kViewPassword,   // the host's Session view: the Join password view (show it, change it)
     kChangePassword, // the Join password view: a new one typed with the typing keys, then the session's from then on
+    kChangePort,     // the details' Router line: the port when hosting typed with the typing keys, hosting again on it
+    kTypeRelay,      // the browser's online list with no relay: the relay's address typed with the typing keys, saved
                      // (players who join after need it; players in stay in)
+    kTypeSearch,     // the browser's online list's heading: words typed with the typing keys, the rooms that hold them listed
     // The game browser (View::kLan): the games in the cells on the right, the list chosen on the rows.
     kBrowseLan,      // the cells list the games on this network
     kBrowseOnline,   // the cells list the relay's public rooms (coop_room_list.h)
@@ -362,8 +382,14 @@ enum class RowAction {
     kBrowseRefresh,  // the list asked again (this network's games forgotten; the relay asked at once)
     kListRoom,       // this game's room on the relay's public list when it hosts, on or off (coop-options.ini
                      // list_room; saved at once)
+    kBrowseList,     // the browser's list: the relay's public rooms or this network's games, the other one
+    kBrowseFilter,   // the browser's filter, the next one (CoopBrowse: all, open, this version)
+    kBrowseSort,     // the browser's order, the next one (CoopBrowse: most players, fewest, name)
+    kTypeRoomName,   // this game's room name when it hosts (coop-options.ini relay_room), typed with the typing keys, saved
+    kViewMenu,       // Settings and look (View::kMenu): co-op's own menu's Customize, Settings, Commands, Local co-op
+    kMenuTab,        // that view's row: its page on the list, and the list has the pad
 };
-inline constexpr std::uint64_t kConfirmMs = 3000;
+inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
 inline constexpr std::uint8_t kMuteVoice = 1u << 0, kMuteChat = 1u << 1;
 // What co-op is doing, as the rows need it.
@@ -385,6 +411,7 @@ struct Session {
     int lan_page = 0;           // its page (PlayerIndex)
     std::uint32_t lan_joinable = 0;   // bit i: the list's game i can be joined (same version, room for one)
     bool online = false;        // the game browser lists the relay's public rooms (else the games on this network)
+    int browse_filter = 0, browse_sort = 0;   // its filter and its order (CoopBrowse::Filter, Sort)
     int online_listed = 0;      // the rooms it lists
     int cell_page = 0;          // the browser's page of cells (kCells a page)
     bool list_room = false;     // hosting lists this game's room on the relay's public list
@@ -392,6 +419,7 @@ struct Session {
     bool has_password = false;  // hosting, and the session's join password is known (the status)
     bool password_shown = false;   // the host's Session view shows it now (its rows' A hides it again)
     bool can_resync = false;    // a guest whose game can take the host's save again (CoopSave::CanResync)
+    bool menu_list = false;     // Settings and look: its list (co-op's menu's rows) has the pad
     int listed = 0;         // the Players view: how many players it lists
     int self = -1;          // the Players view: our own place in its list (-1 not listed): no view of our own
     int page = 0;           // the Players view: its page (PlayerIndex)
@@ -548,19 +576,26 @@ struct SessionView {
     std::string why;                  // co-op's last problem or hint (its status message), "" none
     int problem = 0;                  // ... as its number (HOS_COOP_PROBLEM_*), 0 none: the known ones in words of ours
     bool port_open = false;           // hosting: the router forwards the port (UPnP, PCP or NAT-PMP)
+    int port = 0;                     // hosting: the port the game listens on (0 not known)
     std::string player_name;          // a player's view: who
     // 0.11.6 (owner OK, 2026-11-19): this kit's release, "Squadala! v0.11.6" (CoopWindowBrand::TitleOf), "" none
     // (a developer's build). The details list's last line (DetailLines), "Release".
     std::string version;
     std::uint8_t own_mutes = 0, host_mutes = 0;   // a player's view: kMuteVoice / kMuteChat bits
     bool confirm_kick = false, confirm_ban = false;   // the host's Kick or Ban waits for its second A
+    bool confirm_click = false;   // the first was a click: "Click again", not "A again"
     // The Join view's fields: their rows' words (TextField::Shown) and whether a relay is set to join a room through.
     std::string room_field, password_field;
     bool room_ready = false, relay_set = false;
+    bool join_address = false;   // the Join view's first field holds an address (a . or a :), not a room name
+    int join_port = 0;           // ... the port it joins on: typed after a colon, else the default (27510)
     std::vector<std::string> lan_rows;    // the games on this network, as their rows say them (CoopLan::RowText)
     std::vector<std::string> online_rows; // the relay's public rooms, as their cells say them (CoopRoomList::CellText)
     std::vector<ListLine> lan_list, online_list;   // the same, as the browser's list shows them (name, players)
     std::string online_state;             // the browser's online list when it has no rooms: why ("" asking)
+    std::string search;                   // the browser's search, as typed ("" every game)
+    bool browse_all_out = false;          // games were heard, but the search or the filter keeps none
+    std::string room_name;                // this game's room name when it hosts ("" none: a join code)
     int cell = -1;                        // the browser's cell picked with the pad or the mouse (-1: the rows')
     std::string lan_game;                 // a game's view: the game picked, as its row said it
     std::string turned_away;              // a guest the host's game turned away (kicked, banned, full: the Lobby's
@@ -574,6 +609,10 @@ struct SessionView {
     // keys (TypingLines) and the key picked; empty and -1 otherwise.
     std::vector<ListLine> typing_lines;
     int typing_key = -1;
+    // Settings and look (View::kMenu): co-op's menu's page as it shows it (CoopPause::NativeView), the row of the view
+    // that chose it (kMenuTabNames), the first of its rows on the list
+    CoopPauseMenu::View menu;
+    int menu_tab = 0, menu_top = 0;
 };
 // The most a row's text holds: the System page's button fits about 24 of the game's letters (seen in a run,
 // 2026-11-19: "Leave (not in a session)" fills it, 31 letters ran past both edges).
@@ -596,6 +635,8 @@ inline constexpr std::size_t kListNameChars = 30, kListValueChars = 16;   // (th
 // The list's rows for this page: the header, then a page of games ("" rows not shown). With nothing listed, the
 // first game row says why.
 std::vector<ListLine> ListLines(const SessionView& v);
+// A relay's room kept by the online list's search: the search's letters in its name or its host's, any case ("": all).
+bool RoomMatches(const std::string& room, const std::string& host, const std::string& search);
 // The same list on the main view and the Session view: the session's details (a header, what it is, then name and
 // value lines), co-op's problem or hint as lines of text (no value: their value box not shown), and the release last.
 // None on the other views. The rows keep what can be done.
@@ -606,6 +647,38 @@ std::string ListValue(int players, int max, bool same_version);
 // room name after it when that is another: "Saria's forest (forest-gang)".
 std::string ListName(const std::string& shown, const std::string& room);
 
+// --- Settings and look (View::kMenu): co-op's own menu on the page ---
+// Hookshot's menu (the overlay) has co-op's look and settings: Customize Link's part colours, Co-op Settings' name,
+// Link's look, voice, controller... A tester asked for all of them in the game's own menu. The view's rows are four of
+// that menu's pages (and Back); the list on the right shows the page's rows, as the overlay does (the same model,
+// coop_pause_menu.h, so the two never differ): Right or A on a row goes into the list, up and down move in it, Left and
+// Right change a choice, A does a row (a name typed with the typing keys on the list, a colour's mixer), B back out.
+inline constexpr int kMenuTabs = 4;
+inline constexpr std::array<const char*, kMenuTabs> kMenuTabNames{"Customize Link", "Co-op settings", "Commands",
+                                                                   "Local co-op"};
+CoopPauseMenu::Page MenuTabPage(int tab);
+// Its list: seven rows under the header with a pack whose page has the eighth list row (Pa_List_07, as Longshot
+// Settings' seven a page), else six.
+inline constexpr int kMenuMost = kCells + 1;
+// The list for co-op's menu's page: its header (the page, "< 2 of 5 >" with more rows than the list holds), then
+// `per_page` of its rows from `top` (kept so the selected row shows while the list has the pad). `lines` always
+// kMenuMost + 1 (those past per_page empty). `rows`: the menu's row on each line (-1 none, the header's too);
+// `selectable`: a line the pad and the mouse can pick (not a heading or a note); `picked`: the line of the menu's
+// selected row while the list has the pad (-1 none), counted from the first under the header.
+struct MenuList {
+    std::vector<ListLine> lines;
+    std::array<int, kMenuMost + 1> rows{};
+    std::array<bool, kMenuMost + 1> selectable{};
+    int top = 0;
+    int picked = -1;
+};
+MenuList MenuLines(const CoopPauseMenu::View& menu, int tab, int top, bool list, int per_page = kCells);
+// The heading a row is under (a part's group on Customize Link: "Tunic", "Hylian Shield"; in a colour's mixer its
+// own heading, "Hylian Shield: Face"), "" none.
+std::string MenuHeadingOf(const CoopPauseMenu::View& menu, int row);
+// What a row's value box says: a choice between its arrows ("< Red >"), a switch's On or Off, an action's value.
+std::string MenuValue(const CoopPauseMenu::Row& r, bool typing);
+
 // --- Longshot Settings (System's last button): Longshot's own options, from its Insert menu ---
 // The page's five rows are the categories, Longshot's menu's tabs (its Debug and NFC tabs, its buttons such as Test
 // microphone, and the FPS counter's developer rows stay in that menu). The list on the right, the same Options rows as
@@ -614,7 +687,11 @@ std::string ListName(const std::string& shown, const std::string& room);
 // cursor on them); Right or A goes into its list, up and down move in it (turning the page at its ends), Left and Right
 // change the value, A takes the next one (of a few choices), B gives the pad back to the rows. A change goes through
 // Longshot as its own menu's Left and Right do (clamped, saved, a restart noted).
-inline constexpr int kSettingsPerPage = 6;   // (kListRows less the header)
+// Seven a page with a pack whose page has an eighth list row (Pa_List_07: tools/puppet_pack/pause_menu.py ROWS, a
+// tester: "it fits"), else six (kListRows less the header): the module says which (`per_page` below).
+inline constexpr int kSettingsPerPage = 6;
+inline constexpr int kSettingsPerPageMost = 7;
+inline constexpr int kSettingListRows = kSettingsPerPageMost + 1;   // (the header and the most a page)
 inline constexpr int kSettingRows = 6;   // (the five rows and the Longshot Settings button's copy)
 inline constexpr std::array<const char*, kSettingRows> kSettingTabs{"Graphics", "Audio", "Gameplay", "Controls", "Motion", "Debug"};
 struct SettingRow {
@@ -625,10 +702,12 @@ struct SettingRow {
 };
 // A category's settings (kSettingTabs[category]: their tab in Longshot's menu), in Longshot's order.
 std::vector<SettingRow> SettingsOf(const std::vector<SettingRow>& all, int category);
-int SettingPages(int count);
+int SettingPages(int count, int per_page = kSettingsPerPage);
 // A page of a category's settings as the list's rows: the header (`title`, and "Page 2 of 4" when there are more),
 // then the settings: the name ("*" after a restart one), the value's words.
-std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title);
+// kSettingListRows lines, the ones past `per_page` + 1 empty.
+std::vector<ListLine> SettingLines(const std::vector<SettingRow>& rows, int page, const std::string& title,
+                                   int per_page = kSettingsPerPage);
 // The value a press asks for: dir -1 Left, +1 Right (a step, kept within lo..hi), 0 A (the next, the first after the
 // last, for a setting of at most kCycleChoices choices: a slider such as Volume is never sent from its end back to its
 // start by A or a click on the row). The same value back when nothing would change (a fixed setting, the end of its
@@ -637,7 +716,7 @@ inline constexpr int kCycleChoices = 8;
 int SettingNext(const SettingRow& r, int dir);
 // The cursor moved up (-1) or down (+1) in a category's list of `count`: across its pages, staying at its ends. `row`
 // is the setting's place on its page (0 to kSettingsPerPage - 1; the list's row under the header is row + 1).
-void SettingMove(int count, int dy, int* page, int* row);
+void SettingMove(int count, int dy, int* page, int* row, int per_page = kSettingsPerPage);
 // The games the browser lists now (the chosen list's), and its pages.
 int BrowseListed(const Session& s);
 int CellPages(int listed);
@@ -688,8 +767,24 @@ void Init(const HosCoopApi* api);
 void OnScreen(void* ctx, std::uint64_t screen) noexcept;
 // hos_coop_pad, first (coop_pad_order.h): what the game and the mods get (sticks zeroed while our page shows).
 std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept;
+// A join made with a file loaded connected: the game goes back to its title screen by itself, as the System page's
+// Title Screen and its question's Title Screen would (the pause menu opened on System if it is not, the cursor stepped
+// to Title Screen, A, then the question answered), so the host's save is loaded from there. The player's buttons wait
+// meanwhile; it gives up after kToTitleMs. Any thread.
+inline constexpr std::uint64_t kToTitleMs = 25000;
+void ToTitle() noexcept;
+bool GoingToTitle() noexcept;
+// A test's view of the page (LICHII_COOP_TEST_STATE=1, CoopPause::Tick writes it): "key=value" words, one line.
+std::string TestState();
+// The System page's question's screen (UISystemWindowScreen: "Return to the title screen?").
+inline constexpr std::uint64_t kSystemWindowVtable = 0x4befbf8;
 // hos_coop_game_pause_page: Page::MousePage (-1 usable, -2 cannot be used).
 int MousePage() noexcept;
+// The mouse in the game's window (its client area, 0..1 each way) and the left button, when the window is in front:
+// the title's mouse reads it too (coop_title.cpp).
+bool ClientCursor(float* fx, float* fy, bool* left) noexcept;
+// The same in the game's layout units (as the buttons' hit boxes: the centre 0,0, y up).
+bool LayoutCursor(float* x, float* y, bool* left) noexcept;
 // The keyboard while one of the page's fields is typed into (hos_coop_key, hos_coop_char; KeysTaken: the game gets
 // none of its keys then): true when the field took it.
 bool Key(std::uint32_t vk, bool repeat) noexcept;
