@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -153,6 +154,16 @@ inline LinkColours LinkOnly(bool link_model, std::optional<std::uint32_t> eyes, 
     if (eyes) *eyes &= 0xFFFFFFu;
     if (hair) *hair &= 0xFFFFFFu;
     return {eyes, hair};
+}
+
+// The pause menu's model of your Link: the game's menu shows the player as its own actor, named "Pouch" + the field
+// player's actor name (PouchPlayer_Child for Player_Child, PouchPlayer_Adult for Player_Adult: RSDB ActorInfo's
+// PouchPlayer rows; lane 0.11.9: menu "0: PouchPlayer_Child", field "Player_Child"). A model of any other name (a
+// picker's character, the menu's tapestry) is not your Link.
+inline bool MenuModelOfPlayer(std::string_view menu_name, std::string_view player_name) {
+    constexpr std::string_view kMenu = "Pouch";
+    if (player_name.empty() || menu_name.size() != kMenu.size() + player_name.size()) return false;
+    return menu_name.substr(0, kMenu.size()) == kMenu && menu_name.substr(kMenu.size()) == player_name;
 }
 
 struct Target {

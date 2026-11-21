@@ -403,6 +403,7 @@ std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_sna
 std::map<std::uint64_t, bool> g_snail_layouts;   // a layout: his Customize screen's or not (looked up once)
 std::array<LiveSlot, kSnailSlots> g_snail_live{};
 CoopSnailCustom::Texts g_snail_shown;
+std::string g_snail_failed_said;   // (the panes last named as not set: said once per list)
 
 void SnailClose(const char* why) {
     if (!g_snail_open) return;
@@ -479,6 +480,7 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
         g_snail_open = true, g_snail_fallback = false;
         g_snail_screen = screen, g_snail_layout = layout, ++g_snail_gen;
         g_snail_shown = {};
+        g_snail_failed_said.clear();
         for (auto& l : g_snail_live) l.shown.clear();
         g_snail.Open(CoopLook::Shown(), CoopCharColours::ShownCharacter());
         LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened: co-op's customization in it");
@@ -496,8 +498,20 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
                        "game from the kit, which adds co-op's placeholders): its keys are kept from it", failed);
         return;
     }
-    if (w == SnailWritten::kSome) {   // (the rest shows and co-op keeps the screen; tried again at the next change)
-        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: the text of {} could not be set", failed);
+    if (w == SnailWritten::kSome) {
+        // (the rest shows and co-op keeps the screen. Tried again every update until all are set: lane 0.11.9, a
+        // reopen for Saria failed every pane on its opening update, and keeping that as shown left them unset. The
+        // line is said once per different list, so a pane that never takes it is named once, not every frame.)
+        if (failed != g_snail_failed_said) {
+            g_snail_failed_said = failed;
+            LOG_INFO(Core, "coop: characters: Character Select's Customize screen: the text of {} could not be set "
+                           "(tried again at each update)", failed);
+        }
+        return;
+    }
+    if (!g_snail_failed_said.empty()) {
+        g_snail_failed_said.clear();
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: every text set");
     }
     g_snail_shown = t;
 }

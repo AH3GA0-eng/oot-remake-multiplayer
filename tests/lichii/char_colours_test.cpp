@@ -228,6 +228,17 @@ TEST_CASE("char colours: the eyes' and hair's colours go on a Link model only (r
     CHECK(LinkOnly(false, 0x123456u, std::nullopt) == LinkColours{});
 }
 
+TEST_CASE("char colours: the pause menu's model of your Link is the game's Pouch twin of the field player (lane: eyes)") {
+    using CoopCharColours::MenuModelOfPlayer;
+    CHECK(MenuModelOfPlayer("PouchPlayer_Child", "Player_Child"));
+    CHECK(MenuModelOfPlayer("PouchPlayer_Adult", "Player_Adult"));
+    CHECK_FALSE(MenuModelOfPlayer("PouchPlayer_Adult", "Player_Child"));   // (the other age: not this Link)
+    CHECK_FALSE(MenuModelOfPlayer("Player_Child", "Player_Child"));        // (the field actor's own name: not the menu's)
+    CHECK_FALSE(MenuModelOfPlayer("Tapestry_ChallengeMenu", "Player_Child"));
+    CHECK_FALSE(MenuModelOfPlayer("Pouch", ""));                            // (no field player: nothing)
+    CHECK_FALSE(MenuModelOfPlayer("", ""));
+}
+
 TEST_CASE("char colours: a puppet gets its player's hair, eyes and clothes through the model's own calls") {
     FakeGame f(Character());
     State s = StateFor();

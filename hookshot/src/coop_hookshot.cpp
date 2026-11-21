@@ -1965,7 +1965,7 @@ void DressCharacters(void* ctx) {
                 if (menu[s].actor == 0) continue;
                 const std::string name = name_of(menu[s].actor);
                 seen += fmt::format("{}{}: {}", seen.empty() ? "" : ", ", s, name.empty() ? "?" : name);
-                if (!link.empty() && name == link) dress(menu[s].actor, 1 + s, 0x6d656e7500000000ull | menu[s].id);
+                if (CoopCharColours::MenuModelOfPlayer(name, link)) dress(menu[s].actor, 1 + s, 0x6d656e7500000000ull | menu[s].id);
             }
             if (seen != said) {   // (what the menu holds, once a change: which of them is your Link)
                 said = seen;
