@@ -3351,6 +3351,106 @@ TEST_CASE("boss-turns-older-0119: a game of an older build (no takes_turns) is n
   CHECK(two.asks() == 1);
 }
 
+// Row 215 (owner's playtest, 0.11.8): Ganon at life 0 went from game to game in his finish (each copy's hit asked
+// him over to its hitter) and nobody could stab him. No rule hands a boss over in its finish (life 0 or its death).
+ObjectState dying_state(std::int32_t life, const char* animation) {
+  ObjectState s = state_at(0, life);
+  Animation a;
+  a.name = animation;
+  s.animation = a;
+  return s;
+}
+
+TEST_CASE("row 215: a boss at life 0 stays with its owner's game: hits, the near rule, a paused owner") {
+  std::vector<std::string> lines;
+  SessionConfig config = hit_handover_config();  // the hitter rule for every hit, and the near rule on
+  config.log = [&lines](const std::string& line) { lines.push_back(line); };
+  OwnerHarness h(config);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 0)}, kChannelObjectSamples);  // his finish
+  h.stand(1, 12);  // the owner by the wall, player 2 at the boss
+  h.stand(2, 3);
+  h.run(7 * kSecond);  // past the owner's own blow (boss_owner_hit_hold_us); the near rule's hold meanwhile
+  CHECK(h.asks() == 0);
+  h.clear();
+  const auto kept = h.session.stats().boss_finish_kept;
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // the stab in a copy
+  h.receive(2, Damage{0, placed(7), 0, 1, 1, {}, {}}, kChannelOwnership);
+  CHECK(messages_to<Damage>(h, 1).size() == 2);  // the hits still go to the owner
+  CHECK(h.asks() == 0);
+  CHECK(h.session.stats().boss_to_hitter == 0);
+  CHECK(h.session.stats().boss_finish_kept == kept + 2);  // both asked by the hitter rule, neither made
+  h.run(70 * kSecond);  // the near rule in the fight, then the out-of-fight rules after its lock
+  CHECK(h.asks() == 0);
+  h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);  // an owner that stands still
+  h.run(10 * kSecond);
+  CHECK(h.asks() == 0);
+  CHECK(h.session.stats().boss_to_near == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // One line for the finish, however many asks it kept from being made (proof runs read it).
+  const auto said = std::count_if(lines.begin(), lines.end(), [](const std::string& line) {
+    return line.starts_with("boss finish: ") && line.find("at life 0 stays with player 1 (not to player 2)") !=
+                                                    std::string::npos;
+  });
+  CHECK(said == 1);
+  // Its next phase refills its life (Ganondorf's, Twinrova's): the rules work as before.
+  h.receive(1, PlayerStatus{0, 0}, kChannelSession);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+  h.clear();
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().boss_to_hitter == 1);
+}
+
+TEST_CASE("row 215: a boss in its death animation stays, as does one whose answer comes at life 0") {
+  SUBCASE("its death animation, life not yet 0") {
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, dying_state(2, "Dead_Fall")}, kChannelObjectSamples);
+    h.stand(1, 4);
+    h.stand(2, 6);
+    h.run(7 * kSecond);  // past the owner's own blow (12 -> 2 reads as one: boss_owner_hit_hold_us)
+    h.clear();
+    const auto kept = h.session.stats().boss_finish_kept;
+    h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
+    CHECK(h.asks() == 0);
+    CHECK(h.session.stats().boss_finish_kept == kept + 1);  // this guard refused it, not the hold
+    CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  }
+  SUBCASE("asked while it lived, answered in its finish") {
+    OwnerHarness h;
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 5)}, kChannelObjectSamples);
+    h.stand(1, 4);
+    h.stand(2, 6);
+    h.run(7 * kSecond);  // past the owner's own blow (12 -> 5 reads as one: boss_owner_hit_hold_us)
+    h.clear();
+    h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);  // a stun: the ask
+    REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    h.clear();
+    h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 0)}, kChannelOwnership);  // the last hit landed meanwhile
+    CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+    CHECK(messages_to<HandoverState>(h, 2).empty());  // the new owner's state never sent
+    CHECK(messages_to<ObjectOwner>(h, 2).empty());
+    CHECK(h.session.stats().boss_finish_kept == 1);
+  }
+}
+
+TEST_CASE("row 215: boss turns never pass a boss on at life 0, even at its attack's end") {
+  OwnerHarness h(turn_config());
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 6);
+  h.stand(2, 10);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // the fight begins
+  h.run(21 * kSecond);
+  h.clear();
+  attack_ends(h, 1, 0, 0);  // the blow that took the last of its life ends its attack
+  h.run(30 * kSecond);
+  CHECK(h.asks() == 0);
+  CHECK(h.session.stats().boss_turns == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+}
+
 TEST_CASE("gohma-sync: by default a boss hit that takes life stays with the owner, a stun hands it over") {
   OwnerHarness h;  // the defaults
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
