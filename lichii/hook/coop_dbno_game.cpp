@@ -81,6 +81,9 @@ struct Glue {
     std::atomic<bool> tell_again{false};
     // The frame's own (no lock): only the frame touches them.
     Machine machine;
+    // The machine's state and our player number, for other threads (StateOfPlayer).
+    std::atomic<std::uint8_t> own_number{0};
+    std::atomic<std::uint8_t> own_state{0};
     Reviver reviver;
     ThreatTeller threat_teller;
     bool was_button = false;  // A last frame (the spectator's switch)
@@ -368,6 +371,8 @@ void Frame(const std::optional<std::string>& scene, const std::optional<coop::ho
     in.enemy_near_us = g.enemies_near.load(std::memory_order_relaxed);
     in.bottled_fairy = reading && g.bottled_fairy.load(std::memory_order_relaxed);
     const Output out = g.machine.Frame(in);
+    g.own_number.store(self, std::memory_order_relaxed);
+    g.own_state.store(static_cast<std::uint8_t>(g.machine.Now()), std::memory_order_relaxed);
     g.guard.Set(out.guard);
     Body::Raising& raise = Body::TheRaising();
     if (out.write_life) {
@@ -552,6 +557,15 @@ std::optional<View> Shown() {
     Glue& g = TheGlue();
     std::lock_guard lock(g.mutex);
     return g.view;
+}
+
+State StateOfPlayer(std::uint8_t number) {
+    Glue& g = TheGlue();
+    if (number != 0 && number == g.own_number.load(std::memory_order_relaxed)) {
+        return static_cast<State>(g.own_state.load(std::memory_order_relaxed));
+    }
+    std::lock_guard lock(g.mutex);
+    return g.roster.StateOf(number);
 }
 
 void NoteEnemiesNear(bool any) {

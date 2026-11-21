@@ -371,6 +371,18 @@ std::optional<Script> Parse(std::string_view text, std::string& error) {
             }
             step.kind = Kind::kill;
             step.mark = std::string(w[1]);
+        } else if (cmd == "DROP") {
+            // drop ACTOR METRES: test only (row 178's fall guard): the nearest boss of that name that our game owns
+            // is put METRES straight down by the set-matrix call the copies are placed with (a copy: not moved).
+            int metres = 0;
+            const std::string_view n = w.size() == 3 ? std::string_view(w[2]) : std::string_view();
+            const auto r = std::from_chars(n.data(), n.data() + n.size(), metres);
+            if (w.size() != 3 || r.ec != std::errc{} || r.ptr != n.data() + n.size() || metres < 1 || metres > 500) {
+                return fail("want: drop ACTOR METRES (1 to 500)");
+            }
+            step.kind = Kind::drop;
+            step.mark = std::string(w[1]);
+            step.start = std::string(w[2]);
         } else if (cmd == "HIT") {
             int amount = 0;
             const std::string_view n = w.size() == 3 ? std::string_view(w[2]) : std::string_view();
@@ -581,7 +593,7 @@ void Runner::Advance(double now_s, std::optional<std::array<float, 2>> player,
             return;
         }
         if (s.kind == Kind::warp || s.kind == Kind::give || s.kind == Kind::wear ||
-            s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::hurt ||
+            s.kind == Kind::assign || s.kind == Kind::dress || s.kind == Kind::chat || s.kind == Kind::kill || s.kind == Kind::drop || s.kind == Kind::hurt ||
             s.kind == Kind::hit || s.kind == Kind::stun ||
             s.kind == Kind::setflag || s.kind == Kind::setenum || s.kind == Kind::menu) {
             requests_.push_back(Request{s.kind, s.mark, s.start});
@@ -1283,6 +1295,8 @@ void OnFrame(Core::System& system) {
             CoopObjects::QueueTestHit(request.name, std::stoi(request.start));  // logged where it is done
         } else if (request.kind == Kind::stun) {
             CoopObjects::QueueTestStun(request.name);  // logged where it is done
+        } else if (request.kind == Kind::drop) {
+            CoopObjects::QueueTestDrop(request.name, static_cast<float>(std::stoi(request.start)));  // logged there
         } else if (request.kind == Kind::hurt) {
             if (g_state.link) {
                 const std::array<float, 3> at = *g_state.link;

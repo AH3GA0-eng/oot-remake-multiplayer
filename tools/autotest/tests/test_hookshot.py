@@ -311,8 +311,31 @@ class ParseTest(unittest.TestCase):
         files = [f for f in glob.glob(os.path.join(HERE, "..", "scenarios", "*.txt")) if not f.endswith(".steps.txt")]
         self.assertGreater(len(files), 100)
         for f in files:
-            with open(f, encoding="utf-8") as fh:
-                hs.parse(fh.read())
+            hs.parse(hs.read_script(f))
+
+
+    def test_include_expands_beside_the_file(self):
+        d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(d, "a.txt"), "w", encoding="utf-8") as f:
+                f.write("wait 10\ninclude b.inc.txt   # shared\nmark end\n")
+            with open(os.path.join(d, "b.inc.txt"), "w", encoding="utf-8") as f:
+                f.write("# the shared step\nkill Enemy_X\nwait 5\n")
+            steps = hs.parse(hs.read_script(os.path.join(d, "a.txt")))
+            self.assertEqual([s.text for s in steps if s.text], ["wait 10", "kill Enemy_X", "wait 5", "mark end"])
+            for bad, want in (("include\n", "want: include FILE"), ("include nope.txt\n", "no nope.txt"),
+                              ("include c.txt\n", "nest deeper")):
+                with open(os.path.join(d, "c.txt"), "w", encoding="utf-8") as f:
+                    f.write(bad)
+                with self.assertRaises(hs.ScriptError) as e:
+                    hs.read_script(os.path.join(d, "c.txt"))
+                self.assertIn(want, str(e.exception))
+        finally:
+            shutil.rmtree(d)
+
+    def test_include_is_no_step(self):
+        with self.assertRaises(hs.ScriptError):
+            hs.parse("include b.inc.txt")
 
 
 class BridgeTest(unittest.TestCase):
@@ -642,8 +665,7 @@ class PlayerTest(unittest.TestCase):
         for f in glob.glob(os.path.join(HERE, "..", "scenarios", "*.txt")):
             if f.endswith(".steps.txt"):
                 continue
-            with open(f, encoding="utf-8") as fh:
-                steps = hs.parse(fh.read())
+            steps = hs.parse(hs.read_script(f))
             for s in steps:
                 if s.kind in hs.MODULE_ONLY:
                     again = hs.parse(s.text)
@@ -933,8 +955,9 @@ class NoFairyTest(unittest.TestCase):
         for f in sorted(glob.glob(os.path.join(HERE, "..", "scenarios", "*.txt"))):
             if f.endswith(".steps.txt"):
                 continue
-            with open(f, encoding="utf-8") as fh:
-                text = fh.read()
+            if f.endswith(".inc.txt"):
+                continue  # a shared part, checked inside the scenarios that include it
+            text = hs.read_script(f)  # with its `include` lines in place
             if "BottleItem Fairy" in text:
                 continue  # puts a fairy in on purpose (hs-fairy-revive)
             steps = hs.parse(text)
@@ -944,6 +967,19 @@ class NoFairyTest(unittest.TestCase):
             emptied = {s.name for s in steps[:hurts[0]] if s.kind == "setenum" and s.start == "Empty"}
             with self.subTest(scenario=os.path.basename(f)):
                 self.assertTrue(set(hs.BOTTLE_ITEMS) <= emptied, "add `nofairy` before the first hurt")
+
+
+class DropTest(unittest.TestCase):
+    """Row 178's fall guard in a game: `drop NAME METRES` (a boss of ours put METRES down, test only)."""
+
+    def test_parses_and_goes_to_the_module(self):
+        steps = hs.parse("drop Enemy_DungeonBoss_PhantomGanon 60\n")
+        self.assertEqual((steps[0].kind, steps[0].name, steps[0].start), ("drop", "Enemy_DungeonBoss_PhantomGanon", "60"))
+        self.assertEqual(steps[0].text, "drop Enemy_DungeonBoss_PhantomGanon 60")
+        self.assertIn("drop", hs.MODULE_ONLY)
+        for bad in ("drop\n", "drop X\n", "drop X 0\n", "drop X 501\n", "drop X 1.5\n"):
+            with self.assertRaises(hs.ScriptError):
+                hs.parse(bad)
 
 
 if __name__ == "__main__":

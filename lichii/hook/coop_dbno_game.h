@@ -87,6 +87,10 @@ struct View {
 // What to draw now; nothing when there is nothing. Any thread.
 std::optional<View> Shown();
 
+// Any thread: `number`'s DBNO state now (ours from the last frame, the others' from their DBNO_STATE); up when not
+// known or DBNO is off. Row 160: a downed, spectating or out owner cannot play a room event (CoopEventResult).
+State StateOfPlayer(std::uint8_t number);
+
 // --- Spectating ---
 
 // The objects walk (coop_objects.cpp), each walk: whether an enemy of our

@@ -140,6 +140,11 @@ struct PlayWish {
     bool alias = false;
     float loop = 0.0f;
     float run = -1.0f;
+    // Row 175: never played over the copy's own death (`keep_own_death`) or a boss copy's own stun
+    // (`keep_own_stun`) in slot 0. We read those from its own animation (PictureDeathHere, LifelessKillHere,
+    // row 169's own stun), and a play put over it at once erased it before any walk saw it (CoversOwnReaction).
+    bool keep_own_death = false;
+    bool keep_own_stun = false;
 };
 
 // The frame of an animation `age_us` after it showed `frame` at `rate`
@@ -161,6 +166,14 @@ bool IsWeb(std::string_view actor);
 // PlayWish::only_over: true when `only_over` is empty or one of its
 // '|'-separated parts is in `slot_name`.
 bool PlaysOver(std::string_view slot_name, std::string_view only_over);
+
+// Row 175: this play would put the owner's animation over the copy's own death or stun that its own AI put in
+// slot 0 (PlayWish keep_own_death / keep_own_stun). Not played; the Mover tells Sync of a death (NoteOwnDeath).
+bool CoversOwnReaction(const PlayWish& wish, std::string_view slot_name);
+
+// Row 175: a copy whose death here we read from its own animation, not from a life: a Poe sister's painting
+// (PictureDeathHere) and a lifeless enemy that reacts (LifelessKillHere, issue 133).
+bool DeathReadFromAnimation(std::string_view name, bool reacts, bool life_read);
 
 using Mat3 = std::array<float, 9>;
 
@@ -651,6 +664,7 @@ public:
     // we first saw it (CoopBossNative::Table::kFallBelowStart, the owner's fall guard): it keeps its last place
     // in the room until the owner's are back up.
     static constexpr float kBossFallBelowStartM = 40.0f;
+    mutable std::uint64_t boss_copies_kept_ = 0;  // (BossCopiesKept: counted where Poses skips one)
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
     // Protocol 14: how long the owner's samples carry its newest hit (a few samples: one may be lost).
     static constexpr std::uint64_t kHitShowUs = 500'000;
@@ -966,6 +980,9 @@ public:
     // Neither a put-back of it nor a walk that sees it starts a chase or an
     // own wake (OwnWake held the owner's play back and gave 'Wait' back).
     void NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string_view name = {});
+    // Row 175: the Mover did not put the owner's animation over this copy's own death in slot 0
+    // (CoversOwnReaction): the same marks as a walk that sees it (own_death_at, a painting's death here), at once.
+    void NoteOwnDeath(std::uint64_t address, std::uint64_t now_us, std::string_view name);
     // Issue 101 on the enemies' brain path (CoopBossNative::Table::TakeOwnWants): a plain enemy copy whose own
     // brain asked for another phase than its owner's (skipped: the copy plays the owner's, so neither its
     // animation nor a pull towards our Link shows it). Near our Link (kWakeM) it chases us as a put-back one
@@ -1118,6 +1135,8 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // Row 178: boss copies' places not taken so far because the owner's was kBossFallBelowStartM below (Poses).
+    std::uint64_t BossCopiesKept() const { return boss_copies_kept_; }
     // Our own player number (0: not known yet).
     std::uint8_t Self() const { return self_; }
     // review-dc-0118: the owner of the object at `address`, or, once its owner's dead ObjectRemove forgot that, the
@@ -1128,6 +1147,8 @@ public:
     bool InOurScene(std::uint8_t player, std::uint64_t now_us) const;
     // The lowest player number in our scene by fresh samples, `self` included (DeciderOf).
     std::uint8_t SceneDecider(std::uint8_t self, std::uint64_t now_us) const { return DeciderOf(self, now_us); }
+    // Row 160: the other players in our scene by fresh samples (InOurScene for each), `self` left out.
+    std::vector<std::uint8_t> PlayersInOurScene(std::uint8_t self, std::uint64_t now_us) const;
     // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
     // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
     bool OwnerSaysDead(std::uint64_t address) const;
@@ -1347,6 +1368,9 @@ private:
     bool BroodDone(const coop::protocol::ObjectId& root) const;
     // Row 172: the members of a split enemy's group that leave this walk dead, counted before any leave is judged.
     void NoteBroodDeaths(const std::map<std::uint64_t, const Seen*>& now_seen);
+    // Row 175: `own` (its own animation, seen in a walk or by the Mover) is its own death here (o.own_death_at),
+    // and a painting's death here goes to its owner (PictureDeathHere).
+    void MarkOwnDeath(Object& o, std::string_view own, std::uint64_t now_us, std::uint8_t self);
     void DeadByWrite(Object& o, std::uint16_t epoch, std::uint64_t now_us,
                      std::vector<coop::protocol::Message>& send, const char* why);
 

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -391,6 +392,34 @@ TEST_CASE("testinput: wear SLOT none takes a piece off") {
 
 // Every input script in tools/autotest/scenarios parses (the steps files are the runner's,
 // not the emulator's), so a bad line shows here and not first in a game run.
+namespace {
+// hookshot.py read_script: each `include FILE` line is replaced by FILE's text (FILE beside it, at most 4 deep)
+// before the script reaches the module, so the module's parser never sees one.
+std::string ReadScenario(const std::filesystem::path& path, int depth = 0) {
+    std::ifstream in(path, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::string out;
+    std::size_t at = 0;
+    while (at <= text.size()) {
+        const std::size_t end = std::min(text.find('
+', at), text.size());
+        const std::string line = text.substr(at, end - at);
+        std::istringstream words(line.substr(0, line.find('#')));
+        std::string first, file;
+        words >> first >> file;
+        if (depth < 4 && (first == "include" || first == "INCLUDE") && !file.empty()) {
+            out += ReadScenario(path.parent_path() / file, depth + 1);
+        } else {
+            out += line;
+        }
+        out += '
+';
+        at = end + 1;
+    }
+    return out;
+}
+}  // namespace
+
 TEST_CASE("testinput: every autotest scenario script parses") {
     const std::filesystem::path dir =
         std::filesystem::path(COOP_TEST_SOURCE_DIR) / ".." / "tools" / "autotest" / "scenarios";
@@ -398,11 +427,11 @@ TEST_CASE("testinput: every autotest scenario script parses") {
     int checked = 0;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         const std::string name = entry.path().filename().string();
-        if (entry.path().extension() != ".txt" || name.find(".steps.") != std::string::npos) {
-            continue;
+        if (entry.path().extension() != ".txt" || name.find(".steps.") != std::string::npos ||
+            name.find(".inc.") != std::string::npos) {
+            continue;  // (a shared .inc.txt part is parsed inside the scenarios that include it)
         }
-        std::ifstream in(entry.path(), std::ios::binary);
-        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const std::string text = ReadScenario(entry.path());
         std::string error;
         CHECK_MESSAGE(Parse(text, error).has_value(), name << ": " << error);
         ++checked;
@@ -549,6 +578,23 @@ TEST_CASE("testinput: setenum hands the hook an Enum flag (name or 0x hash) and 
     CHECK(requests[1].kind == Kind::setenum);
     CHECK(requests[1].name == "PlayerStatus.AssignableItem.Child");
     CHECK(requests[1].start == "Bow");
+}
+
+TEST_CASE("testinput: drop hands the hook a boss name and its metres (row 178, test only)") {
+    std::string error;
+    CHECK_FALSE(Parse("drop\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon 0\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon 501\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon 6x\n", error));
+    Runner r(Must("drop Enemy_DungeonBoss_PhantomGanon 60\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::drop);
+    CHECK(requests[0].name == "Enemy_DungeonBoss_PhantomGanon");
+    CHECK(requests[0].start == "60");
 }
 
 TEST_CASE("testinput: nofairy empties every bottle (five setenum requests), as hookshot.py does") {
