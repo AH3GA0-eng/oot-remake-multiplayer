@@ -188,6 +188,9 @@ public:
         bool operator==(const Found&) const = default;
     };
     void SetFound(std::vector<Found> games, std::string state);
+    // A private game picked on a public list (Browse games, the Lobby tab): the Join page with `room` typed and its
+    // Password row chosen, saying the game needs the host's password. Nothing is tried.
+    void PrefillJoin(const std::string& room);
     bool find_online() const { return find_online_; }
     const std::string& find_search() const { return find_search_; }
     // The Customize page's picture of Link (hos_coop_menu_picture.h); empty

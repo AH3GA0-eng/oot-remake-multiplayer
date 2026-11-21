@@ -62,15 +62,61 @@ void Choose(Tab& t, const std::string& name) {
 
 }  // namespace
 
-TEST_CASE("lobby tab: out of a game it says where to host or join") {
+TEST_CASE("lobby tab: out of a game it says where to host or join, and lists Public games") {
     Tab t;
     t.Show();
     const View v = t.view();
-    REQUIRE(v.rows.size() == 3);
+    REQUIRE(v.rows.size() == 6);
     CHECK(v.rows[1].kind == RowKind::kNote);
     CHECK(v.rows[1].name == "You are not in a game.");
-    CHECK(v.selected == -1);
+    CHECK(v.rows[3].kind == RowKind::kHeading);
+    CHECK(v.rows[3].name == "Public games");
+    CHECK(v.rows[4].name == "Looking for public games...");   // (nothing heard yet)
+    CHECK(v.rows[5].name == "Refresh list");
+    CHECK(v.selected == 5);
     CHECK_FALSE(t.Press(Input::kBack));  // the menu closes
+}
+
+TEST_CASE("lobby tab: Public games: a public game joins with one press, a private one goes to its password, "
+          "the empty and unreachable states say so") {
+    Tab t;
+    t.Show();
+    Lobby l;
+    l.games_state = "No public games right now. Host one and choose Public game.";
+    t.Set(l);
+    CHECK(t.view().rows[4].name == l.games_state);
+    l.games_state.clear();
+    l.games = {PublicGame{"forest-4821", "forest-4821", "Public game, Players 1/8", true, true},
+               PublicGame{"kokiri", "kokiri (Saria)", "Needs the host's password, Players 1/4", true, false},
+               PublicGame{"lake", "lake (Ruto)", "Public game, Full", false, true}};
+    t.Set(l);
+    View v = t.view();
+    REQUIRE(v.rows.size() == 8);
+    CHECK(v.rows[4].name == "forest-4821");
+    CHECK(v.rows[4].value == "Join");
+    CHECK(v.rows[6].value == "Public game, Full");   // (not joinable: why, instead of Join)
+    t.Select(4);
+    CHECK(t.Press(Input::kDecide));
+    auto r = t.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoinRoom);
+    CHECK(r->name == "forest-4821");
+    CHECK(r->on);
+    t.Select(5);
+    t.Press(Input::kDecide);
+    r = t.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoinRoom);
+    CHECK(r->name == "kokiri");
+    CHECK_FALSE(r->on);   // (the Join page asks for the host's password; nothing is tried)
+    t.Select(6);
+    t.Press(Input::kDecide);
+    CHECK_FALSE(t.TakeRequest().has_value());   // (full: nothing to do)
+    t.Select(7);
+    t.Press(Input::kDecide);
+    r = t.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kRefreshGames);
 }
 
 TEST_CASE("lobby tab: the list shows the players, the host, open places, the invite and the host's game") {

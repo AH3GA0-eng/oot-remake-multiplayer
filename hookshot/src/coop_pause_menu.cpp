@@ -754,6 +754,19 @@ void Menu::SetSession(Session session) {
     Clamp();
 }
 
+void Menu::PrefillJoin(const std::string& room) {
+    // (a room from the relay's list: joined as room@relay, the bare-name rule (a PC first) never catches it)
+    const std::string_view relay = Trim(options_.relay);
+    join_ip_ = CoopTitleMenu::RoomNameOk(room)
+                   ? room + "@" + std::string(relay.empty() ? std::string_view(CoopTitleMenu::kDefaultRelay) : relay)
+                   : room;
+    join_port_.clear();
+    join_password_.clear();
+    UpdateJoinFromIpPort();
+    Go(Page::kJoin, Act::kJoinPassword);
+    note_ = {"This game needs the host's password. Type it, then Join."};
+}
+
 void Menu::SetNote(std::vector<std::string> lines) {
     note_ = std::move(lines);
 }
@@ -1414,12 +1427,16 @@ void Menu::Decide(Act act) {
             request_ = Request{Request::Kind::kJoin, join_};
             break;
         }
-        UpdateJoinFromIpPort();
         // (a room on the relay asks its password as a rule (a private game, or an older kit's: never tried with the
         // public password, so an older host's wrong-password count is never touched); a game on this network lets
         // its own network in)
-        Go(Page::kJoin, find_online_ ? Act::kJoinPassword : Act::kJoinNow);
-        if (find_online_) note_ = {"This game needs the host's password. Type it, then Join."};
+        if (find_online_) {
+            PrefillJoin(g.join);
+            break;
+        }
+        join_password_.clear();
+        UpdateJoinFromIpPort();
+        Go(Page::kJoin, Act::kJoinNow);
         break;
     }
     case Act::kName:

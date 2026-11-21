@@ -1425,6 +1425,13 @@ void CloseNative() {
     if (!g_shown) g_menu.Hide();
 }
 
+void OpenJoinRoom(const std::string& room) {
+    Open(CoopPauseMenu::Page::kJoin);
+    std::lock_guard lock(g_mutex);
+    g_menu.PrefillJoin(room);
+    LOG_INFO(Core, "coop: multiplayer tab: a private game from the Lobby's Public games: the Join page, its password next");
+}
+
 void Open(CoopPauseMenu::Page page) {
     std::lock_guard lock(g_mutex);
     g_menu.Show(ReadOptions());
