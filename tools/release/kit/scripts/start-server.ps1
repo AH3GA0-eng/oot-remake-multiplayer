@@ -40,7 +40,7 @@ $kitAccess = Read-KitServerAccess (Join-Path $kit 'coop-options.ini')
 $password = $kitAccess.Password
 if ($kitAccess.PublicGame) {
     # A public game (public_game = on): the room Host.bat chose (or a ready one), its password made from it.
-    $kitAccess.RelayRoom = if ($env:OOT_COOP_PUBLIC_ROOM) { $env:OOT_COOP_PUBLIC_ROOM } else { Get-KitPublicRoom $kitAccess }
+    $kitAccess.RelayRoom = Get-KitPublicRoom $kitAccess $env:OOT_COOP_PUBLIC_ROOM
     $password = Get-KitPublicPassword $kitAccess.RelayRoom
 }
 # No server_password (no line, or an empty one): a new random one for this session. Every

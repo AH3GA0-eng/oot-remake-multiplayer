@@ -358,7 +358,7 @@ elseif ($Mode -eq 'host') {
     $Password = $hostAccess.Password
     if ($hostAccess.PublicGame) {
         # A public game: the password is the room's (nobody types it); start-server.ps1 takes the same room.
-        $publicRoom = if ($env:OOT_COOP_PUBLIC_ROOM) { $env:OOT_COOP_PUBLIC_ROOM } else { Get-KitPublicRoom $hostAccess }
+        $publicRoom = Get-KitPublicRoom $hostAccess $env:OOT_COOP_PUBLIC_ROOM
         $env:OOT_COOP_PUBLIC_ROOM = $publicRoom
         $Password = Get-KitPublicPassword $publicRoom
         $env:OOT_COOP_SESSION_PASSWORD = $Password

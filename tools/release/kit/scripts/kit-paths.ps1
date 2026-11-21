@@ -286,11 +286,13 @@ $script:KitDefaultRelay = '159.54.182.85:27530'
 # with no password (coop_server --public; the traffic is still encrypted). Its join password is made from the room,
 # as the game's coop::protocol::public_join_password: the tag and the room in lower case.
 function Get-KitPublicPassword([string]$Room) { return 'squadala-public-game:' + $Room.ToLowerInvariant() }
-# The public game's room: relay_room when it is a room name, else a ready one ('forest-4821'), as the game's
-# CoopTitleMenu::Options::RandomRoomName offers.
-function Get-KitPublicRoom($Access) {
-    $room = "$($Access.RelayRoom)".Trim()
-    if ($room -match '^[A-Za-z0-9_-]{3,24}$') { return $room }
+# The public game's room, in lower case as the relay keeps it (normalize_room): $Override (OOT_COOP_PUBLIC_ROOM, the
+# host's own game is told the room Host.bat picked) when it is a room name, else relay_room when it is one, else a
+# ready one ('forest-4821'), as the game's CoopTitleMenu::Options::RandomRoomName offers. A bad override is skipped.
+function Get-KitPublicRoom($Access, [string]$Override = '') {
+    foreach ($room in "$Override".Trim(), "$($Access.RelayRoom)".Trim()) {
+        if ($room -match '^[A-Za-z0-9_-]{3,24}$') { return $room.ToLowerInvariant() }
+    }
     $words = 'forest', 'lake', 'field', 'river', 'valley', 'meadow', 'canyon', 'grove', 'cliff', 'marsh', 'harbor', 'summit'
     return '{0}-{1}' -f ($words | Get-Random), (Get-Random -Minimum 1000 -Maximum 10000)
 }
