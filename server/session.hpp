@@ -107,6 +107,11 @@ struct SessionConfig {
   // At most max_held_joins wait at once; one more is told the server is full.
   // Off: everyone with the password joins at once, as before.
   bool approve_joins = false;
+  // An always-on server with no hosting game (coop_server --dedicated, docs/official-game.md): the player who hosts
+  // the session's progress (the first in, then join order) gets no host powers: no kick, ban or mute, no join
+  // answers, no PvP, down-but-not-out or difficulty change. Moderation is the console's (admin) alone; the session
+  // keeps the server's settings. (MOD_SETTINGS stay the save host's: they belong to the save's mods.)
+  bool dedicated = false;
   // Bans the host made in earlier sessions, kept by their player key (lobby
   // ids "k:<hex>", the host's ban file): in force from the start and kept when
   // the session empties. Names are never kept (one is easy to change, and
@@ -833,6 +838,8 @@ class Session {
   std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
                        std::optional<ConnectionId> parent, std::uint8_t seat) const;
   std::string lobby_id(const Connection& c) const;
+  // Whether this player may use the host's powers over the session (SessionConfig::dedicated: nobody may).
+  bool hosts_rules(ConnectionId id) const { return !config_.dedicated && host_ && *host_ == id; }
   // A ban of a player known by name (no key, or a key another player had)
   // holds for that name whatever key comes with it.
   bool lobby_banned(const std::string& id, const std::string& nickname,

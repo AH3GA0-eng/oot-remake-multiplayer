@@ -224,6 +224,10 @@ TEST_CASE("command line: --dedicated is the always-on public game (needs --publi
                              "--invite"},
                             error)
              .has_value());
+  CHECK(!parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public", "--dedicated",
+                             "--approve-joins"},
+                            error)
+             .has_value());
   CHECK(!parse_command_line({"--bans-file"}, error).has_value());
   auto plain = parse_command_line({}, error);
   REQUIRE(plain.has_value());

@@ -232,6 +232,10 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
     error = "--dedicated is the always-on public game: it needs --public";
     return std::nullopt;
   }
+  if (line.dedicated && line.approve_joins) {
+    error = "--dedicated has no host to let players in: leave out --approve-joins";
+    return std::nullopt;
+  }
   if (line.dedicated && line.invite) {
     error = "--dedicated reads commands from its console: leave out --invite";
     return std::nullopt;

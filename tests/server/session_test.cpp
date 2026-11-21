@@ -7113,3 +7113,35 @@ TEST_CASE("lobby: the server console (coop_server --dedicated) lists, kicks, ban
   CHECK(all_to<Chat>(h, 5).empty());
   CHECK(h.session.admin("/unmute 1 chat", h.now) == "unmute 1 chat: done");
 }
+
+TEST_CASE("dedicated: the player who hosts the progress has no host powers, the console keeps moderation") {
+  SessionConfig config = approving();
+  config.dedicated = true;
+  Harness h(config);
+  h.join(1, "Link");
+  REQUIRE(h.session.host() == std::optional<std::uint8_t>{1});   // (the first in hosts the session's progress)
+  const JoinKnock k = knock(h, 2, "Zelda", 2);
+  h.clear();
+  // Join answers: not from a player.
+  h.receive(1, JoinAllow{k.knock, true, false}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+  CHECK(h.session.stats().join_answers_stray == 1);
+  // Kick, ban, mute: refused as from a guest; nothing is banned.
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  CHECK(h.session.stats().lobby_refused == 2);
+  CHECK(h.session.key_bans().empty());
+  // PvP, down but not out, difficulty: the server's settings stay.
+  h.receive(1, PvpMode{0, true}, kChannelSession);
+  CHECK_FALSE(h.session.pvp());
+  CHECK(h.session.stats().pvp_mode_refused == 1);
+  h.receive(1, DbnoMode{0, true, 60, 20, 8}, kChannelSession);
+  CHECK(h.session.dbno() == DbnoMode{});
+  CHECK(h.session.stats().dbno_mode_refused == 1);
+  h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  CHECK(h.session.difficulty() == Difficulty{});
+  CHECK(h.session.stats().difficulty_refused == 1);
+  // The console still acts.
+  CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: done");
+}

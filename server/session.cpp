@@ -578,7 +578,7 @@ void Session::hold(ConnectionId id, Connection& c, const Hello& hello,
 }
 
 void Session::on_join_allow(ConnectionId id, const JoinAllow& a, std::uint64_t now_us) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.join_answers_stray;  // only the host answers
     return;
   }
@@ -899,7 +899,7 @@ void Session::on_player_message(ConnectionId id, Connection& c, std::uint8_t cha
 // host included, gets the new value; an unchanged value is told back to the
 // host alone, so its game still learns the session's.
 void Session::on_pvp_mode(ConnectionId id, Connection& c, const PvpMode& m) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.pvp_mode_refused;
     send(id, kChannelSession, PvpMode{pvp_set_by_, pvp_});
     return;
@@ -965,7 +965,7 @@ void Session::set_ngplus(std::uint8_t level) {
 // The host's sliders are kept through a preset or the automatic scaler, so
 // custom comes back as it was left.
 void Session::on_difficulty(ConnectionId id, Connection& c, const Difficulty& m) {
-  const bool hosts = host_ && *host_ == id;
+  const bool hosts = hosts_rules(id);
   DifficultyChoice wish = difficulty_;
   wish.auto_scale = m.auto_scale;
   if (!m.auto_scale) {
@@ -1159,7 +1159,7 @@ void Session::on_pvp_result(ConnectionId id, Connection& c, Message& message,
 
 // The host changes down but not out for everyone, as PVP_MODE.
 void Session::on_dbno_mode(ConnectionId id, Connection& c, const DbnoMode& m) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.dbno_mode_refused;
     send(id, kChannelSession, dbno_);
     return;
@@ -2792,7 +2792,7 @@ bool Session::object_in_fight(const ObjectId& id, std::uint64_t now_us) const {
 }
 
 void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_us) {
-  if (!host_ || *host_ != id) {
+  if (!hosts_rules(id)) {
     ++stats_.lobby_refused;
     send(id, kChannelSession, LobbyResult{a.action, a.target, LobbyResultCode::not_host});
     return;

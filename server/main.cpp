@@ -319,6 +319,7 @@ int main(int argc, char** argv) {
     config.session.pvp = line->pvp;
     config.session.dbno.on = line->dbno;
     config.session.approve_joins = line->approve_joins;
+    config.session.dedicated = line->dedicated;
     config.session.same_network_open = line->same_network_open;
     if (line->owner_hold_ms) config.session.owner_hold_us = std::uint64_t{*line->owner_hold_ms} * 1000;
     config.upnp = line->upnp;

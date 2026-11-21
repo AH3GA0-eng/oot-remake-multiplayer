@@ -9,6 +9,9 @@ the relay's machine.
 
 - No host game: the first player in hosts the session's progress (their save decides for that
   run). When they leave, the player who has been in the longest takes over (join order).
+- The player who hosts the progress gets no host powers there: no kick, ban or mute, no letting
+  players in, no PvP, down-but-not-out or difficulty change. Moderation is the console's alone, and the
+  session keeps the server's settings. (The save's mod settings stay that player's.)
 - When everyone leaves, the session empties and resets (flags, objects, world); the next first
   player's save decides. Kept bans stay.
 - Public game rules (docs/play-online.md, "Public games"): no password, still encrypted, relay
@@ -48,7 +51,8 @@ the log:
 | `/unban KEYID` | Lifts a ban: the key id from `/players` or the bans file (8 or more of its hex digits). |
 | `/mute N voice` / `/mute N chat` | Mutes player N's voice or chat for everyone; `/unmute` undoes it. |
 
-The commands act on every player, also the one who hosts the session's progress.
+The commands act on every player, also the one who hosts the session's progress. `--dedicated` refuses
+`--approve-joins` and `--invite` (there is no host to answer them).
 
 ## Not there yet (0.11.9)
 
