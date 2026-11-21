@@ -282,8 +282,22 @@ function Read-KitHostSession([string]$Kit, $Servers) {
 # never removed. SameNetworkOpen: players on this network join without the password, unless 'same_network_password =
 # on' (docs/protocol.md, "Same network").
 $script:KitDefaultRelay = '159.54.182.85:27530'
+# A public game (coop-options.ini public_game = on, the in-game Host page's Game row): anyone with the room name joins
+# with no password (coop_server --public; the traffic is still encrypted). Its join password is made from the room,
+# as the game's coop::protocol::public_join_password: the tag and the room in lower case.
+function Get-KitPublicPassword([string]$Room) { return 'squadala-public-game:' + $Room.ToLowerInvariant() }
+# The public game's room, in lower case as the relay keeps it (normalize_room): $Override (OOT_COOP_PUBLIC_ROOM, the
+# host's own game is told the room Host.bat picked) when it is a room name, else relay_room when it is one, else a
+# ready one ('forest-4821'), as the game's CoopTitleMenu::Options::RandomRoomName offers. A bad override is skipped.
+function Get-KitPublicRoom($Access, [string]$Override = '') {
+    foreach ($room in "$Override".Trim(), "$($Access.RelayRoom)".Trim()) {
+        if ($room -match '^[A-Za-z0-9_-]{3,24}$') { return $room.ToLowerInvariant() }
+    }
+    $words = 'forest', 'lake', 'field', 'river', 'valley', 'meadow', 'canyon', 'grove', 'cliff', 'marsh', 'harbor', 'summit'
+    return '{0}-{1}' -f ($words | Get-Random), (Get-Random -Minimum 1000 -Maximum 10000)
+}
 function Read-KitServerAccess([string]$Path) {
-    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = $script:KitDefaultRelay; RelayKey = ''; RelayRoom = ''; ApproveJoins = $false; Pvp = $false; SameNetworkOpen = $true }
+    $access = [ordered]@{ Allow = ''; Bind = ''; Password = $null; Upnp = $true; Invite = $true; Stun = ''; Relay = $script:KitDefaultRelay; RelayKey = ''; RelayRoom = ''; ApproveJoins = $false; Pvp = $false; SameNetworkOpen = $true; PublicGame = $false }
     if (-not (Test-Path -LiteralPath $Path)) { return $access }
     foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
         if ($line -match '^\s*server_allow\s*=\s*(.*?)\s*$') { $access.Allow = $Matches[1] }
@@ -298,6 +312,7 @@ function Read-KitServerAccess([string]$Path) {
         elseif ($line -match '^\s*relay_room\s*=\s*(.*?)\s*$') { $access.RelayRoom = $Matches[1] }
         elseif ($line -match '^\s*approve_joins\s*=\s*(.*?)\s*$') { $access.ApproveJoins = $Matches[1] -match '^(on|yes|1|true)$' }
         elseif ($line -match '^\s*pvp\s*=\s*(.*?)\s*$') { $access.Pvp = $Matches[1] -match '^(on|yes|1|true)$' }
+        elseif ($line -match '^\s*public_game\s*=\s*(.*?)\s*$') { $access.PublicGame = $Matches[1] -match '^(on|yes|1|true)$' }
     }
     return $access
 }

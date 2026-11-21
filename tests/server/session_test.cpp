@@ -5631,6 +5631,37 @@ TEST_CASE("lobby: a ban follows the key: a new name does not get in, others behi
   CHECK(h.session.stats().lobby_banned == 1);
 }
 
+TEST_CASE("lobby: a host's kept bans (by key) are in force from the start and stay when the session empties") {
+  std::vector<std::string> kept;
+  {
+    Harness h;
+    REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+    REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2));
+    CHECK(h.session.key_bans().empty());
+    h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+    kept = h.session.key_bans();
+    REQUIRE(kept.size() == 1);
+    CHECK(kept[0].rfind("k:02", 0) == 0);
+  }
+  SessionConfig config;
+  config.kept_bans = kept;
+  config.kept_bans.push_back("n:zelda");   // (a name is never kept: someone else may have it)
+  Harness h(config);
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1));
+  h.clear();
+  CHECK(join_keyed(h, 2, "Sheik", 2) == Refused{RefuseReason::banned});   // (the key: out under any name)
+  h.clear();
+  CHECK_FALSE(join_keyed(h, 3, "Zelda", 3));                            // (another Zelda: in)
+  CHECK(h.session.key_bans() == kept);
+  // Everyone leaves (the session empties): the kept ban stays.
+  h.session.disconnected(1, h.now);
+  h.session.disconnected(3, h.now);
+  h.clear();
+  REQUIRE_FALSE(join_keyed(h, 4, "Link", 1));
+  h.clear();
+  CHECK(join_keyed(h, 5, "Sheik", 2) == Refused{RefuseReason::banned});
+}
+
 TEST_CASE("lobby: over the relay (this PC's address) a ban follows the key too") {
   Harness h;
   constexpr std::uint32_t kLoopback = 0x0100007F;

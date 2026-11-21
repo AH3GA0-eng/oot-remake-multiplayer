@@ -54,6 +54,48 @@ What Host.bat does for this, by itself:
 - The game, the join password check, the 5-wrong-passwords block, the half-open limit and `server_allow` are unchanged: the punch only opens the way. A port scan finds nothing new: without the password the server answers no punch.
 - Tests: `tests/server/nat_test.cpp` (codes, STUN, punches, the host's rules: every mistyped letter, forged and stale codes, a stranger without the password gets nothing, rate limit, punches only toward the answer address), `tests/server/nat_loopback_test.cpp` (a real server, the join helper, a fake STUN server and an ENet game over 127.0.0.1: answer code, punches, the game reaches the server; a helper with another password never gets a punch back; the direct way), `tools/release/tests/hosting_test.ps1` (Join.bat's reader, the defaults, UPnP and the invite need a password). 127.0.0.1 has no routers: a real two-network test is still to do.
 
+## Public games: play with anyone, no password (0.11.8)
+
+Every game is **private** unless you choose otherwise: friends join with your code or room name and the password.
+
+**Host a public game.** On the Multiplayer page's **Host** page, set **Game** to **Public game**. A ready room name is
+offered (like `forest-4821`); change it if you like. Then **Start hosting**. Your game shows in **Public games** for
+everyone with the kit, and they join with one press, no password. Your choice is remembered (`public_game = on` in
+`coop-options.ini`, which Host.bat uses too). While you host, the Host page says which kind of game it is; a change
+applies at your next Host.
+
+**Join a public game.** Open **Browse games** (the Join page) or the **Lobby** tab while you are not in a game: **Public
+games** lists the games on the game list (the kit's relay). A public game says *Public game, Players 2/8*: press it to
+join. A private one says *Needs the host's password*: pressing it opens Join with the room typed in and the password
+field chosen. If nothing is listed it says *No public games right now*; if the list cannot be reached it says so and
+what to do.
+
+**What a public game keeps safe** (the host's side):
+
+- **Your address stays hidden.** A public game is reached only through the relay: no router forward, no invite code,
+  no answer codes, no same-network line and no same-network announce, and its game port listens on 127.0.0.1 only.
+  The list holds the room name, the players and the version, never an address. Every player through the relay comes
+  from the relay, so no player sees another's address either.
+- **The traffic is still encrypted.** The join password of a public game is made from its room name (anyone who sees
+  the list knows it), and the traffic keys still mix in a fresh key exchange per player. A private game can never use
+  a password of that shape, so a public game's password never opens a private one.
+- **Older kits are never sent the public password.** A public game is marked on the list (its version has the public
+  bit); a listing without the mark is treated as private, so an older host's wrong-password count is never touched.
+- **You stay in charge.** Kick, ban and mute (voice and chat) are in the Lobby tab. A ban follows the player's key,
+  not their name, and is **kept**: `coop-bans.txt` beside `coop.ini` lists the banned keys, and they stay out of every
+  game you host (delete a line to let one back in). **Ask me before letting players in** (`approve_joins = on`) and the
+  most players (Players) work as in a private game. The server limits each player's message rate.
+- **Guests cannot touch your files.** No player writes a file on your PC or runs a command there, and every message is
+  size- and bounds-checked before it is read (`tests/protocol/codec_test.cpp`, `tests/protocol/fuzz_test.cpp`). What
+  players *can* change is the shared progress co-op shares (flags, items, opened chests), as in any co-op game, and that
+  lands in the save you host from: host a public game from a multiplayer save you don't mind (see "Solo or
+  multiplayer saves" below).
+- **Nothing of your PC is shown.** The list shows the room name (Host.bat and the game list it under that, not your
+  player name or PC name); collect-logs masks user and PC names.
+
+Not there yet (said plainly): a ban made by name only (a player without a key) is not kept after the session; there is
+no server-wide block list or report button; chat has the per-player rate limit but no word filter.
+
 ## When the invite code does not work: a free VPN network
 
 1. **Everyone** installs [Radmin VPN](https://www.radmin-vpn.com) (free, no account). The host clicks **Network > Create network**, picks a name and a password, and sends both to the others; the others click **Network > Join network** and type them in. ([Hamachi](#hamachi) works the same way.)
@@ -109,7 +151,7 @@ Off, and not needed for most players: the invite code above does the same withou
 
 **A room name instead of a code** (issue 261): the host also writes `relay_room = forest-gang` in `coop-options.ini` (3 to 24 letters, digits, `-` or `_`), or sets it in the game: Co-op Settings, **Room name** (and the relay itself, **Relay**, which writes `relay =`). The server window then says `room "forest-gang" is yours` and copies `forest-gang@relay.example.net:27530`; friends type that into Join.bat, in any case, and it stays the same every session. The room is the host's while the server runs and is free again 30 seconds after it stops; if someone else holds it, the window says so and tries again every 30 seconds. Like the code, the name only finds the server: the join password is still the lock. A relay from before room names does not answer them (Join.bat says so); join codes still work there. In the game itself: the Multiplayer tab's Host uses the same `relay` and `relay_room` lines and shows `Room forest-gang@...` in its lines; friends type `forest-gang` in Join a game's **Room or address** (the relay set in their Settings, or the whole `forest-gang@relay.example.net`; with the host's join password), and the game asks the relay to let it in, then connects through it. A name that could also be a join code (8 code letters, like `lake-gang`) is tried as a code first, then as a room.
 
-**The relay's room list** (off unless the host asks): a host with a room name can also put the room on the relay's public list, so players can pick it from a list instead of typing its name. `coop_server --relay-list` (with `--relay-room`) lists it under the room name, or `--relay-list NAME` under a name the host picks (never their account or player name unless they type it), with the number of players, the most it takes and the co-op protocol version. Never the join password: a player who picks a room from the list still needs it from the host. The room leaves the list when its host stops or goes quiet. In the game, the pause menu's Multiplayer page has it under **Browse games**: **Online games** lists the rooms of the kit's `relay` (asked only while that list shows, every 10 seconds; the name shown, then the room name in brackets when that is another; a room picked there opens the Join view with its name typed in), and **List my room: On** (`list_room = on` in `coop-options.ini`) puts the host's own room on the list while it hosts with `relay_room`. `list_name = Saria's forest` in `coop-options.ini` picks the name shown; without it the list shows the room name. A game that never opens that list asks the relay nothing for it, and a host without `list_room` sends no listing.
+**The relay's room list** (off unless the host asks): a host with a room name can also put the room on the relay's public list, so players can pick it from a list instead of typing its name. `coop_server --relay-list` (with `--relay-room`) lists it under the room name, or `--relay-list NAME` under a name the host picks (never their account or player name unless they type it), with the number of players, the most it takes and the co-op protocol version. Never the join password: a player who picks a room from the list still needs it from the host. The room leaves the list when its host stops or goes quiet. In the game, the pause menu's Multiplayer page has it under **Browse games**: **Public games** lists the rooms of the kit's `relay` (asked only while that list shows, every 10 seconds; the name shown, then the room name in brackets when that is another; a room picked there opens the Join view with its name typed in), and **List my room: On** (`list_room = on` in `coop-options.ini`) puts the host's own room on the list while it hosts with `relay_room`. `list_name = Saria's forest` in `coop-options.ini` picks the name shown; without it the list shows the room name. A game that never opens that list asks the relay nothing for it, and a host without `list_room` sends no listing.
 
 **Trade-offs:** the relay owner sees every player's address and when and how much you send. The game traffic itself is encrypted with the join password, so the relay cannot read or change it (docs/protocol.md, "Encrypted traffic"). Each packet takes the detour through the relay, so the delay is the host-relay plus relay-player delay. Pick a relay near all of you, run by someone you trust. All relayed players share one address on the host's server (127.0.0.1), so its per-address limits are shared too: when one of them types a wrong join password 5 times, every new relayed player is turned away for 60 seconds (players already in stay in), and at most 4 can be connecting at the same moment.
 

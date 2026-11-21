@@ -84,6 +84,7 @@ struct Session {
     };
     State state = State::kOff;
     bool hosting = false;      // what was tried last: Host (else Join); tells a failed Host from a failed Join
+    bool public_game = false;  // hosting: the game was started as a public game (HosCoopHostOptions::public_game)
     bool by_launcher = false;  // co-op came with the game's start (Host.bat, Join.bat, coop.ini): not stopped here
     int players = 0;           // in the session, this one included (0: not known)
     std::string code;          // the invite code (hosting), or the answer code (kWaitHost)
@@ -188,9 +189,13 @@ public:
         std::string host;          // its host's name (the search finds it too)
         int count = 0, max = 0;    // its players and the most it takes (the sort, the filter)
         bool same_version = true;
+        bool is_public = false;    // a public game (CoopRoomList::Room::is_public): joined at once, no password
         bool operator==(const Found&) const = default;
     };
     void SetFound(std::vector<Found> games, std::string state);
+    // A private game picked on a public list (Browse games, the Lobby tab): the Join page with `room` typed and its
+    // Password row chosen, saying the game needs the host's password. Nothing is tried.
+    void PrefillJoin(const std::string& room);
     bool find_online() const { return find_online_; }
     const std::string& find_search() const { return find_search_; }
     // The Customize page's picture of Link (hos_coop_menu_picture.h); empty
@@ -215,7 +220,7 @@ private:
         kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
         kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow, kRelay, kRoom,
         kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
-        kSameNetwork,
+        kSameNetwork, kGameKind,
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh,
         kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin

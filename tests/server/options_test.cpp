@@ -193,3 +193,19 @@ TEST_CASE("command line: --same-network-open, off by default (docs/protocol.md, 
   CHECK(line->same_network_open);
   CHECK(std::string(usage()).find("--same-network-open") != std::string::npos);
 }
+
+TEST_CASE("command line: --public is a listed public game on the relay, with no password and no router forward") {
+  std::string error;
+  auto pub = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-4821", "--public"}, error);
+  REQUIRE(pub.has_value());
+  CHECK(pub->public_game);
+  CHECK(pub->relay_list == "forest-4821");   // (always listed, as the room's name)
+  CHECK(!parse_command_line({"--public"}, error).has_value());
+  CHECK(error.find("--relay-room") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-4821", "--public", "--upnp"},
+                            error)
+             .has_value());
+  auto priv = parse_command_line({"--relay-via", "relay.example.net", "--relay-room", "forest-4821"}, error);
+  REQUIRE(priv.has_value());
+  CHECK_FALSE(priv->public_game);
+}

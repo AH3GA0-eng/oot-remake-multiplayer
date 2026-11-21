@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <span>
 #include <utility>
 
@@ -40,6 +42,31 @@ constexpr std::uint16_t kPortTries = 5;
 
 // A field the caller's struct covers (its size says how much it set).
 #define COOP_HAS(o, T, field) ((o)->size >= offsetof(T, field) + sizeof((o)->field))
+
+// The host's kept bans (HosCoopHostOptions::bans_file): one lobby id of a player key ("k:" and hex) a line; anything
+// else in the file is skipped. Written whole when a ban by key is made.
+std::vector<std::string> ReadBans(const std::string& path) {
+    std::vector<std::string> out;
+    if (path.empty()) return out;
+    std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
+    std::string line;
+    while (std::getline(in, line) && out.size() < 4096) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        const bool ok = line.size() > 2 && line.size() <= 2 + 64 && line.rfind("k:", 0) == 0 &&
+                        line.find_first_not_of("0123456789abcdef", 2) == std::string::npos;
+        if (ok) out.push_back(line);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+void WriteBans(const std::string& path, const std::vector<std::string>& bans) {
+    std::ofstream out(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary | std::ios::trunc);
+    out << "# Players this host banned (their player key). They stay banned in every game you host.\n"
+           "# Delete a line (or this file) to let that player in again.\n";
+    for (const std::string& id : bans) out << id << "\n";
+}
 
 std::string Text(const char* s) {
     return s == nullptr ? std::string() : std::string(s);
@@ -189,6 +216,21 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
         Fail("the name is longer than 16 characters", HOS_COOP_PROBLEM_BAD_NAME);
         return 0;
     }
+    job.public_game = COOP_HAS(o, HosCoopHostOptions, public_game) && o->public_game != 0;
+    job.bans_file = COOP_HAS(o, HosCoopHostOptions, bans_file) ? Text(o->bans_file) : std::string();
+    if (job.public_game) {
+        // (HostServiceConfig::public_game: the relay only, the password the room's)
+        if (job.relay_via.empty() || job.relay_room.empty()) {
+            Fail("a public game needs the game list's server (Relay) and a room name", HOS_COOP_PROBLEM_RELAY_FAILED);
+            return 0;
+        }
+        job.password = coop::protocol::public_join_password(job.relay_room);
+        if (job.relay_list.empty()) job.relay_list = job.relay_room;
+        job.upnp = job.invite = job.same_network_open = false;
+    } else if (!job.password.empty() && coop::protocol::is_public_join_password(job.password)) {
+        Fail("that join password is kept for public games; choose another one", HOS_COOP_PROBLEM_BAD_PASSWORD);
+        return 0;
+    }
     if (job.password.empty()) {
         job.password = nat::make_password();  // every session has one; the invite code carries it
     } else if (const char* why = coop::server::password_problem(job.password)) {
@@ -241,6 +283,10 @@ void Menu::RunHost(HostJob job) {
         config.relay_key = job.relay_key;
         config.relay_room = job.relay_via.empty() ? std::string() : job.relay_room;
         config.relay_list = config.relay_room.empty() ? std::string() : job.relay_list;   // (the public list: opt-in)
+        config.public_game = job.public_game;
+        // The host's kept bans (player keys; HosCoopHostOptions::bans_file): in force from the start.
+        std::vector<std::string> bans = ReadBans(job.bans_file);
+        config.session.kept_bans = bans;
         config.counts = false;  // the game's log need not have them every 5 s
         config.log_invite = false;  // it holds the join password; the menu shows it
         config.log = [this](const std::string& text) { Say("coop: host: " + text); };
@@ -269,6 +315,13 @@ void Menu::RunHost(HostJob job) {
         while (!stop_) {
             host.set_ngplus(hooks_.ngplus_level ? hooks_.ngplus_level() : 0);   // (Navi) New Game+ (Hooks)
             host.service(kRoundMs);
+            if (!job.bans_file.empty() && host.session() != nullptr) {   // (a new ban by key: kept for next time)
+                std::vector<std::string> now = host.session()->key_bans();
+                if (now != bans) {
+                    WriteBans(job.bans_file, now);
+                    bans = std::move(now);
+                }
+            }
             std::deque<std::string> pasted;
             std::optional<std::string> new_password;
             {

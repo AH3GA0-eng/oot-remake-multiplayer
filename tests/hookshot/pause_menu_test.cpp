@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/protocol/join_password.hpp"
 #include "coop_colors.h"
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
@@ -103,7 +104,7 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     CHECK(m.view().gold == "Starting your game...");
     m.SetSession(Hosting(1));
     CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
-                                               "Same network", "VPN", "Port", "Stop hosting"});
+                                               "Same network", "VPN", "Port", "Game", "Stop hosting"});
     // Ctrl+V (or Shift+Insert) on the Host page is Paste friend's answer, wherever the cursor is.
     CHECK(m.Press(Input::kPaste));
     const auto paste = m.TakeRequest();
@@ -130,13 +131,15 @@ TEST_CASE("pause tab: Host hosts in one press, then the page shows the code, the
     m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Port");
     m.Press(Input::kDown);
+    REQUIRE(Selected(m) == "Game");
+    m.Press(Input::kDown);
     REQUIRE(Selected(m) == "Stop hosting");
     m.Press(Input::kDecide);
     CHECK_FALSE(m.TakeRequest().has_value());
-    CHECK(m.view().rows[5].value == "Press again to confirm");
+    CHECK(m.view().rows[6].value == "Press again to confirm");   // (Stop hosting is after the Game row)
     m.Press(Input::kUp);   // anything else: not confirmed
     m.Press(Input::kDown);
-    CHECK(m.view().rows[5].value == "Stop");
+    CHECK(m.view().rows[6].value == "Stop");
     m.Press(Input::kDecide);
     m.Press(Input::kDecide);
     CHECK(m.TakeRequest()->kind == Request::Kind::kLeave);
@@ -178,6 +181,32 @@ TEST_CASE("pause tab: the host's player count goes round 2 to 16 and is saved") 
     CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
     m.Press(Input::kRight);
     CHECK(m.options().max_players == 2);
+}
+
+TEST_CASE("pause tab: Host page: Private game is the default, Public game offers a ready room name, is remembered, "
+          "and while hosting public no row holds an address") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kHost);
+    REQUIRE(m.TakeRequest()->kind == Request::Kind::kHost);
+    m.SetSession(Session{});   // (stopped: the Start row and the choices)
+    SelectRow(m, "Game");
+    CHECK(m.view().help.find("Private game") != std::string::npos);
+    m.Press(Input::kDecide);
+    CHECK(m.options().public_game);
+    CHECK_FALSE(m.options().relay_room.empty());   // a ready name, as forest-4821
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Game", "Room name", "Players", "Port"});
+    CHECK(m.view().help.find("no password") != std::string::npos);
+    Session s = Hosting(1, "");
+    s.public_game = true;
+    m.SetSession(s);
+    CHECK(Names(m) == std::vector<std::string>{"Port", "Game", "Stop hosting"});
+    // Switched to private while hosting public: it says plainly it applies at the next Host.
+    SelectRow(m, "Game");
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().public_game);
+    CHECK(m.view().help.find("next Host") != std::string::npos);
 }
 
 TEST_CASE("pause tab: Join: a room name or an address, its port and the password, then Join (no friend's code)") {
@@ -315,6 +344,40 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     CHECK(m.view().rows[0].name == "Browse games");
 }
 
+TEST_CASE("pause tab: Browse games: a public game joins in one press with no password, a private one asks for it") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
+    m.Open(Page::kJoin);
+    SelectRow(m, "Browse games");
+    m.Press(Input::kDecide);
+    REQUIRE(m.page() == Page::kFind);
+    CoopPauseMenu::Menu::Found pub{"forest-4821", "Public game, Players 1/8", "forest-4821", 0, true, "forest-4821",
+                                   1, 8, true, true};
+    CoopPauseMenu::Menu::Found priv{"kokiri (Saria)", "Needs the host's password, Players 1/4", "kokiri", 0, true,
+                                    "Saria", 1, 4, true, false};
+    m.SetFound({pub, priv}, "");
+    SelectRow(m, "forest-4821");
+    m.Press(Input::kDecide);
+    auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoin);
+    CHECK(r->text == "forest-4821@relay.example.net:27530 " + coop::protocol::public_join_password("forest-4821"));
+    // A private game: the Join page with the room typed and the password row chosen; nothing is tried.
+    m.Open(Page::kJoin);
+    SelectRow(m, "Browse games");
+    m.Press(Input::kDecide);
+    m.SetFound({pub, priv}, "");
+    SelectRow(m, "kokiri (Saria)");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Selected(m) == "Password");
+    CHECK_FALSE(m.TakeRequest().has_value());
+    REQUIRE_FALSE(m.NoteLines().empty());
+    CHECK(m.NoteLines()[0].find("needs the host's password") != std::string::npos);
+}
+
 TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's rooms, and a pick fills the Join page") {
     Menu m;
     CoopTitleMenu::Options o;
@@ -326,8 +389,8 @@ TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's room
     CHECK(m.page() == Page::kFind);
     CHECK(m.find_online());
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "Asking the relay..."});
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true},
-                {"forest (Mido)", "Full", "forest", 0, false, "Mido", 4, 4, true}}, "");
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true, false},
+                {"forest (Mido)", "Full", "forest", 0, false, "Mido", 4, 4, true, false}}, "");
     // (the most players first)
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "forest (Mido)", "kokiri (Saria)"});
     CHECK(m.view().rows[5].fixed);   // (full: not joinable)
@@ -374,7 +437,7 @@ TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's room
     m.Press(Input::kRight);
     CHECK_FALSE(m.find_online());
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "Looking for games..."});
-    m.SetFound({{"Saria's game", "1/4", "192.168.1.20", 27511, true, "Saria", 1, 4, true}}, "");
+    m.SetFound({{"Saria's game", "1/4", "192.168.1.20", 27511, true, "Saria", 1, 4, true, false}}, "");
     SelectRow(m, "Saria's game");
     m.Press(Input::kDecide);
     CHECK(Selected(m) == "Join");
@@ -1094,7 +1157,7 @@ TEST_CASE("pause tab: Host Port and Settings Port when you host validate, save, 
     m.Open(Page::kHost);
     REQUIRE(m.TakeRequest()->kind == Request::Kind::kHost);
     m.SetSession(Session{});
-    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Players", "Port"});
+    CHECK(Names(m) == std::vector<std::string>{"Start hosting", "Game", "Players", "Port"});
     SelectRow(m, "Port");
     m.Press(Input::kDecide);
     for (const char c : std::string("28600")) {
@@ -1372,12 +1435,12 @@ TEST_CASE("pause tab: Host: the join password is hidden until A, shown in groups
     Session s = Hosting(1);
     m.SetSession(s);   // (no password: no row)
     CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
-                                               "Same network", "VPN", "Port", "Stop hosting"});
+                                               "Same network", "VPN", "Port", "Game", "Stop hosting"});
     s.password = "abcdefghijklmnopqrst";
     m.SetSession(s);
     CHECK(Names(m) == std::vector<std::string>{"Copy the code again", "Paste friend's answer (or Ctrl+V)",
                                                "Same network", "VPN", "Join password", "Change join password",
-                                               "Port", "Stop hosting"});
+                                               "Port", "Game", "Stop hosting"});
     SelectRow(m, "Join password");
     CHECK(SelectedValue(m) == "Hidden");
     CHECK(m.view().confirm == "Choose");
@@ -1515,7 +1578,7 @@ TEST_CASE("pause tab: Host: the player asking to join is let in or refused from 
     m.SetSession(s);
     CHECK(Names(m) == std::vector<std::string>{"Let in Saria", "Refuse Saria", "Copy the code again",
                                                "Paste friend's answer (or Ctrl+V)", "Same network", "VPN", "Port",
-                                               "Stop hosting"});
+                                               "Game", "Stop hosting"});
     CHECK(Selected(m) == "Copy the code again");   // (the rows came above it: the same row stays chosen)
     CHECK(Fits(m.view().rows[0]));
     CHECK(Fits(m.view().rows[1]));
@@ -1559,7 +1622,7 @@ TEST_CASE("pause tab: Browse games: Refresh asks for the list again and empties 
     m.Show(o);
     m.Open(Page::kFind);
     REQUIRE(m.page() == Page::kFind);
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true}}, "");
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true, false}}, "");
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "kokiri (Saria)"});
     SelectRow(m, "Refresh");
     CHECK(SelectedValue(m) == "Ask again");
@@ -1571,7 +1634,7 @@ TEST_CASE("pause tab: Browse games: Refresh asks for the list again and empties 
     CHECK(r->kind == Request::Kind::kRefreshFound);
     CHECK(Names(m) == std::vector<std::string>{"List", "Search", "Show", "Sort", "Refresh", "Asking the relay..."});
     CHECK(Selected(m) == "Refresh");
-    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true}}, "");
+    m.SetFound({{"kokiri (Saria)", "1/4", "kokiri", 0, true, "Saria", 1, 4, true, false}}, "");
     CHECK(Names(m).back() == "kokiri (Saria)");
     // This network's list: its own words
     SelectRow(m, "List");

@@ -386,7 +386,16 @@ if ($inviteJoin) {
     $Password = $inviteJoin.Password
 }
 elseif ($Mode -eq 'host') {
-    $Password = (Read-KitServerAccess $optionsFile).Password
+    $hostAccess = Read-KitServerAccess $optionsFile
+    $Password = $hostAccess.Password
+    if ($hostAccess.PublicGame) {
+        # A public game: the password is the room's (nobody types it); start-server.ps1 takes the same room.
+        $publicRoom = Get-KitPublicRoom $hostAccess $env:OOT_COOP_PUBLIC_ROOM
+        $env:OOT_COOP_PUBLIC_ROOM = $publicRoom
+        $Password = Get-KitPublicPassword $publicRoom
+        $env:OOT_COOP_SESSION_PASSWORD = $Password
+        Write-Host "Public game (public_game = on): room $publicRoom. Anyone can join it from Public games, no password."
+    }
     $serverExe = Join-Path $kit 'server\coop_server.exe'
     $kitServers = @()
     try {

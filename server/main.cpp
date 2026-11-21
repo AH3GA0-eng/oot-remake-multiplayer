@@ -23,6 +23,7 @@
 #include <windows.h>
 #endif
 
+#include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "console_out.hpp"
 #include "enet_server.hpp"
@@ -251,6 +252,8 @@ int main(int argc, char** argv) {
   // --relay-via (every relayed guest is 127.0.0.1, so --allow cannot tell
   // them apart). Only the relay itself (--relay) needs none: it forwards
   // sealed bytes it cannot read.
+  // A public game's password is its room's (HostServiceConfig::public_game).
+  if (line->public_game) line->password = coop::protocol::public_join_password(line->relay_room);
   if (!line->relay && line->password.empty()) {
     std::fprintf(stderr,
                  "coop_server: a join password is needed: every session has one, and it also "
@@ -326,6 +329,7 @@ int main(int argc, char** argv) {
     config.relay_key = line->relay_key;
     config.relay_room = line->relay_room;
     config.relay_list = line->relay_list;
+    config.public_game = line->public_game;
     config.log = say;
     HostService host(config);
     std::string why;

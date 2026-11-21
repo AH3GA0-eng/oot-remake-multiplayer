@@ -95,6 +95,7 @@ bool g_coop_on = false;      // co-op came with the game's start (coop.ini named
 bool g_shown = false;        // the tab shows in Hookshot's menu
 bool g_native = false;       // the title's own rows show its pages instead (OpenNative): no overlay
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
+bool g_hosted_public = false;  // the game hosting now was started as a public game (the Host page's Game row)
 // Auto-rejoin (coop_auto_rejoin.h): the planner, and what the player did since its last update (its own Host or Join,
 // a Leave), which stop what it planned; g_auto_join: the join being made is the planner's, not the player's.
 CoopAutoRejoin::Planner g_rejoin;
@@ -226,6 +227,7 @@ CoopPauseMenu::Session SessionNow() {
     default: s.state = State::kOff; break;
     }
     s.hosting = g_doing == "hosting";
+    s.public_game = s.hosting && g_hosted_public;
     s.by_launcher = g_coop_on;
     if (s.hosting) {
         s.players = st.players;
@@ -415,7 +417,9 @@ void Follow(const HosCoopStatus& st) {
         const CoopLobby::Seen seen = CoopLobby::Now();
         if (local_port != 0 && seen.connected && seen.self != 0 && seen.self == seen.host) launcher_port = local_port;
     }
-    if ((host && st.state == HOS_COOP_HOSTING) || launcher_port != 0) {
+    // (a public game, in the game or Host.bat's (coop-options.ini public_game): the relay only, no LAN line)
+    if ((host && st.state == HOS_COOP_HOSTING && !g_hosted_public) ||
+        (launcher_port != 0 && !g_menu.options().public_game)) {
         const CoopTitleMenu::Options& o = g_menu.options();
         CoopLan::Game g;
         g.name = o.name;
@@ -554,6 +558,13 @@ bool Host() {
     // room name without one; never the player's name unless they typed it there)
     const std::string& shown = o.list_name.empty() ? o.relay_room : o.list_name;
     h.relay_list = o.list_room && !o.relay_room.empty() ? shown.c_str() : nullptr;
+    // A public game (the Host page's Game row): anyone joins with no password, relay only, always listed.
+    h.public_game = o.public_game ? 1u : 0u;
+    // The host's kept bans (by player key), beside coop.ini: a player banned once stays out of every game hosted here.
+    const std::string bans_file = CoopFiles::Utf8Path(CoopRuntime::GameDir() / "coop-bans.txt");
+    h.bans_file = bans_file.c_str();
+    if (o.public_game) h.relay_list = shown.c_str();
+    g_hosted_public = o.public_game;
     g_doing = "hosting";
     ++g_session;
     g_copied = false;
@@ -1051,30 +1062,32 @@ bool g_finding = false;
 void RefreshFound(std::uint64_t now) {
     const bool want = (g_shown || g_native) && g_menu.page() == CoopPauseMenu::Page::kFind;
     if (!want) {
-        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(false, now, {});
+        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(CoopRoomList::Viewer::kMenu, false, now, {});
         g_finding = false;
         return;
     }
     g_finding = true;
     const bool online = g_menu.find_online();
     CoopLanNet::Look(!online, now);
-    CoopRoomList::Look(online, now, g_menu.options().relay);
+    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, online, now, g_menu.options().relay);
     std::vector<CoopPauseMenu::Menu::Found> games;
     std::string state;
     const int mine = coop::protocol::kProtocolVersion;
     if (online) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
-            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopPauseTab::ListValue(r.players, r.max, r.protocol == mine),
-                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine});
+            // (the same words as the Lobby tab's and the pause tab's Public games: CoopRoomList::DetailText)
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopI18n::Tr(CoopRoomList::DetailText(r, mine)),
+                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine,
+                             r.is_public});
         }
-        state = rooms.state;
+        state = rooms.state.empty() ? std::string() : CoopI18n::Tr(rooms.state);
     } else {
         for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
             games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),
                              CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine), h.address,
                              h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players, h.game.max,
-                             h.game.protocol == mine});
+                             h.game.protocol == mine, false});
         }
     }
     g_menu.SetFound(std::move(games), std::move(state));
@@ -1419,6 +1432,13 @@ void CloseNative() {
     if (!g_native) return;
     g_native = false;
     if (!g_shown) g_menu.Hide();
+}
+
+void OpenJoinRoom(const std::string& room) {
+    Open(CoopPauseMenu::Page::kJoin);
+    std::lock_guard lock(g_mutex);
+    g_menu.PrefillJoin(room);
+    LOG_INFO(Core, "coop: multiplayer tab: a private game from the Lobby's Public games: the Join page, its password next");
 }
 
 void Open(CoopPauseMenu::Page page) {

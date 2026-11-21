@@ -247,5 +247,13 @@ Check (-not (Test-InviteCodeText 'ABCD-EFGH') -and -not (Test-InviteCodeText '20
 $p1 = New-JoinPassword; $p2 = New-JoinPassword
 Check ($p1.Length -eq 20 -and $p1 -match '^[A-HJ-NP-Z2-9]{20}$' -and $p1 -ne $p2) 'invite: a made password is 20 letters (100 bits) and new each time'
 
+# The public game's room (Get-KitPublicRoom): lower case as the relay keeps it; a bad override is skipped.
+$acc = @{ RelayRoom = 'Forest-Gang' }
+Check ((Get-KitPublicRoom $acc) -eq 'forest-gang') 'public room: relay_room in lower case'
+Check ((Get-KitPublicRoom $acc ' Lake-12 ') -eq 'lake-12') 'public room: the override, trimmed, in lower case'
+Check ((Get-KitPublicRoom $acc 'no spaces allowed') -eq 'forest-gang') 'public room: a bad override is skipped'
+Check ((Get-KitPublicRoom @{ RelayRoom = '' } 'x') -match '^[a-z]+-\d{4}$') 'public room: nothing usable gives a ready one'
+Check ((Get-KitPublicPassword (Get-KitPublicRoom $acc ' Lake-12 ')) -eq 'squadala-public-game:lake-12') 'public room: the password from the room as the game makes it'
+
 if ($failed) { Write-Host "$failed failed"; exit 1 }
 Write-Host 'all passed'

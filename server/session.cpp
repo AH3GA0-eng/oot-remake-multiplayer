@@ -91,6 +91,17 @@ std::uint64_t Stats::dropped() const {
 
 Session::Session(SessionConfig config) : config_(std::move(config)), pvp_(config_.pvp), dbno_(config_.dbno) {
   dbno_.set_by = 0;
+  for (const std::string& id : config_.kept_bans) {
+    if (id.rfind("k:", 0) == 0) banned_ids_.insert(id);   // (SessionConfig::kept_bans: keys only)
+  }
+}
+
+std::vector<std::string> Session::key_bans() const {
+  std::vector<std::string> out;
+  for (const std::string& id : banned_ids_) {
+    if (id.rfind("k:", 0) == 0 && id.find('/') == std::string::npos) out.push_back(id);
+  }
+  return out;   // (a std::set: sorted)
 }
 
 bool Session::connected(ConnectionId id, std::uint64_t now_us,
@@ -3048,6 +3059,9 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     mod_settings_.reset();
     lobby_mutes_.clear();
     banned_ids_.clear();
+    for (const std::string& id : config_.kept_bans) {   // (the host's kept bans stay: SessionConfig::kept_bans)
+      if (id.rfind("k:", 0) == 0) banned_ids_.insert(id);
+    }
     banned_addresses_.clear();
     allowed_ids_.clear();
     remembered_ids_.clear();
