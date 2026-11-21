@@ -2406,6 +2406,10 @@ void Act(int row, int line = -1, bool clicked = false) {
         g_menu_tab = 0, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
         SetView(View::kMenu);
         break;
+    case RowAction::kViewLocal:   // (Settings and look on its Local co-op page: kMenuTabNames' last)
+        g_menu_tab = kMenuTabs - 1, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
+        SetView(View::kMenu);
+        break;
     case RowAction::kMenuTab:   // (A on a page's row: its rows on the list, which has the pad)
         if (row >= 0 && row < kMenuTabs) {
             if (g_menu_tab.exchange(row) != row) g_menu_top = 0;

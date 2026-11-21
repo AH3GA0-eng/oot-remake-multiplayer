@@ -914,6 +914,49 @@ std::string Players(int n) {
 
 }  // namespace
 
+std::vector<std::string> RowTexts(MinusPage page, const SessionView& v) {
+    std::vector<std::string> rows(kRows);
+    const auto main = RowTexts(v);   // (the Multiplayer page's entries, their words for what co-op does now)
+    switch (page) {
+    case MinusPage::kLobby:
+        rows[0] = main[kRowFind];
+        rows[1] = main[kRowHost];
+        rows[2] = main[kRowJoin];
+        break;
+    case MinusPage::kMultiplayer:
+        rows[0] = main[kRowPlayers];
+        rows[1] = main[kRowSettings];
+        rows[2] = "Local co-op";
+        if (v.s.hosting) {
+            rows[3] = main[kRowHost];   // ("Your game", "Your game: Saria asks")
+        } else if (v.s.in_one || v.s.by_launcher) {
+            rows[3] = main[kRowJoin];   // ("Your session", "Turned away", "Copy answer code")
+        }
+        break;
+    case MinusPage::kMods: break;
+    }
+    return rows;
+}
+
+RowAction ActionFor(MinusPage page, int row, const Session& s) {
+    switch (page) {
+    case MinusPage::kLobby:
+        if (row == 0) return ActionFor(kRowFind, s);
+        if (row == 1) return ActionFor(kRowHost, s);
+        if (row == 2) return ActionFor(kRowJoin, s);
+        return RowAction::kNone;
+    case MinusPage::kMultiplayer:
+        if (row == 0) return ActionFor(kRowPlayers, s);
+        if (row == 1) return ActionFor(kRowSettings, s);
+        if (row == 2) return RowAction::kViewLocal;
+        if (row == 3 && s.hosting) return ActionFor(kRowHost, s);
+        if (row == 3 && (s.in_one || s.by_launcher)) return ActionFor(kRowJoin, s);
+        return RowAction::kNone;
+    case MinusPage::kMods: return RowAction::kNone;
+    }
+    return RowAction::kNone;
+}
+
 std::vector<std::string> RowTexts(const SessionView& v) {
     std::vector<std::string> rows(kRows);
     // (0.11.9: five fixed entries; a word of what co-op does now only where it changes what the entry opens)
@@ -1170,6 +1213,7 @@ const char* ActionWords(RowAction a) {
     case RowAction::kRejoin: return "join the last game again";
     case RowAction::kViewSession: return "the Session view";
     case RowAction::kViewHost: return "the Host a game view";
+    case RowAction::kViewLocal: return "Settings and look on Local co-op";
     case RowAction::kCopyLan: return "the same-network join line to the clipboard";
     case RowAction::kCopyVpn: return "the VPN join line to the clipboard";
     case RowAction::kResync: return "the host's save again (Resync from host)";

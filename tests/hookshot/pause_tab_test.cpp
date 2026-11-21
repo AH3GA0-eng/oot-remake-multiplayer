@@ -2431,3 +2431,40 @@ TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R a
     d = p.OnScreen(Strip(0x9000, 8, kSystemPage), now + 120);
     CHECK_FALSE(d.minus_shown);
 }
+
+TEST_CASE("pause tab (0.11.9): the - menu's Lobby and Multiplayer pages: every row opens something, none empty-handed") {
+    SessionView idle;
+    CHECK(RowTexts(MinusPage::kLobby, idle) == std::vector<std::string>{"Find a game", "Host a game", "Join a game", "", ""});
+    CHECK(RowTexts(MinusPage::kMultiplayer, idle) ==
+          std::vector<std::string>{"Players", "Co-op settings", "Local co-op", "", ""});   // (not in a game: no row 3)
+    Session s;
+    CHECK(ActionFor(MinusPage::kLobby, 0, s) == RowAction::kViewLan);
+    CHECK(ActionFor(MinusPage::kLobby, 1, s) == RowAction::kViewHost);
+    CHECK(ActionFor(MinusPage::kLobby, 2, s) == RowAction::kViewJoin);
+    CHECK(ActionFor(MinusPage::kLobby, 3, s) == RowAction::kNone);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 0, s) == RowAction::kViewPlayers);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 1, s) == RowAction::kViewMenu);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 2, s) == RowAction::kViewLocal);
+    CHECK(ActionFor(MinusPage::kMultiplayer, 3, s) == RowAction::kNone);
+    // Hosting: the Multiplayer page has your game (Let in, Stop there); a guest: your session (Leave there).
+    SessionView host;
+    host.s.hosting = host.s.in_one = true;
+    host.asking = {"Saria"};
+    CHECK(RowTexts(MinusPage::kMultiplayer, host)[3] == "Your game: Saria asks");
+    CHECK(ActionFor(MinusPage::kMultiplayer, 3, host.s) == RowAction::kViewHost);
+    SessionView guest;
+    guest.s.in_one = true;
+    CHECK(RowTexts(MinusPage::kMultiplayer, guest)[3] == "Your session");
+    CHECK(ActionFor(MinusPage::kMultiplayer, 3, guest.s) == RowAction::kViewJoin);
+    // Every row with words opens something; every row without opens nothing.
+    for (const SessionView& v : {idle, host, guest}) {
+        for (MinusPage p : {MinusPage::kLobby, MinusPage::kMultiplayer}) {
+            const auto rows = RowTexts(p, v);
+            for (int r = 0; r < kRows; ++r) {
+                CHECK(rows[static_cast<std::size_t>(r)].empty() == (ActionFor(p, r, v.s) == RowAction::kNone));
+            }
+        }
+    }
+    CHECK(std::string(ActionWords(RowAction::kViewLocal)).size() > 3);
+    CHECK(RowTexts(MinusPage::kMods, idle) == std::vector<std::string>(kRows));
+}

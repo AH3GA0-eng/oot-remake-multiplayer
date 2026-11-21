@@ -64,7 +64,7 @@ inline constexpr std::uint64_t kManagerAsked = 0x538;  // s32: the page asked fo
 inline constexpr int kSystemPage = 5;                  // the System page's category
 inline constexpr int kPlusMode = 1;
 inline constexpr int kMapCategory = 2;   // the - menu's Map page's category (its last tab: Key Items, Threads, Map)
-// The - menu's tabs of ours (0.11.9, the owner: Multiplayer, Local co-op and Mods are tabs right of Map), in order.
+// The - menu's tabs of ours (0.11.9, the owner: Multiplayer, Lobby and Mods are tabs right of Map), in order.
 inline constexpr int kMinusTabs = 3;
 // (the owner, 0.11.9: Character Select's Characters, then Multiplayer, Lobby (the online Find / Host / Join) and Mods)
 inline constexpr const char* kMinusTabNames[kMinusTabs] = {"Multiplayer", "Lobby", "Mods"};
@@ -437,6 +437,7 @@ enum class RowAction {
     kViewMenu,       // Settings and look (View::kMenu): co-op's own menu's Customize, Settings, Commands, Local co-op
     kMenuTab,        // that view's row: its page on the list, and the list has the pad
     kViewHost,       // the Host a game view (View::kHost): start hosting, or the game hosted: its code, Let in, Stop
+    kViewLocal,      // Local co-op (0.11.9, the Multiplayer tab's row): Settings and look on its Local co-op page
 };
 inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
@@ -667,6 +668,17 @@ struct SessionView {
 // 2026-11-19: "Leave (not in a session)" fills it, 31 letters ran past both edges).
 inline constexpr std::size_t kRowChars = 24;
 std::vector<std::string> RowTexts(const SessionView& v);
+
+// The - menu's tabs' own pages (0.11.9; the owner: Lobby = the online Find / Host / Join, Local co-op folded into
+// Multiplayer). Each row always opens something; a row with nothing to open is not shown (""). Which screen draws them
+// is the R1 probe's answer (the module's part); these are their rows.
+// - Multiplayer: 0 Players, 1 Co-op settings, 2 Local co-op, 3 your game or session (its details, Stop or Leave there),
+//   shown only in one.
+// - Lobby: 0 Find a game, 1 Host a game (or Your game), 2 Join a game (or Your session, Copy answer code).
+// - Mods: the Mods tab's own page (coop_mods_tab.h), not rows of these.
+enum class MinusPage { kMultiplayer = 0, kLobby = 1, kMods = 2 };
+std::vector<std::string> RowTexts(MinusPage page, const SessionView& v);
+RowAction ActionFor(MinusPage page, int row, const Session& s);
 // A view's rows (kMain: RowTexts). A row with nothing on it is "": the module does not show it (but while the game's
 // cursor is on it).
 std::vector<std::string> RowTexts(View view, const SessionView& v);
