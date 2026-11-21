@@ -12,8 +12,13 @@
 #     "map refresh" from the put-backs (the same value is not refreshed again);
 #   - after-room: IsGetMap 1 again (owed back once after the room load), one map refresh;
 #   - room2-drop: put back again (the count starts again in the new room).
-# Shots: map-on lit minimap, drop-2 lit, drop-5 dark and steady (no flicker between drop-3 and drop-5),
-# after-room lit.
+# Shots (every mark shoots both games; owner rule: no PASS from log lines alone), in -A and -B of each:
+#   - map-on: both minimaps show the Deku Tree map (lit);
+#   - drop-2: A lit (put back), B lit;
+#   - drop-5 and drop-5b (60 frames apart): A's minimap dark in BOTH (left to the game, steady: no flicker
+#     back to lit between them); B lit in both (a drop is never sent);
+#   - after-room: A lit again (owed back after the room load), B lit;
+#   - room2-drop: A lit (put back in the new room), B lit.
 #! noload
 #! start coop: test warp done
 #! timeout 600
@@ -47,6 +52,8 @@ mark drop-4
 setflag DungeonInfo.InsideTheDekuTree.IsGetMap 0
 wait 120
 mark drop-5
+wait 60
+mark drop-5b
 warp InsideTheDekuTree Entrance
 wait 900
 mark after-room

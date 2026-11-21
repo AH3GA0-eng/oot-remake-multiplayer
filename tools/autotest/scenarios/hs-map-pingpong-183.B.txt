@@ -13,7 +13,7 @@ press A
 wait 2400
 wait 120
 mark b-map-on
-wait 270
+wait 330
 mark b-drops
 warp InsideTheDekuTree Entrance
 wait 900
