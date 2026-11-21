@@ -105,6 +105,24 @@ and a shot or a grab is real only in the owner's game (a copy's own shots are re
   others go for the tail: the most Four-Swords fight in the game as it is.
 - **Stage 2 (sword lost):** same; turns every swing.
 
+## Findings of the every-stage runs (2026-11-21, two games, the boss rush stages)
+
+- **Synced and dying once for both, with turns at attack ends:** Phantom Ganon (stage 1; stage 2 needs real arrow hits
+  in the paintings, a test hit only takes life), Volvagia, Morpha, Bongo Bongo (hands and body change owner
+  together), Twinrova (both stages, once her merge was shared), Ganon (both halves).
+- **Fixed:** Twinrova's merge (`SageOfSpirit_BossChange`) played in one game only, so the other had no Twinrova;
+  every boss's single shots are split shots now; every enemy takes turns and leaves a dead or paused owner at once.
+- **The boss rush is not harder by itself:** the bosses are the same actors with the same placement parameters as in
+  their dungeons (Phantom Ganon's differ only in `DefaultDungeonRoomIndex`), and no parameter table names the rush;
+  only the rush rooms' own logic graphs do. Co-op's scaling applies the same to both.
+- **King Dodongo in his rush stage stays in `Wait`** with one player alone too (a single-game run): not co-op. His
+  stage's logic (`DodongoStage_497d`) makes him appear through `DreamWorld_BossAppear` from a player's area trigger.
+- **Volvagia at 2 players is very hard standing still:** both test Links reached 0 life several times in her fire
+  (her breath and floor fire are each game's own, so every player is attacked). Worth a look in the difficulty
+  review.
+- **Not placed from the test saves:** Barinade (a save at Jabu-Jabu's boss is needed), Ganondorf (his stage did
+  not place him).
+
 ## Order of work
 
 1. **Turns between attacks** (Dauro's `boss-turns-0119`, merged in our branch): prove in every boss's every stage
