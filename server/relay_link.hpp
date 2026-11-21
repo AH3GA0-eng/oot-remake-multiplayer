@@ -95,7 +95,7 @@ struct RoomList {
 // running, wrong address, a relay from before the list, or this address asked
 // more than 30 pages in the last minute). `stop` returning true ends the wait
 // early. Blocks for up to about 3 s a page: call it off the game's threads.
-// `ask_proofs`: also ask the listed rooms' proofs (kListProofs) after the pages, once, waiting up to 700 ms;
+// `ask_proofs`: also ask the listed rooms' proofs (kListProofs) after the pages, two tries 500 ms apart;
 // proofs_answered says whether the relay answered (a relay before 0.11.8 never does: the caller need not ask it again).
 std::optional<RoomList> list_rooms_on_relay(const ENetAddress& relay, const std::function<bool()>& stop = {},
                                             bool ask_proofs = false);

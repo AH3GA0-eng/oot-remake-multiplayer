@@ -182,9 +182,10 @@ std::optional<RoomList> list_rooms_on_relay(const ENetAddress& relay, const std:
       if (m->rooms.empty()) break;
       result->rooms.insert(result->rooms.end(), m->rooms.begin(), m->rooms.end());
     }
-    // The proofs: once, a short wait (a relay before 0.11.8 never answers; the list is shown without them).
+    // The proofs: two tries 500 ms apart (one lost datagram does not cost the mark; a relay before 0.11.8 never
+    // answers, and the list is shown without them).
     if (ask_proofs && result && !result->rooms.empty()) {
-      if (const auto p = ask_page(s, relay, 0, stop, Kind::kListProofs, 1, 700)) {
+      if (const auto p = ask_page(s, relay, 0, stop, Kind::kListProofs, 2, 500)) {
         result->proofs = p->proofs;
         result->proofs_answered = true;
       }
