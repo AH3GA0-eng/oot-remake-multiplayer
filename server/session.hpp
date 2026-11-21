@@ -541,6 +541,14 @@ class Session {
   std::size_t player_count() const;
   // The host's player number; none while the session is empty.
   std::optional<std::uint8_t> host() const;
+  // The bans by player key now (the kept ones and this session's), for the
+  // host's ban file; sorted.
+  std::vector<std::string> key_bans() const;
+  // The server console's moderation (coop_server --dedicated, docs/official-game.md): "/players" (number, name, a
+  // short key id, never an address), "/kick N", "/ban N", "/unban KEYID" (its first 8 or more hex digits),
+  // "/mute N voice|chat", "/unmute N voice|chat". Returns what to print. Acts as the host would, on anyone (the
+  // session's host player too); a ban by key is kept as the host's (key_bans()).
+  std::string admin(std::string_view line, std::uint64_t now_us);
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
   // Down but not out now (config.dbno, then the host's DBNO_MODE).
@@ -827,14 +835,6 @@ class Session {
   std::string lobby_id(const Connection& c) const;
   // A ban of a player known by name (no key, or a key another player had)
   // holds for that name whatever key comes with it.
-  // The bans by player key now (the kept ones and this session's), for the
-  // host's ban file; sorted.
-  std::vector<std::string> key_bans() const;
-  // The server console's moderation (coop_server --dedicated, docs/official-game.md): "/players" (number, name, a
-  // short key id, never an address), "/kick N", "/ban N", "/unban KEYID" (its first 8 or more hex digits),
-  // "/mute N voice|chat", "/unmute N voice|chat". Returns what to print. Acts as the host would, on anyone (the
-  // session's host player too); a ban by key is kept as the host's (key_bans()).
-  std::string admin(std::string_view line, std::uint64_t now_us);
   bool lobby_banned(const std::string& id, const std::string& nickname,
                     std::optional<std::uint32_t> address) const;
   void on_pvp_hit(ConnectionId id, Connection& c, protocol::Message& message);
