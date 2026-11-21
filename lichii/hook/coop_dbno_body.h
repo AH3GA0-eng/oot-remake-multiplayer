@@ -222,6 +222,7 @@ private:
     bool was_lying_ = false;
     bool stand_due_ = false;     // up again after a crawl: ask Wait once
     int asks_ = 0;
+    int refusals_noted_ = 0;  // crawl refusals logged since our Link went down (the first few only)
     std::uint64_t next_ask_ms_ = 0;
     Hold shield_;
     Hold unseen_;

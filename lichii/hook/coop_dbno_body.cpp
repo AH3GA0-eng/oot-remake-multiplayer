@@ -273,8 +273,14 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
                 if (taken) {
                     asks_ = 0;  // (a later fall or water may need a fresh round)
                 }
-                Note(taken ? "our downed Link: Crawl (234) asked and taken"
-                           : "our downed Link: Crawl (234) refused (" + std::to_string(result) + ")");
+                // A refusal repeats while the game keeps our Link busy (60 lines in a boss fight's
+                // log): the first three are noted, the rest only counted (counts_.refused).
+                if (taken) {
+                    Note("our downed Link: Crawl (234) asked and taken");
+                } else if (++refusals_noted_ <= 3) {
+                    Note("our downed Link: Crawl (234) refused (" + std::to_string(result) + ")" +
+                         (refusals_noted_ == 3 ? "; more refusals while down are not noted" : ""));
+                }
             } else {
                 Note(taken ? "our Link up: Wait (40) asked and taken" : "our Link up: Wait (40) refused");
             }
@@ -321,6 +327,7 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
     if (want_.lying != was_lying_) {
         was_lying_ = want_.lying;
         asks_ = 0;
+        refusals_noted_ = 0;
         next_ask_ms_ = 0;
         stand_due_ = !want_.lying && crawling_;
         crawling_ = false;
