@@ -424,6 +424,7 @@ function coopKeepKeys(text, keep) {
 }
 
 // What this handler wrote before (its first line says so), without that first line; "" for any other text.
+// (coop.ini's first line: the module knows a Nucleus game by its start, CoopLook::NucleusWrote; keep the start.)
 var COOP_WRITTEN = "# Written by the Nucleus Co-op handler (tools/nucleus/OoTCoop.js) at each start.";
 function coopOwnWritten(text) {
     var t = String(text);

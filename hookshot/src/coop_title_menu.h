@@ -436,6 +436,21 @@ struct TitleArrangement {
 };
 TitleArrangement ArrangementFor(bool any_save);
 
+// The layout the title's own requests are carried out with (row 193 / report 124): the screen's update (main+0x2d1380)
+// hands each queued request the object at the screen's +0xf0 (main+0x2d1594: ldr x1, [screen, #0xf0]), and the
+// requests use that object's +0x28 as the layout (stop an animation main+0xbad090, a message main+0x377a160: ldr x0,
+// [x1, #0x28]). The screen's +0xb8..+0xe8 is the request queue itself (+0xd8 a count, +0xe0 an array of slots,
+// +0xe8 the list's head), not an object with a layout: +0xe0 read as one gave a heap pointer (in player logs exactly
+// the layout + 0xb8), so the old check always failed and the open title never re-arranged. 0 when not known.
+inline constexpr std::uint64_t kScreenRequestsOwner = 0xf0;   // the object the screen's requests get
+inline constexpr std::uint64_t kRequestsOwnerLayout = 0x28;   // that object's layout
+template <class Read64>
+std::uint64_t RequestsLayout(Read64&& read64, std::uint64_t screen) {
+    if (screen == 0) return 0;
+    const std::uint64_t owner = read64(screen + kScreenRequestsOwner);
+    return owner != 0 ? read64(owner + kRequestsOwnerLayout) : 0;
+}
+
 // The title's own menu (a pack whose Title_00 has the hidden marker pane kMenuMarker, tools/puppet_pack/title_menu.py):
 // three rows on the game's own buttons, Start, Multiplayer and Options; Multiplayer turns them into Host, Join, Co-op
 // Settings and Back, the game's hidden fourth slot shown (BtnNum's frame 4). With a save-screen mod's file select,

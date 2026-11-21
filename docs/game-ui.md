@@ -305,7 +305,9 @@ records, and how new parts go after the string pool so nothing moves).
   button (`f_83793090`; the button's state `+0x38` is 4 or 5). (notes; the slots checked)
 - A request: `+0x3c` its kind (2: stop an animation), `+0x28` an animation name or a pane path, `+0x30` a message ref,
   `+0x38` a frame (float). (notes) `f_81006110` takes `screen+0xb8`, the requests' owner; the list's atomic head is at
-  `screen+0xe8`. (checked)
+  `screen+0xe8`. (checked) The update `f_802f1380` (main+0x2d1380) calls each request's slot `+0x20` with
+  x1 = `*(screen+0xf0)`, whose `+0x28` the requests use as the layout; `screen+0xd8`/`+0xe0` are the queue's count and
+  slot array, not a layout (tracker row 193). (checked)
 - `f_83791db0(button, 0)` decides a button without input. (notes) The game calls it from four places, among them the
   step (slot 96) of the save screen (`f_834251f0`, at `0x83425280`) and of the system window (`f_834258b0`, at
   `0x83425930`). (checked)
