@@ -1219,6 +1219,13 @@ function Install-KitOotrr([string]$Kit, [string]$ExeDir, [string]$Downloads = ''
 # 0034/0035: the folder's .ips changes the game's stamp (Get-KitExefsStampLine), so the start's next check asks for
 # that build ('mods'), and the puppet pack is made again with the characters (Get-PuppetPackHint).
 
+# The first line of a small file, trimmed ('' when it cannot be read). File.ReadAllLines closes the file at once:
+# Get-Content -TotalCount can leave it open for a while, and Windows then refuses to move its folder (CI, f0509dfc).
+function Read-KitFirstLine([string]$Path) {
+    try { $l = @([System.IO.File]::ReadAllLines($Path)); if ($l.Count) { return "$($l[0])".Trim() } } catch { }
+    return ''
+}
+
 # The pin's keys, or $null when the kit has no pin (a kit without Character Select) or it is incomplete.
 function Get-KitCharacterSelectPin([string]$Kit) {
     $pin = Join-Path $Kit 'hookshot\CHARACTER-SELECT.txt'
@@ -1254,7 +1261,7 @@ function Get-KitCharacterSelectChoice([string]$Kit) {
     }
     $kept = Join-Path $Kit 'hookshot\character-select.txt'
     if (Test-Path -LiteralPath $kept) {
-        $v = "$(Get-Content -LiteralPath $kept -TotalCount 1)".Trim().ToLowerInvariant()
+        $v = (Read-KitFirstLine $kept).ToLowerInvariant()
         if ($v -eq 'yes' -or $v -eq 'no') { return $v }
     }
     return 'ask'
@@ -1308,7 +1315,7 @@ function Install-KitCharacterSelect([string]$Kit, [string]$ModsDir, [string]$Dow
         $r.Lines += "Character Select: your own copy in $dir is used as it is."
         return $r
     }
-    $have = if (Test-Path -LiteralPath $stamp) { "$(Get-Content -LiteralPath $stamp -TotalCount 1)".Trim() } else { '' }
+    $have = if (Test-Path -LiteralPath $stamp) { (Read-KitFirstLine $stamp) } else { '' }
     if ($have -eq $want -and (Test-Path -LiteralPath (Join-Path $dir 'romfs'))) {
         $r.Ok = $true
         $r.Lines += "Character Select $($op.release) -> $dir (there already)"
@@ -1384,7 +1391,8 @@ function Remove-KitCharacterSelect([string]$Kit, [string]$ModsDir) {
     if (-not $op) { return $false }
     $dir = Join-Path $ModsDir $op.folder
     if (-not (Test-Path -LiteralPath (Join-Path $dir 'coop-charsel.txt'))) { return $false }
-    try { Save-KitCharacterSelectPrevious $ModsDir $op.folder; return $true } catch { return $false }
+    try { Save-KitCharacterSelectPrevious $ModsDir $op.folder; return $true }
+    catch { Write-Host "Character Select could not be taken out ($($_.Exception.Message.Trim())): close the game and start again." -ForegroundColor Yellow; return $false }
 }
 
 # Before the kit changes mods\<folder>: what the game was last built with is kept as mods\_<folder>.prev (the folder)

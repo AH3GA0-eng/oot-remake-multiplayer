@@ -936,7 +936,7 @@ try {
         Check ($r.Ok -and $r.Changed -and (Test-Path -LiteralPath (Join-Path $csDir 'romfs\Model\Player_Child_C000.Player_Child.bfres.zs')) -and
                (Test-Path -LiteralPath (Join-Path $csDir 'exefs\E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips')) -and
                [System.IO.File]::ReadAllText((Join-Path $csDir 'characters.json')) -eq $csJson -and
-               (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1).Trim() -eq $want -and
+               (Read-KitFirstLine (Join-Path $csDir 'coop-charsel.txt')) -eq $want -and
                (Get-Content -LiteralPath (Join-Path $csDir 'CREDITS-coop.txt') -Raw) -match 'snaildev99' -and
                (Get-Content -LiteralPath (Join-Path $csDir 'CREDITS-coop.txt') -Raw) -match 'belong to Nintendo' -and
                -not (Test-Path -LiteralPath (Join-Path $csDir 'INSTALL.txt')) -and -not (Test-Path -LiteralPath (Join-Path $cDl 'CS-v1.zip')) -and
@@ -960,12 +960,12 @@ try {
         Write-File (Join-Path $cm 'coop-mods.list') "coop-mods 1`noff OoT Character Select`n"
         $want = & $New_CsPin 'v2' $csJson
         $r = Install-KitCharacterSelect $ck $cm
-        Check ($r.Ok -and $r.Changed -and (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1).Trim() -eq $want -and
+        Check ($r.Ok -and $r.Changed -and (Read-KitFirstLine (Join-Path $csDir 'coop-charsel.txt')) -eq $want -and
                [System.IO.File]::ReadAllText((Join-Path $cm 'coop-mods.list')) -eq "coop-mods 1`noff OoT Character Select`n" -and
                (Get-Content -LiteralPath (Join-Path $csDir 'romfs\Model\Player_Child_C000.Player_Child.bfres.zs') -Raw) -match 'model v2' -and
                -not (Test-Path -LiteralPath (Join-Path $cm '_OoT Character Select.new'))) "Character Select: a new pin replaces it and keeps the player's Off [$($r.Lines -join ' | ')]"
-        Check ((Get-Content -LiteralPath (Join-Path $csPrev 'coop-charsel.txt') -TotalCount 1) -match '^v1 ') 'Character Select undo: the copy the game was built with (v1) is kept'
-        Check ((Undo-KitCharacterSelect $ck $cm) -and (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1) -match '^v1 ' -and
+        Check ((Read-KitFirstLine (Join-Path $csPrev 'coop-charsel.txt')) -match '^v1 ') 'Character Select undo: the copy the game was built with (v1) is kept'
+        Check ((Undo-KitCharacterSelect $ck $cm) -and (Read-KitFirstLine (Join-Path $csDir 'coop-charsel.txt')) -match '^v1 ' -and
                -not (Test-Path -LiteralPath $csPrev)) 'Character Select undo: a failed build puts v1 back'
         $want = & $New_CsPin 'v2' $csJson
         $r = Install-KitCharacterSelect $ck $cm
@@ -975,7 +975,7 @@ try {
         Write-File (Join-Path $ck 'hookshot\CHARACTER-SELECT.txt') ((Get-Content -LiteralPath (Join-Path $ck 'hookshot\CHARACTER-SELECT.txt') -Raw) -replace 'release=v2', 'release=v3' -replace '(?m)^url=.*$', 'url=https://127.0.0.1:9/cs')
         $r = Install-KitCharacterSelect $ck $cm
         Check (-not $r.Ok -and $r.Why -match "Snail's release failed" -and ($r.Lines -join ' ') -match 'work without it' -and
-               (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1).Trim() -eq $want -and
+               (Read-KitFirstLine (Join-Path $csDir 'coop-charsel.txt')) -eq $want -and
                -not (Test-Path -LiteralPath (Join-Path $cm '_OoT Character Select.new'))) "Character Select: a failed download keeps the old copy, says so [$($r.Lines -join ' | ')]"
         # A characters.json that is not the pinned one (changed on his page) is never used: the zip is right, the list not.
         $want3 = & $New_CsPin 'v3' $csJson
@@ -983,7 +983,7 @@ try {
         Write-File (Join-Path $ck 'hookshot\CHARACTER-SELECT.txt') ((Get-Content -LiteralPath (Join-Path $ck 'hookshot\CHARACTER-SELECT.txt') -Raw) -replace '(?m)^overlay_url=.*$', 'overlay_url=https://127.0.0.1:9/characters.json')
         $r = Install-KitCharacterSelect $ck $cm
         Check (-not $r.Ok -and $r.Why -match 'characters\.json failed' -and
-               (Get-Content -LiteralPath (Join-Path $csDir 'coop-charsel.txt') -TotalCount 1).Trim() -eq $want) "Character Select: a characters.json with another SHA-256 is refused, the old copy kept [$($r.Lines -join ' | ')]"
+               (Read-KitFirstLine (Join-Path $csDir 'coop-charsel.txt')) -eq $want) "Character Select: a characters.json with another SHA-256 is refused, the old copy kept [$($r.Lines -join ' | ')]"
         # Offline with no zip here: no try, said, the game starts as it is.
         Remove-Item -LiteralPath (Join-Path $cDl 'CS-v3.zip') -Force
         $env:OOT_COOP_OFFLINE = '1'
