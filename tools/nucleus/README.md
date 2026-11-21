@@ -33,12 +33,13 @@ With **Who can join: Join a game on another PC** (`Context.Options["Online"]`), 
 
 When the session ends, Nucleus closes every `coop_server.exe` on this PC (`Game.KillProcessesOnClose`), except in the join mode above.
 
-### This PC: Host on this PC, or Join a game on this network
+### This PC: Host on this PC, Join a game on this network, or Join a game on another PC
 
 The handler's one option on Nucleus's setup screen (`Context.Options["ThisPC"]`):
 
 - **Host on this PC** (the default): all of the above. Any other value counts as this one: no choice yet, an older Nucleus, or the `Online` key of an older handler.
 - **Join a game on this network**, when another PC on your network hosts: no server is started, and `session.txt` is removed. Each game's `coop.ini` has `join_lan = first` and its `name`, with no `server`, `port` or `password`. With `join_lan_host = <name>` in the kit's `coop-options.ini` (or the game's, as above), it is `join_lan = <name>`. At its start, the game listens for games hosted on this network and joins the first one it can join (or the one whose host has that name), with no password: a host lets its own network in. After 60 seconds with none, it says so, and the player can pick one under **Browse games**. Saves, controllers, keys, logs and the 15 seconds between starts stay as above. Ending the session still closes every `coop_server.exe` on this PC.
+- **Join a game on another PC**, when the host is elsewhere (not found on this network): no server is started. Player 1's start reads the host's invite code, or its `address:port password` line from Same network / VPN, from the first line of `nucleus-players\join.txt` beside the game, else from the clipboard, and writes `session.txt` for the others. Every game's `coop.ini` has the host's `server`, `port` and `password`: each game connects directly to the host's address (router forward, VPN or same network). A missing or bad code starts nothing: the player is told why, `session.txt` is removed, and each game's `coop.ini` is left with no host line, so a game that starts anyway plays solo.
 
 Nucleus keeps the choice in its game profile with the rest of the setup (`game profiles\<game>\Profile[n].json`, key `Options`), so a saved profile starts the same way next time.
 

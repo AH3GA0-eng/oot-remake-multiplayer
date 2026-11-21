@@ -131,6 +131,10 @@ The game windows start in front of the server window. To see the invite code aga
 
 With **This PC: Join a game on this network**, nobody on this PC starts a server. Each game joins the first game hosted on your network that it can join, with no password: a host lets its own network in. To join one host only, put `join_lan_host = <host's name>` in the kit's `coop-options.ini`. With no host found after 60 seconds, the game says so: pick one in the pause menu's Multiplayer page, **Browse games**. Saves, controllers and the 15 seconds between starts are as above. Ending the session still closes every `coop_server.exe` on this PC.
 
+### Join a game on another PC
+
+With **This PC: Join a game on another PC**, nobody on this PC starts a server and every game joins one host elsewhere. Copy the host's invite code (or its Same network / VPN line, `address:port password`), or put it as the first line of `nucleus-players\join.txt` beside the game, then press Play. Each game connects directly to the host's address, so the host needs a router forward, a VPN or the same network. A missing or wrong code starts nothing and says why.
+
 ## Something does not work
 
 See the troubleshooting list in [play-online.md](play-online.md#troubleshooting); it applies here too.
