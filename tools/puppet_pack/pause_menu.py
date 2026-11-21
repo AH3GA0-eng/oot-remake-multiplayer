@@ -116,6 +116,8 @@ def add_rows(d):
 
 SETTINGS_BUTTON = "Pa_Button_05"    # Longshot Settings
 MULTIPLAYER_BUTTON = "Pa_Button_06" # Multiplayer
+CUSTOMIZE_BUTTON = "Pa_Button_07"   # Customize Link (Settings and look's Customize page, straight from System: a tester
+                                    # found it too deep under Multiplayer, 2026-11-20)
 BUTTON_SOURCE = "Pa_Button_03"   # (the one of System's buttons without overrides or properties: clone_parts copies it)
 BUTTON_AFTER = "Pa_Button_04"    # (Title Screen: ours row steps below it)
 
@@ -134,7 +136,7 @@ def add_system_buttons(d):
     for name in (BUTTON_SOURCE, BUTTON_AFTER):
         if name not in names:
             raise PauseMenuError("the layout has no %s" % name)
-    for name in (SETTINGS_BUTTON, MULTIPLAYER_BUTTON):
+    for name in (SETTINGS_BUTTON, MULTIPLAYER_BUTTON, CUSTOMIZE_BUTTON):
         if name in names:
             raise PauseMenuError("the layout has %s already" % name)
     sx, sy = _xy(d, BUTTON_SOURCE)
@@ -144,6 +146,8 @@ def add_system_buttons(d):
         raise PauseMenuError("%s is not below %s" % (BUTTON_AFTER, BUTTON_SOURCE))
     return ui_pack.clone_parts(d, [ui_pack.Copy(BUTTON_SOURCE, SETTINGS_BUTTON, (ax - sx, ay + step - sy), hidden=True),
                                    ui_pack.Copy(BUTTON_SOURCE, MULTIPLAYER_BUTTON, (ax - sx, ay + 2 * step - sy),
+                                                hidden=True),
+                                   ui_pack.Copy(BUTTON_SOURCE, CUSTOMIZE_BUTTON, (ax - sx, ay + 3 * step - sy),
                                                 hidden=True)],
                                new_id=_new_id)
 

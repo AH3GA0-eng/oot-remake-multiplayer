@@ -565,6 +565,16 @@ TEST_CASE("boss scenes: one heart container for all, never two") {
         l.max_life = max;
         return l;
     };
+    SUBCASE("the players who did not take it get their hearts filled, once, the one who took it does not") {
+        const proto::BossHeart given{1, kGohma, true, 16};
+        a.Receive(given);
+        c.Receive(given);
+        CHECK_FALSE(a.Tick(with(1, 16), {}, 2'000'000).refill);
+        CHECK(c.Tick(with(3, 12), {}, 2'000'000).refill);
+        CHECK_FALSE(c.Tick(with(3, 16), {}, 2'100'000).refill);   // (once)
+        c.Receive(given);                                         // (the answer again: no second refill)
+        CHECK_FALSE(c.Tick(with(3, 16), {}, 2'200'000).refill);
+    }
     SUBCASE("a maximum another game's pickup raised (the shared MaxLife flag) sends no claim") {
         // Four players, 2026-11-20: every game claimed when the flag raised its maximum, and the first claim to reach
         // the server named the wrong player.

@@ -596,8 +596,8 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
                                                "Password on this network",
-                                               "Proximity voice chat", "Chat key", "Show players on map", "Names on map", "New Game+",
-                                               "Saves"});   // (no patch 0015: no input rows; Navi's two last)
+                                               "Proximity voice chat", "Chat key", "Show players on map", "Names on map", "Player list", "New Game+",
+                                               "Saves", "Original game"});   // (no patch 0015: no input rows)
     View v = m.view();
     CHECK(v.rows[0].value == "Saria");
     CHECK(v.rows[1].value == "By player number");
@@ -680,7 +680,7 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 15);   // (the port, relay, room, network password and chat key rows before them, New Game+ and Saves after)
+    REQUIRE(v.rows.size() == 17);   // (the port, relay, room, network password and chat key rows before them, New Game+, Saves and Original game after)
     CHECK(v.rows[11].kind == RowKind::kToggle);
     CHECK(v.rows[11].on);
     CHECK(v.rows[12].on);
@@ -848,8 +848,8 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
                                                "Password on this network",
                                                "Proximity voice chat", "Chat key", "Controller",
-                                               "Keyboard and mouse", "Show players on map", "Names on map",
-                                               "New Game+", "Saves"});
+                                               "Keyboard and mouse", "Show players on map", "Names on map", "Player list",
+                                               "New Game+", "Saves", "Original game"});
     SelectRow(m, "Controller");
     View v = m.view();
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].value == "all");
@@ -874,7 +874,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 15);   // (with the port, the relay and room rows, the network password, two map rows, New Game+ and Saves)
+    CHECK(Names(m).size() == 17);   // (with the port, the relay and room rows, the network password, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 

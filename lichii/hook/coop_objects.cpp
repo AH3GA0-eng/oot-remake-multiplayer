@@ -1501,6 +1501,11 @@ std::atomic<s32>& TheMaxLife() {
 }
 
 // SetMaxLifeLowerTo; -1: no hold.
+std::atomic<bool>& TheRefillAsked() {   // (AskRefill)
+    static std::atomic<bool> asked{false};
+    return asked;
+}
+
 std::atomic<s32>& TheMaxLifeLowerTo() {
     static std::atomic<s32> quarters{-1};
     return quarters;
@@ -3932,6 +3937,16 @@ private:
                                  max, *raised);
                         CoopBoss::NoteMaxLifeFromOthers(*raised);   // (not our pickup: no heart claim)
                     }
+                    // Another player took the boss's heart container: our hearts full, as its pickup fills them.
+                    if (TheRefillAsked().load() && memory_ != nullptr &&
+                        memory_->IsValidVirtualAddressRange(value->first + 8, 4)) {
+                        const s32 full = raised ? *raised : max;
+                        if (full > 0 && TheRefillAsked().exchange(false)) {
+                            memory_->Write32(value->first + 8, static_cast<u32>(full));
+                            LOG_INFO(Core, "coop: objects: our Link's life {} -> {} (another player took the heart "
+                                           "container: as its pickup)", life, full);
+                        }
+                    }
                     // Rows 136/137: the host's older save lowered MaxLife; row 181: a second pickup of a boss's one
                     // container was put back. The component follows it (never in the frame it was raised).
                     const s32 lower = TheMaxLifeLowerTo().load();
@@ -5824,6 +5839,10 @@ std::optional<LinkHearts> OurLife() {
 
 void SetMaxLife(std::optional<std::int32_t> quarters) {
     TheMaxLife().store(quarters.value_or(-1));
+}
+
+void AskRefill() {
+    TheRefillAsked().store(true);
 }
 
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters) {

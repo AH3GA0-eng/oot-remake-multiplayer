@@ -47,6 +47,9 @@ void SetMaxLife(std::optional<std::int32_t> quarters);
 // life to that max), so the game stops writing the higher max back. Nothing: no hold (the usual case, and always
 // with co-op idle).
 void SetMaxLifeLowerTo(std::optional<std::int32_t> quarters);
+// Our Link's hearts filled to his maximum once, on his next read (another player took the boss's heart
+// container, whose pickup fills them: CoopBossScenes::Actions::refill). Any thread.
+void AskRefill();
 
 // Our own Link's hearts as the object walk last read them from his Life
 // component, in quarter hearts (4 = one heart): now and the most. Nothing
