@@ -1223,6 +1223,51 @@ class SelfModelsTest(unittest.TestCase):
         self.assertEqual(read(os.path.join(self.top, mt.MODELS_KEEP, *mt.SELF_MODELS["Child"].split("/"))), newer)
         self.assertTrue(self.model(self.top, "Child").endswith(b"new\x00"))
 
+    def assert_put_back(self):
+        for m in (self.top, self.under):
+            self.assertEqual(self.model(m, "Child"), self.child)
+            self.assertEqual(self.model(m, "Adult"), self.adult)
+            self.assertFalse(os.path.isdir(os.path.join(m, mt.MODELS_KEEP)))
+        self.assertEqual(len(self.lines), 2)   # (one line a mod)
+        self.lines = []
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)   # (the next start: nothing)
+        self.assertEqual(self.lines, [])
+
+    def test_the_pack_off_puts_every_mods_own_models_back(self):
+        # (their copies named co-op's own tunic textures, which no mod has with the pack off: never left so)
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\noff %s\n" % PACK)
+        self.lines = []
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)
+        self.assert_put_back()
+
+    def test_the_pack_gone_puts_every_mods_own_models_back(self):
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        shutil.rmtree(self.pack)
+        self.lines = []
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)
+        self.assert_put_back()
+
+    def test_your_own_tunic_textures_gone_puts_every_mods_own_models_back(self):
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        os.remove(os.path.join(self.pack, "romfs", "Tex",
+                               self.tunic.tile_name("green", self.tunic.SELF_LETTER) + ".bntx.zs"))
+        self.lines = []
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)
+        self.assert_put_back()
+
+    def test_the_pack_off_keeps_a_model_changed_since(self):
+        # (a new copy of the mod since the start that named it: its own, never the old kept one over it)
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        newer = self.child + b"new\x00"
+        self.put(os.path.join(self.top, "romfs", *mt.SELF_MODELS["Child"].split("/")), newer)
+        shutil.rmtree(self.pack)
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        self.assertEqual(self.model(self.top, "Child"), newer)
+        self.assertEqual(self.model(self.top, "Adult"), self.adult)
+        self.assertFalse(os.path.isdir(os.path.join(self.top, mt.MODELS_KEEP)))
+
     def test_nothing_without_your_own_tunic_textures_in_the_pack(self):
         os.remove(os.path.join(self.pack, "romfs", "Tex",
                                self.tunic.tile_name("green", self.tunic.SELF_LETTER) + ".bntx.zs"))
