@@ -264,6 +264,12 @@ struct SessionConfig {
   std::uint64_t boss_turn_quiet_us = 3'000'000;
   std::uint64_t boss_turn_shot_us = 10'000'000;
   float boss_turn_m = 40.0f;
+  // ...and only right at the end of the boss's own attack (boss-turns-0119): its owner's samples say an attack
+  // ran (object_state::attacking, the hook's addr::InAttackSequence: after a reaction it stays on until the
+  // boss's own next attack ends) and the latest one says it ended, within boss_turn_edge_us. An owner whose
+  // samples read no attacks (no attack_read: an older build) keeps its boss, as before the turns. A boss in a
+  // phase with no attack (Phantom Ganon in his paintings, Gohma on the ceiling) is never handed over there.
+  std::uint64_t boss_turn_edge_us = 1'000'000;
   // Row 149 (King Dodongo rolling forever): a boss (a group's root) whose
   // owner's samples keep one animation, one action verb and one life this
   // long is stuck in that move. Its owner's game re-chooses after about 25 s
@@ -785,6 +791,11 @@ class Session {
     bool stalled = false;
     // Boss turns (boss_turn_us): when its current fight began; 0: not in one.
     std::uint64_t fight_began = 0;
+    // Boss turns, the attack edge (boss_turn_edge_us): as of its owner's latest sample of this epoch.
+    bool attack_read = false;         // the owner reads its attacks (object_state::attack_read)
+    bool attacking = false;           // in its attack sequence
+    std::uint16_t attack_epoch = 0;   // the epoch those two are of
+    std::uint64_t attack_ended_at = 0;  // its newest attack's end in that epoch; 0: none
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -976,6 +987,8 @@ class Session {
   // Boss turns (boss_turn_us): the player whose turn it is now, if a boss
   // root in its fight is due for one at a calm moment.
   std::optional<ConnectionId> next_turn(Object& o, ConnectionId owner, std::uint64_t now_us);
+  // Boss turns: the owner's attack edge from a sample of `epoch` (Object::attack_*).
+  void note_attack(Object& o, std::uint16_t epoch, const protocol::ObjectState& sample, std::uint64_t now_us);
   // Not handed to `to` yet (counted): `to` gave `o` up less than
   // handover_back_us ago (any player who did, report 138), or `o` changed
   // owner that lately and its owner still stands within handover_chase_m of

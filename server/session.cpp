@@ -1674,6 +1674,7 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     const bool says_fight =
         sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
     note_hold(o, sample->state, now_us);
+    note_attack(o, sample->epoch, sample->state, now_us);
     if (life_changed || says_fight) mark_fight(o, now_us);
     // The owner's own hit: its life fell with no DAMAGE from another player
     // just before (issue 150, boss_owner_hit_hold_us).
@@ -2153,6 +2154,23 @@ bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
   return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
 }
 
+void Session::note_attack(Object& o, std::uint16_t epoch, const ObjectState& sample, std::uint64_t now_us) {
+  const std::uint8_t bits = sample.state.value_or(0);
+  const bool read = (bits & object_state::attack_read) != 0;
+  const bool attacking = read && (bits & object_state::attacking) != 0;
+  if (epoch != o.attack_epoch) {
+    // A new owner (or its epoch): what the old one said is not this game's attack; no edge across the change.
+    o.attack_epoch = epoch;
+    o.attacking = attacking;
+    o.attack_read = read;
+    o.attack_ended_at = 0;
+    return;
+  }
+  if (read && o.attack_read && o.attacking && !attacking) o.attack_ended_at = stamp(now_us);
+  o.attacking = attacking;
+  o.attack_read = read;
+}
+
 std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, std::uint64_t now_us) {
   if (config_.boss_turn_us == 0 || o.root) return std::nullopt;
   if (!in_fight(o, now_us)) {
@@ -2162,13 +2180,21 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
   if (o.fight_began == 0) o.fight_began = stamp(now_us);
   const std::uint64_t turn_began = std::max(o.fight_began, o.changed_at);
   if (now_us - turn_began < config_.boss_turn_us) return std::nullopt;
+  // Only right where its own attack ended in its owner's game (boss_turn_edge_us): never in an attack or in a
+  // reaction's tail (Phantom Ganon's SmallDamage into 'Run'), never in a phase with no attack, and never for an
+  // owner that reads no attacks. An edge older than the turn (the old owner's) does not count.
+  if (!o.attack_read || o.attacking || o.attack_ended_at == 0 || o.attack_ended_at < turn_began ||
+      now_us - o.attack_ended_at > config_.boss_turn_edge_us) {
+    return std::nullopt;
+  }
   // A calm moment: nobody hit it lately, and it is not dying or in a cutscene.
   if (owner_hit_lately(o, now_us)) return std::nullopt;
   if (o.hit_at != 0 && now_us - o.hit_at < config_.boss_turn_quiet_us) return std::nullopt;
   if (o.last_state) {
     if (o.last_state->life && o.last_state->life->life <= 0) return std::nullopt;
     if (const auto& a = o.last_state->animation;
-        a && (coop::protocol::anim::IsDeath(a->name) || coop::protocol::anim::IsEvent(a->name))) {
+        a && (coop::protocol::anim::IsDeath(a->name) || coop::protocol::anim::IsEvent(a->name) ||
+              coop::protocol::anim::IsStun(a->name))) {  // nor in its stun (its chance time: a phase's own)
       return std::nullopt;
     }
   }
