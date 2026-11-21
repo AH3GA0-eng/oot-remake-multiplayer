@@ -5,6 +5,7 @@
 #include <string>
 
 #include "coop_colors.h"
+#include "coop_i18n.h"
 #include "coop_snail_custom.h"
 
 using CoopLook::Look;
@@ -121,4 +122,30 @@ TEST_CASE("snail customize: his option past a page's parts does nothing") {
     d.Pad(kA);
     CHECK_FALSE(d.TakeChange());
     CHECK_FALSE(d.Editing());
+}
+
+TEST_CASE("snail customize: his screen's texts in the game's language, as co-op's own pages (zh: no English left)") {
+    const CoopI18n::Lang* hans = nullptr;
+    for (int i = 0; i < CoopI18n::kLangCount; ++i) {
+        if (std::string(CoopI18n::kLangs[i].code) == "zh-Hans") hans = &CoopI18n::kLangs[i];
+    }
+    REQUIRE(hans != nullptr);
+    Driver d;
+    Look start;
+    start[Part::zora_tunic] = *CoopColors::Parse("red");
+    start[Part::goron_tunic] = 0x123456u;   // (a colour of their own: shown as it is)
+    d.Open(start, 0);
+    const auto t = d.Shown(hans);
+    CHECK(t.title.find("Y: next page") == std::string::npos);
+    CHECK(t.title.find("Y：下一页") != std::string::npos);
+    CHECK(t.labels[0] == CoopI18n::Tr(hans, "Eye Colour"));
+    CHECK(t.labels[0] != "Eye Colour");
+    CHECK(t.labels[1] == CoopI18n::Tr(hans, "Kokiri Tunic"));
+    CHECK(t.values[4] == CoopI18n::Tr(hans, "red"));
+    CHECK(t.values[4] != "red");
+    CHECK(t.values[1] == CoopI18n::Tr(hans, "Game's own"));
+    CHECK(t.values[3] == d.Shown(nullptr).values[3]);   // (#123456 stays)
+    // English (no table): the same texts as before.
+    CHECK(d.Shown(nullptr).title == "Link (page 1 of 4)   Y: next page");
+    CHECK(d.Shown(nullptr).values[4] == "red");
 }
