@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <span>
 #include <utility>
 
@@ -176,7 +178,7 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     job.invite = COOP_HAS(o, HosCoopHostOptions, invite) && o->invite != 0;
     job.pvp = COOP_HAS(o, HosCoopHostOptions, pvp) && o->pvp != 0;
     job.approve_joins = COOP_HAS(o, HosCoopHostOptions, approve_joins) && o->approve_joins != 0;
-    job.same_network_open = !(COOP_HAS(o, HosCoopHostOptions, same_network_password) && o->same_network_password != 0);
+    job.same_network_open = COOP_HAS(o, HosCoopHostOptions, same_network_open) && o->same_network_open != 0;
     job.relay_via = Trim(COOP_HAS(o, HosCoopHostOptions, relay_via) ? Text(o->relay_via) : std::string());
     job.relay_key = COOP_HAS(o, HosCoopHostOptions, relay_key) ? Text(o->relay_key) : std::string();
     job.relay_room = Trim(COOP_HAS(o, HosCoopHostOptions, relay_room) ? Text(o->relay_room) : std::string());
@@ -187,6 +189,21 @@ int Menu::HostStart(const HosCoopHostOptions* o) {
     }
     if (job.name.size() > kMaxName) {
         Fail("the name is longer than 16 characters", HOS_COOP_PROBLEM_BAD_NAME);
+        return 0;
+    }
+    job.public_game = COOP_HAS(o, HosCoopHostOptions, public_game) && o->public_game != 0;
+    job.bans_file = COOP_HAS(o, HosCoopHostOptions, bans_file) ? Text(o->bans_file) : std::string();
+    if (job.public_game) {
+        // (HostServiceConfig::public_game: the relay only, the password the room's)
+        if (job.relay_via.empty() || job.relay_room.empty()) {
+            Fail("a public game needs the game list's server (Relay) and a room name", HOS_COOP_PROBLEM_RELAY_FAILED);
+            return 0;
+        }
+        job.password = coop::protocol::public_join_password(job.relay_room);
+        if (job.relay_list.empty()) job.relay_list = job.relay_room;
+        job.upnp = job.invite = job.same_network_open = false;
+    } else if (!job.password.empty() && coop::protocol::is_public_join_password(job.password)) {
+        Fail("that join password is kept for public games; choose another one", HOS_COOP_PROBLEM_BAD_PASSWORD);
         return 0;
     }
     if (job.password.empty()) {
@@ -241,6 +258,10 @@ void Menu::RunHost(HostJob job) {
         config.relay_key = job.relay_key;
         config.relay_room = job.relay_via.empty() ? std::string() : job.relay_room;
         config.relay_list = config.relay_room.empty() ? std::string() : job.relay_list;   // (the public list: opt-in)
+        config.public_game = job.public_game;
+        // The host's kept bans (player keys; HosCoopHostOptions::bans_file): in force from the start.
+        std::vector<std::string> bans = coop::server::read_ban_file(job.bans_file);
+        config.session.kept_bans = bans;
         config.counts = false;  // the game's log need not have them every 5 s
         config.log_invite = false;  // it holds the join password; the menu shows it
         config.log = [this](const std::string& text) { Say("coop: host: " + text); };
@@ -269,6 +290,13 @@ void Menu::RunHost(HostJob job) {
         while (!stop_) {
             host.set_ngplus(hooks_.ngplus_level ? hooks_.ngplus_level() : 0);   // (Navi) New Game+ (Hooks)
             host.service(kRoundMs);
+            if (!job.bans_file.empty() && host.session() != nullptr) {   // (a new ban by key: kept for next time)
+                std::vector<std::string> now = host.session()->key_bans();
+                if (now != bans) {
+                    coop::server::write_ban_file(job.bans_file, now);
+                    bans = std::move(now);
+                }
+            }
             std::deque<std::string> pasted;
             std::optional<std::string> new_password;
             {
@@ -279,6 +307,9 @@ void Menu::RunHost(HostJob job) {
             if (new_password) {   // (the host's new join password: new joins need it, players in stay in)
                 std::string why;
                 const bool ok = host.set_join_password(*new_password, why);
+                if (ok && hooks_.password_changed) {
+                    hooks_.password_changed(*new_password);   // (our own game, if it reconnects, proves the new one)
+                }
                 std::lock_guard lock(mutex_);
                 if (ok) {
                     job.password = *new_password;

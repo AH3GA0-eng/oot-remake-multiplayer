@@ -537,12 +537,19 @@ void AgreeStartTunic() {
     // autotest put green's in whatever the colour, when the pack has coop_look/green.bin. Another colour's files
     // are left from an older kit or a start without it: your Link starts in that colour and the wardrobe
     // repaints it (your own textures only: the puppets' copies are marked), but a texture of that colour that is
-    // not green's size (the child's dark tile: BC3 there, ASTC in green) is not drawn over and keeps it.
+    // not green's size (the child's dark tile: BC3 there, ASTC in green) is not drawn over and keeps it. Under
+    // Nucleus (its instances share the kit's pack, NucleusWrote; row 194) that is said as what happens, not as
+    // a fault.
     std::vector<std::string> errors;
-    const auto chosen = CoopHook::LoadSettings(
-        Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini", errors).color;
+    const fs::path ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
+    const auto chosen = CoopHook::LoadSettings(ini, errors).color;
     std::error_code no_file;
-    if (start != "green" && fs::exists(LookDir() / "green.bin", no_file)) {
+    if (start != "green" && fs::exists(LookDir() / "green.bin", no_file) &&
+        NucleusWrote(CoopFiles::ReadText(ini))) {
+        LOG_INFO(Core, "coop: look: your Link starts in the puppet pack's {} tunic and is repainted in your colour, {}, "
+                       "once the game's textures are found (a Nucleus game: its instances share the kit's pack)",
+                 start, chosen ? ColourText(chosen) : std::string("yours"));
+    } else if (start != "green" && fs::exists(LookDir() / "green.bin", no_file)) {
         LOG_WARNING(Core, "coop: look: the puppet pack's tunic files are {}, not green: started without this kit's "
                           "launcher? Your Link is repainted in {} once the game's textures are found (a child "
                           "Link's tunic body may stay {})",

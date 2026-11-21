@@ -34,6 +34,40 @@ std::string RowText(const CoopPauseMenu::Row& r) {
     return Fit(t, kTextBytes);
 }
 
+const std::string& Letters() {
+    static const std::string letters =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-_@!#$%&*+=? ";
+    return letters;
+}
+
+int MoveKey(int key, int dy) {
+    const int n = kLastKey - kFirstKey + 1;
+    const int at = (key < kFirstKey || key > kLastKey ? 0 : key - kFirstKey) + dy;
+    return kFirstKey + ((at % n) + n) % n;
+}
+
+Look TypingLook(const CoopPauseMenu::View& v, char letter, int key) {
+    Look out;
+    const bool row = v.selected >= 0 && static_cast<std::size_t>(v.selected) < v.rows.size();
+    if (row) {   // (the field's name and what is typed; a long one shows its end, where the typing goes)
+        const CoopPauseMenu::Row& r = v.rows[static_cast<std::size_t>(v.selected)];
+        out.texts[static_cast<std::size_t>(Key::kField)] = r.value.empty() ? r.name : r.name + ": " + r.value;
+    }
+    out.texts[static_cast<std::size_t>(Key::kLetter)] =
+        std::string("Letter: < ") + (letter == ' ' ? std::string("Space") : std::string(1, letter)) + " >";
+    out.texts[static_cast<std::size_t>(Key::kDelete)] = "Delete";
+    out.texts[static_cast<std::size_t>(Key::kOk)] = "OK";
+    for (std::string& t : out.texts) {
+        if (t.size() > kTextBytes) {   // (the field's end: the typing; never inside a letter of more bytes)
+            std::size_t from = t.size() - (kTextBytes - 3);
+            while (from < t.size() && (static_cast<unsigned char>(t[from]) & 0xC0) == 0x80) ++from;
+            t = "..." + t.substr(from);
+        }
+    }
+    out.focus = key < kFirstKey || key > kLastKey ? kFirstKey : key;
+    return out;
+}
+
 Look LookFor(const CoopPauseMenu::View& v, int top) {
     Look l;
     std::vector<int> shown;   // (the view's rows the buttons may show: all but headings)

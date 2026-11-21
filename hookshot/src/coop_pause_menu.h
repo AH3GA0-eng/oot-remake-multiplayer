@@ -84,6 +84,7 @@ struct Session {
     };
     State state = State::kOff;
     bool hosting = false;      // what was tried last: Host (else Join); tells a failed Host from a failed Join
+    bool public_game = false;  // hosting: the game was started as a public game (HosCoopHostOptions::public_game)
     bool by_launcher = false;  // co-op came with the game's start (Host.bat, Join.bat, coop.ini): not stopped here
     int players = 0;           // in the session, this one included (0: not known)
     std::string code;          // the invite code (hosting), or the answer code (kWaitHost)
@@ -171,6 +172,11 @@ public:
     void SetNgPlus(int level, int unlocked, int hearts);
     // (Navi) The Settings page's Saves row: solo or multiplayer saves (CoopSave::MultiplayerSaves).
     void SetSaveSet(bool multiplayer);
+    // Character Select (coop_char_colours.h ShownCharacter): this game shows a character, not Link, so the
+    // Customize page says Link's colours wait for Link (#308's live display; the character keeps its own).
+    void SetCharacter(bool picked) { character_ = picked; }
+    static constexpr const char* kCharacterNote =
+        "A Character Select character is picked: it keeps its own colours (X on its Characters page); these colours show on Link when you pick Link again.";
     // The Find a game page's list (the Join page's first row): the games on this network or the relay's public
     // rooms, as the module hears them while the page shows (find_online() says which). A game picked fills the Join
     // page: `join` its room name or its address, `port` its port (0: the default), then Join.
@@ -183,9 +189,13 @@ public:
         std::string host;          // its host's name (the search finds it too)
         int count = 0, max = 0;    // its players and the most it takes (the sort, the filter)
         bool same_version = true;
+        bool is_public = false;    // a public game (CoopRoomList::Room::is_public): joined at once, no password
         bool operator==(const Found&) const = default;
     };
     void SetFound(std::vector<Found> games, std::string state);
+    // A private game picked on a public list (Browse games, the Lobby tab): the Join page with `room` typed and its
+    // Password row chosen, saying the game needs the host's password. Nothing is tried.
+    void PrefillJoin(const std::string& room);
     bool find_online() const { return find_online_; }
     const std::string& find_search() const { return find_search_; }
     // The Customize page's picture of Link (hos_coop_menu_picture.h); empty
@@ -210,7 +220,7 @@ private:
         kStartHost, kHostPort, kCopyInvite, kPasteAnswer, kCopyAnswer, kCopyLan, kCopyVpn, kLeave,
         kRejoin, kCode, kClearCode, kJoinIp, kJoinPort, kJoinPassword, kJoinNow, kRelay, kRoom,
         kName, kLook, kPlayers, kVoice, kMic, kVoiceMode, kChatKey, kController, kKeyboard, kMapPlayers, kMapNames,
-        kSameNetwork,
+        kSameNetwork, kGameKind,
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh,
         kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal, kHudSize
@@ -236,6 +246,9 @@ private:
     bool typing_ = false;
     Act typing_act_ = Act::kNone;
     bool typing_fresh_ = false;
+    bool paste_on_open_ = false;   // Room or address was just opened with A: the clipboard is asked, used only when
+                                   // it holds an invite code or an address line (a pad has no Ctrl+V)
+    bool drop_open_paste_ = false;  // a key was typed before that clipboard came (on Linux it can come late): unused
     bool replace_typed_ = false;   // the Join field was opened with a code in it: a typed character starts a new one
     bool confirm_leave_ = false;   // Stop hosting / Leave was pressed once: the next press does it
     bool show_password_ = false;   // the Host page shows the join password (A on its row; hidden on another page)
@@ -254,6 +267,7 @@ private:
     std::optional<std::vector<std::string>> microphones_;
     int ngplus_level_ = 0, ngplus_unlocked_ = 0, ngplus_hearts_ = 0;   // (Navi) New Game+ (SetNgPlus)
     bool mp_saves_ = false;   // (Navi) the Saves row (SetSaveSet)
+    bool character_ = false;  // SetCharacter
     bool find_online_ = true;                 // the Find a game page lists the relay's rooms (else this network's)
     std::string find_search_, search_before_; // its search, as typed
     int find_filter_ = 0, find_sort_ = 0;      // its filter and order (CoopBrowse)

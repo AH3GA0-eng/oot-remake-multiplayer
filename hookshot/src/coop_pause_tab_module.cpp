@@ -4,6 +4,7 @@
 // screen's thread (its panes shown or hidden, its tabs lit, texts from the
 // pack's labels), the pad filtered, the log. Only in hookshot_coop.dll (the
 // tests drive Page and Probe themselves).
+#include "coop_i18n.h"
 #include "coop_pause_tab.h"
 #include "coop_browse.h"
 #include "coop_title.h"
@@ -27,6 +28,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
+#include "coop/protocol/join_password.hpp"
 #include "coop/protocol/messages.hpp"
 #include "coop_lan.h"
 #include "coop_lan_net.h"
@@ -100,10 +102,14 @@ std::array<std::atomic<int>, kMenuMost + 1> g_menu_line_row{};
 std::array<std::atomic<bool>, kMenuMost + 1> g_menu_line_pick{};
 // The page co-op's menu shows for this view (CoopPause::OpenNative; -1 none): FollowMenu's, on the pad's thread.
 std::atomic<int> g_menu_open{-1};
-// Co-op's menu types into its row (a name, a port, the relay): the on-screen keyboard's cursor, what it shows, and the
-// mouse on its keys. g_mutex.
-CoopKeyboard::Cursor g_menu_keys;
-CoopKeyboard::Shown g_menu_kb;
+// Co-op's menu types into its row (a name, a port, the relay): the list's rows are the typing keys then, as for the
+// page's own fields (TypingLines): the key picked, Letter's letter (its place in kMenuLetters) and the rows shown
+// (empty while it does not type). g_mutex.
+int g_menu_key = 0;
+std::size_t g_menu_letter = 0;
+std::vector<ListLine> g_menu_typing_lines;
+// (the letters Letter offers on co-op's menu's rows; the menu itself takes only those its row allows, Menu::Char)
+constexpr std::string_view kMenuLetters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.: ";
 bool g_menu_typed_last = false;
 std::uint64_t g_menu_pad_last = 0;
 std::atomic<bool> g_menu_focus_reset{false};   // (the view came: the game's cursor's row then is no choice)
@@ -497,11 +503,12 @@ SessionView ViewNow(View view) {
         const std::vector<CoopRoomList::Room> rooms = SearchedRooms(v.search);
         for (const CoopRoomList::Room& r : rooms) {
             v.online_rows.push_back(CoopRoomList::CellText(r, coop::protocol::kProtocolVersion));
+            // (the same words as the Lobby tab's Public games: CoopRoomList::DetailText)
             v.online_list.push_back(ListLine{ListName(r.host, r.room),
-                                             ListValue(r.players, r.max, r.protocol == coop::protocol::kProtocolVersion)});
+                                             CoopI18n::Tr(CoopRoomList::DetailText(r, coop::protocol::kProtocolVersion))});
         }
         const CoopRoomList::Snapshot all = CoopRoomList::Now();
-        v.online_state = all.state;
+        v.online_state = all.state.empty() ? std::string() : CoopI18n::Tr(all.state);
         v.s.online_listed = static_cast<int>(rooms.size());
         v.s.online = g_online.load();
         g_browse_listed = BrowseListed(v.s);
@@ -512,7 +519,8 @@ SessionView ViewNow(View view) {
         v.relay_set = CoopPause::RelaySet();   // (no relay: the online list's line types one)
         v.cell = g_cell.load();
         // (the relay asked again while the Online list shows: at most every CoopRoomList::kEveryMs, from its own thread)
-        CoopRoomList::Look(v.s.online && !v.s.in_one && !v.s.by_launcher, NowMs(), CoopPause::Relay());
+        CoopRoomList::Look(CoopRoomList::Viewer::kFindAGame, v.s.online && !v.s.in_one && !v.s.by_launcher, NowMs(),
+                           CoopPause::Relay());
     }
     if (view == View::kJoin) {
         v.s.rejoin = CoopPause::Rejoin(&v.rejoin_host);
@@ -540,6 +548,16 @@ SessionView ViewNow(View view) {
         v.room_ready = v.s.room_ready = g_page.Field(0).Ready();
         v.s.lan_password = !g_page.Field(1).text().empty();
         v.lan_game = g_lan_pick.row;
+    }
+    {
+        std::lock_guard lock(g_mutex);   // (the page's typing: the list's rows are its keys while a field is typed into)
+        if (const int t = g_page.Typing(); t >= 0) {
+            v.typing_lines = TypingLines(t, g_page.Field(t), g_page.TypingLetter());
+            v.typing_key = g_page.TypingKey();
+        } else if (!g_menu_typing_lines.empty()) {   // (co-op's menu types into its row: Settings and look)
+            v.typing_lines = g_menu_typing_lines;
+            v.typing_key = g_menu_key;
+        }
     }
     if (v.s.hosting) v.asking = CoopLobby::Asking();
     v.s.asking = !v.asking.empty();
@@ -586,6 +604,10 @@ std::uint64_t g_rows_keep = 0;   // (the button left shown in a moment's hiding,
 std::array<std::array<std::uint64_t, 2>, kLinePanes> g_list_box{};
 std::array<std::array<bool, 2>, kLinePanes> g_list_box_own{};   // (as the layout has them: shown again so)
 std::array<int, kLinePanes> g_list_box_vis{};
+// Each list row's own value arrows (N_Content_00): shown only on a line that changes with Left and Right (ListLine::
+// arrows: the typing keys' Letter).
+std::array<std::uint64_t, kLinePanes> g_list_arrows{};
+std::array<int, kLinePanes> g_list_arrows_vis{};
 // Settings and look: the list moved left, beside the page's rows, so the menu's Link stands on the right (a tester: the
 // model on the right, the options on the left, not so wide). In the layout's units (3840 across).
 constexpr float kMenuListShift = -400.0f;   // (-520 overlapped the rows' panel, a tester)
@@ -624,6 +646,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             if (i > 0) g_cell_pane_at[k - 1] = g_list_panes[k];
             if (i == 0) g_head_pane_at = g_list_panes[k];
             g_list_vis[k] = -1, g_list_alpha[k] = -1, g_list_box_vis[k] = -1, g_list_box[k] = {};
+            g_list_arrows[k] = 0, g_list_arrows_vis[k] = 0;
             g_list_home[k] = IsPart(pane) ? Read<float>(pane + 0x6c) : 0.0f;
             if (!IsPart(pane)) continue;
             if (i < kListRows) ++found;
@@ -632,6 +655,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             for (const char* inner : {"N_Content_00", "P_CheckMark_00"}) {
                 if (const std::uint64_t in = PaneIn(ctx, row, inner); in != 0) SetVisible(ctx, in, false);
             }
+            g_list_arrows[k] = PaneIn(ctx, row, "N_Content_00");
             g_list_box[k] = {PaneIn(ctx, row, "W_Base_01"), PaneIn(ctx, row, "W_Base_03")};
             for (std::size_t j = 0; j < 2; ++j) {
                 const std::uint64_t b = g_list_box[k][j];
@@ -652,7 +676,10 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
     }
     // (the browser's games; on the main view and the Session view the session's details, DetailLines)
     const View view = ViewShown();
-    const bool browse = view == View::kLan;
+    // (a field typed into: the list is its keys, TypingLines, whatever the view; the page's own fields and Settings
+    // and look's alike)
+    const bool keys = !v.typing_lines.empty();
+    const bool browse = !keys && view == View::kLan;
     const bool menu = view == View::kMenu;
     MenuList ml;
     if (menu) {   // (co-op's menu's page: its rows; the lines' menu rows kept for the pad and the mouse)
@@ -662,10 +689,10 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
         int was = v.menu_top;
         g_menu_top.compare_exchange_strong(was, ml.top);
         for (std::size_t k = 0; k < static_cast<std::size_t>(kLinePanes); ++k) {
-            g_menu_line_row[k] = ml.rows[k], g_menu_line_pick[k] = ml.selectable[k];
+            g_menu_line_row[k] = keys ? -1 : ml.rows[k], g_menu_line_pick[k] = !keys && ml.selectable[k];
         }
     }
-    std::vector<ListLine> lines = browse ? ListLines(v) : menu ? ml.lines : DetailLines(view, v);
+    std::vector<ListLine> lines = keys ? v.typing_lines : browse ? ListLines(v) : menu ? ml.lines : DetailLines(view, v);
     lines.resize(kLinePanes);   // (the eighth: Settings and look's only)
     // (the list beside the rows on Settings and look, where it was on the others)
     for (std::size_t k = 0; k < static_cast<std::size_t>(kLinePanes); ++k) {
@@ -674,7 +701,7 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
     int games = 0;
     for (int c = 0; c < kCells; ++c) games += CellIndex(v.s, c) >= 0 ? 1 : 0;
     g_cell_games = browse ? games : 0;
-    const int picked = browse ? g_cell.load() : menu ? ml.picked : -1;
+    const int picked = keys ? v.typing_key : browse ? g_cell.load() : menu ? ml.picked : -1;
     for (int i = 0; i < kLinePanes; ++i) {
         const std::size_t k = static_cast<std::size_t>(i);
         const std::uint64_t pane = g_list_panes[k];
@@ -696,14 +723,18 @@ void LiveCells(void* ctx, std::uint64_t layout, std::uint64_t gen, const Session
             }
         }
         if (g_list_vis[k] != (on ? 1 : 0)) SetVisible(ctx, pane, on), g_list_vis[k] = on ? 1 : 0;
+        if (const int arrows = on && lines[k].arrows ? 1 : 0; g_list_arrows[k] != 0 && g_list_arrows_vis[k] != arrows) {
+            SetVisible(ctx, g_list_arrows[k], arrows != 0), g_list_arrows_vis[k] = arrows;
+        }
         // (the header a little dim, as a table's; a game bright when picked, or all of them when the rows have the pad;
         // the details, which nothing picks, as Longshot Settings' lines not picked: an Options row's value box is the
         // game's bright orange, dimmed to its brown)
-        const float alpha = i == 0                          ? 0.7f
-                            : menu && !ml.selectable[k]       ? 0.55f   // (a heading, a note)
-                            : !browse && !menu                ? 0.55f
+        const float alpha = keys                            ? (i == 0 || picked == i - 1 ? 1.0f : 0.45f)
+                            : i == 0                        ? 0.7f
+                            : menu && !ml.selectable[k]     ? 0.55f   // (a heading, a note)
+                            : !browse && !menu              ? 0.55f
                             : picked < 0 || picked == i - 1 ? 1.0f
-                                                              : 0.45f;
+                                                            : 0.45f;
         if (on && g_list_alpha[k] != alpha) CallAlpha(ctx, pane, alpha), g_list_alpha[k] = alpha;
     }
     if (!g_rows_moment.load() && g_rows_alpha_stale.exchange(false)) g_rows_alpha.fill(-1);
@@ -1747,8 +1778,8 @@ bool ReadCursor(float* x, float* y, bool* left) {
 #endif
 }
 
-// The cursor over the game window's client area, 0 to 1 across it (the keyboard's keys are drawn in its pixels), and
-// the left button. False when the game's window is not in front or the cursor is off it.
+// The cursor over the game window's client area, 0 to 1 across it, and the left button (the title's mouse reads it,
+// coop_title.cpp). False when the game's window is not in front or the cursor is off it.
 bool ReadClientCursor(float* fx, float* fy, bool* left) {
 #ifdef _WIN32
     static HWND window = nullptr;
@@ -1771,33 +1802,15 @@ bool ReadClientCursor(float* fx, float* fy, bool* left) {
 #endif
 }
 
-// What the on-screen keyboard shows (coop_keyboard.h), from the page's typing. g_mutex.
-void PublishKeyboard() {
-    CoopKeyboard::Shown s;
-    const int t = g_page.Typing();
-    s.open = t >= 0 && g_page.Shown();
-    if (s.open) {
-        s.title = t == 0   ? "Room name, or IP address and :port (192.168.1.20:27510)"
-                  : t == 6 ? "Room name when you host (3 to 24: letters, digits, - and _)"
-                  : t == 5 ? "Search the games (a room's or a host's name)"
-                  : t == 4 ? "Relay address (host or host:port)"
-                  : t == 3 ? "Port when hosting (1 to 65535)"
-                  : t == 2 ? "New join password"
-                           : "Join password";
-        s.text = g_page.Field(t).Shown(true, 40);
-        s.row = g_page.KeyCursor().row(), s.col = g_page.KeyCursor().col();
-    }
-    if (!s.open && g_menu_kb.open && g_page.Shown()) s = g_menu_kb;   // (co-op's menu types: Settings and look)
-    // (only the page's own: open while it types, and closed once after. Closed at every pad read, it took the title's
-    // keyboard away just before the title asked which key the mouse was on: no click on a key counted, a test run
-    // 2026-11-20)
-    static bool was_open = false;
-    if (!s.open && !was_open) return;
-    was_open = s.open;
-    CoopKeyboard::Publish(s);
+// What changes the list's typing keys show: the fields, their cursors, the key and the letter picked. g_mutex.
+std::uint64_t TypingHash() {
+    std::string all;
+    for (int f = 0; f < Page::kFields; ++f) all += g_page.Field(f).text() + '\n' + std::to_string(g_page.Field(f).cursor()) + '\n';
+    all += std::to_string(g_page.TypingKey()) + '\n' + g_page.TypingLetter();
+    return std::hash<std::string>{}(all);
 }
-// The mouse on the keyboard: a key pressed where the left button went down and came up; Longshot's own A for the
-// click (it presses A for a click in the game's menus) is not a second press. g_mutex.
+// The mouse on the typing keys (the list's rows): a key pressed where the left button went down and came up; Longshot's
+// own A for the click (it presses A for a click in the game's menus) is not a second press. g_mutex.
 bool g_kb_held = false;
 int g_kb_press = -1;
 std::uint64_t g_kb_click_ms = 0;
@@ -1868,7 +1881,16 @@ void ActCell(int cell) {
                            "version)", cell);
             return;
         }
-        LOG_INFO(Core, "coop: pause tab: cell {} chosen: a room on the relay's list, to the Join view", cell);
+        if (r.is_public) {
+            // A public game: joined at once, no password to type (its password is the room's, as its host made it).
+            LOG_INFO(Core, "coop: pause tab: cell {} chosen: a public game on the list, joining it", cell);
+            CoopPause::JoinRoomNow(r.room, coop::protocol::public_join_password(r.room));
+            return;
+        }
+        // A private game (or an older kit's listing, which may lock out wrong passwords): never tried with the
+        // public password; the Join view with the room typed, for the host's password.
+        LOG_INFO(Core, "coop: pause tab: cell {} chosen: a private game on the list (needs the host's password), to "
+                       "the Join view", cell);
         {
             std::lock_guard lock(g_mutex);
             g_page.Field(0).Clear();
@@ -1909,7 +1931,7 @@ void FollowMenu(bool shown) {
         g_menu_list = false;
         {
             std::lock_guard lock(g_mutex);
-            g_menu_kb = CoopKeyboard::Shown{};
+            g_menu_typing_lines.clear();
         }
         LOG_INFO(Core, "coop: pause tab: settings and look: closed (Link wears the look chosen)");
     } else {
@@ -2323,7 +2345,9 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         if (f.kind == Kind::kPages) {
             CoopLanNet::Look(now_shown && ViewShown() == View::kLan, NowMs());
             // (the relay's list left, the page gone or the Local tab: its asks stop; ViewNow asks while it shows)
-            if (!(now_shown && ViewShown() == View::kLan && g_online.load())) CoopRoomList::Look(false, NowMs(), {});
+            if (!(now_shown && ViewShown() == View::kLan && g_online.load())) {
+                CoopRoomList::Look(CoopRoomList::Viewer::kFindAGame, false, NowMs(), {});
+            }
         }
         if (early_live && calls && LiveDue(g_pages_gen)) LiveRows(ctx, g_pages_layout, g_pages_gen, ViewNow(ViewShown()));
         if (!now_shown) g_confirm_until = 0;
@@ -2468,9 +2492,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             std::lock_guard lock(g_mutex);
             was = g_page.Shown();
             const int typing_was = g_page.Typing();
-            const std::uint64_t field_was = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
-                                                                     g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
-                                            (g_page.Field(1).cursor() << 8);
+            const std::uint64_t field_was = TypingHash();
             // (A on System's Longshot Settings button opens its page: the button's name read only while A is held)
             {   // (which of System's buttons of ours the game's cursor is on: their names, read only while A is held)
                 int on = -1;
@@ -2484,14 +2506,14 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             }
             if (g_page.Typing() >= 0) {
                 const std::uint64_t now = NowMs();
-                float fx = 0, fy = 0;
+                float x = 0, y = 0;
                 bool left = false;
-                if (ReadClientCursor(&fx, &fy, &left)) {
-                    int r = -1, c = -1;
-                    const bool on = CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
-                    if (left && !g_kb_held) g_kb_press = on ? r * 16 + c : -1;
-                    if (!left && g_kb_held && on && g_kb_press == r * 16 + c) {
-                        g_page.PressKey(r, c);
+                if (ReadCursor(&x, &y, &left)) {
+                    const int cell = CellAt(ReadCellBoxes(), x, y);   // (the list's row under the header: a key)
+                    const int key = cell >= 0 && cell < kTypeKeys ? cell : -1;
+                    if (left && !g_kb_held) g_kb_press = key;
+                    if (!left && g_kb_held && key >= 0 && g_kb_press == key) {
+                        g_page.PressKey(key);
                         g_kb_click_ms = now;
                     }
                     g_kb_held = left;
@@ -2559,60 +2581,72 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                     g_key_end_ms = now, g_typing_end_ms = now;
                     in &= ~(kPadA | kPadB | kPadPlus);
                 }
-                if (!g_menu_typed_last && menu_typing) g_menu_keys.Reset();
+                if (!g_menu_typed_last && menu_typing) g_menu_key = 0, g_menu_letter = 0;
                 g_menu_typed_last = menu_typing;
                 const std::uint64_t mdown = in & ~g_menu_pad_last;
                 g_menu_pad_last = in;
                 if (menu_typing) {
-                    const auto press = [&](int r, int c) {
-                        g_menu_keys.Set(r, c);
-                        const CoopKeyboard::KeyAt k = CoopKeyboard::At(r, c);
-                        switch (k.key) {
-                        case CoopKeyboard::Key::kChar: menu_chars.push_back(static_cast<unsigned char>(k.ch)); break;
-                        case CoopKeyboard::Key::kSpace: menu_chars.push_back(' '); break;
-                        case CoopKeyboard::Key::kDelete: menu_keys.push_back(0x08); break;
-                        case CoopKeyboard::Key::kCancel: menu_keys.push_back(0x1B); break;
-                        case CoopKeyboard::Key::kOk: menu_keys.push_back(0x0D); break;
-                        case CoopKeyboard::Key::kNone: return;
+                    const std::size_t nl = kMenuLetters.size();
+                    const auto press = [&](int key) {
+                        g_menu_key = key;
+                        switch (static_cast<TypeKey>(key)) {
+                        case TypeKey::kLetter: menu_chars.push_back(static_cast<unsigned char>(kMenuLetters[g_menu_letter % nl])); break;
+                        case TypeKey::kDelete: menu_keys.push_back(0x08); break;
+                        case TypeKey::kCancel: menu_keys.push_back(0x1B); break;
+                        case TypeKey::kOk: menu_keys.push_back(0x0D); break;
                         }
                         g_page.Sound("button_decide");
                     };
-                    float fx = 0, fy = 0;
+                    float x = 0, y = 0;
                     bool left = false;
-                    if (ReadClientCursor(&fx, &fy, &left)) {
-                        int r = -1, c = -1;
-                        const bool on = CoopKeyboard::KeyAtPoint(fx, fy, &r, &c);
-                        if (left && !g_kb_held) g_kb_press = on ? r * 16 + c : -1;
-                        if (!left && g_kb_held && on && g_kb_press == r * 16 + c) press(r, c), g_kb_click_ms = now;
+                    if (ReadCursor(&x, &y, &left)) {   // (a click on a key's row presses it, as on the page's fields)
+                        const int cell = CellAt(ReadCellBoxes(), x, y);
+                        const int key = cell >= 0 && cell < kTypeKeys ? cell : -1;
+                        if (left && !g_kb_held) g_kb_press = key;
+                        if (!left && g_kb_held && key >= 0 && g_kb_press == key) press(key), g_kb_click_ms = now;
                         g_kb_held = left;
                     }
                     std::uint64_t d = mdown;
                     if (g_kb_held || now - g_kb_click_ms < 400) d &= ~kPadA;
+                    // (up and down: the key, round the four; Left and Right: Letter's letter, round kMenuLetters)
                     const int dr = (d & (kPadDown | kPadStickDown)) != 0 ? 1 : (d & (kPadUp | kPadStickUp)) != 0 ? -1 : 0;
                     const int dc = (d & (kPadRight | kPadStickRight)) != 0 ? 1 : (d & (kPadLeft | kPadStickLeft)) != 0 ? -1 : 0;
-                    if (dr != 0 || dc != 0) g_menu_keys.Move(dr, dc), g_page.Sound("button_on");
-                    if ((d & kPadA) != 0) press(g_menu_keys.row(), g_menu_keys.col());
+                    if (dr != 0) g_menu_key = (g_menu_key + dr + kTypeKeys) % kTypeKeys, g_page.Sound("button_on");
+                    if (dc != 0 && g_menu_key == static_cast<int>(TypeKey::kLetter)) {
+                        g_menu_letter = (g_menu_letter % nl + nl + static_cast<std::size_t>(dc + static_cast<int>(nl))) % nl;
+                        g_page.Sound("button_on");
+                    }
+                    if ((d & kPadA) != 0) press(g_menu_key);
                     if ((d & kPadB) != 0) menu_keys.push_back(0x1B);
                     if ((d & kPadY) != 0) menu_keys.push_back(0x08);
                     if ((d & kPadPlus) != 0) menu_keys.push_back(0x0D);
-                    CoopKeyboard::Shown kb;
-                    kb.open = true;
                     const bool sel_ok = mv.selected >= 0 && static_cast<std::size_t>(mv.selected) < mv.rows.size();
-                    kb.title = sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].name : std::string("Type");
-                    kb.text = sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].value : std::string();
-                    if (kb.text.empty() || kb.text.back() != '_') kb.text += "_";   // (some rows end in it already)
-                    kb.row = g_menu_keys.row(), kb.col = g_menu_keys.col();
-                    g_menu_kb = kb;
-                    in = 0;   // (the page sees no press: B is the keyboard's Cancel, not the view's Back)
-                    // (the list's own view of the mouse kept current meanwhile: the keys lie over its lines, and the
-                    // last key clicked (OK) read as a move onto the line under it once the keyboard shut, picking that
-                    // part, so the next A opened its mixer: a test run, 2026-11-20)
-                    float lx = 0, ly = 0;
-                    bool lheld = false;
-                    if (ReadCursor(&lx, &ly, &lheld)) g_cells_mouse_x = lx, g_cells_mouse_y = ly, g_cells_held = lheld;
+                    std::vector<ListLine> lines(kListRows);
+                    lines[0] = {sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].name : std::string("Type"),
+                                sel_ok ? mv.rows[static_cast<std::size_t>(mv.selected)].value : std::string()};
+                    lines[1] = {"Letter", std::string(1, kMenuLetters[g_menu_letter % nl] == ' ' ? '_' : kMenuLetters[g_menu_letter % nl])};
+                    lines[1].arrows = true;
+                    lines[2] = {"Delete", ""};
+                    lines[3] = {"OK", ""};
+                    lines[4] = {"Cancel", ""};
+                    const auto same = [](const std::vector<ListLine>& a, const std::vector<ListLine>& b) {
+                        if (a.size() != b.size()) return false;
+                        for (std::size_t i = 0; i < a.size(); ++i) {
+                            if (a[i].name != b[i].name || a[i].value != b[i].value || a[i].arrows != b[i].arrows) return false;
+                        }
+                        return true;
+                    };
+                    if (!same(lines, g_menu_typing_lines) || dr != 0) g_live_poke = true;
+                    g_menu_typing_lines = std::move(lines);
+                    in = 0;   // (the page sees no press: B is typing's Cancel, not the view's Back)
+                    // (the list's own view of the mouse kept current meanwhile: the keys are its lines, and the last
+                    // key clicked (OK) read as a move onto the line under it once typing ended, picking that part, so
+                    // the next A opened its mixer: a test run, 2026-11-20)
+                    g_cells_mouse_x = x, g_cells_mouse_y = y, g_cells_held = left;
                     g_cells_press = -1;
-                } else {
-                    g_menu_kb = CoopKeyboard::Shown{};
+                } else if (!g_menu_typing_lines.empty()) {
+                    g_menu_typing_lines.clear();
+                    g_live_poke = true;
                 }
             }
             out = g_page.OnPad(in, NowMs());
@@ -2631,7 +2665,6 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             }
             if (b_to_rows) out |= kPadLeft, g_page.Sound("button_cancel");
             typing = g_page.Typing() >= 0;
-            PublishKeyboard();
             if (const int typed = g_page.TakeTyped(); typed == 2) {
                 new_password = g_page.Field(2).text();
                 g_page.Field(2).Clear();
@@ -2645,9 +2678,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             } else if (typed == 6) {
                 new_room_name = g_page.Field(6).text(), room_name_typed = true;
             }
-            const std::uint64_t field_now = std::hash<std::string>{}(g_page.Field(0).text() + '\n' +
-                                                                     g_page.Field(1).text()) ^ g_page.Field(0).cursor() ^
-                                            (g_page.Field(1).cursor() << 8);
+            const std::uint64_t field_now = TypingHash();
             if (typing_was != g_page.Typing() || field_was != field_now) g_live_poke = true;
             shown = g_page.Shown();
             decide = g_page.TakeDecide();
@@ -3241,7 +3272,6 @@ bool Key(std::uint32_t vk, bool repeat) noexcept {
             LOG_INFO(Core, "coop: pause tab: keyboard: {}{} while typing field {}: {}", vk == 0x0d ? "Enter" : "Esc",
                      repeat ? " (a repeat)" : "", was, g_page.Typing() < 0 ? "typing ended" : "still typing");
         }
-        PublishKeyboard();
         return taken;
     } catch (...) {
         return false;
@@ -3253,7 +3283,6 @@ bool Char(std::uint32_t cp) noexcept {
         std::lock_guard lock(g_mutex);
         const bool taken = g_page.Char(cp);
         if (taken) g_live_poke = true;
-        PublishKeyboard();
         return taken;
     } catch (...) {
         return false;
@@ -3312,7 +3341,7 @@ std::string TestState() {
                        menu ? 1 : 0, menu ? g_pages_seen_state.load() : -1, menu ? g_pages_seen_page.load() : -1,
                        g_page.Shown() ? 1 : 0, g_page.Which(), g_view.load(), g_page.Typing(), g_cell.load(),
                        g_set_row.load(), g_set_category.load(), menu ? FocusedShownName() : std::string("-"),
-                       g_to_title.load(), CoopKeyboard::Wanted() ? 1 : 0, g_online.load() ? 1 : 0,
+                       g_to_title.load(), !g_menu_typing_lines.empty() || g_page.Typing() >= 0 ? 1 : 0, g_online.load() ? 1 : 0,
                        g_test_pouch.load()) + pads + mpart;
 }
 

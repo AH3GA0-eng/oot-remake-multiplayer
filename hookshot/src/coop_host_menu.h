@@ -52,6 +52,8 @@ struct Hooks {
     std::uint64_t direct_ms = 3000;
     // (Navi) This game's New Game+ level (coop_ngplus.h), told to our server each round for everyone. Empty: 0.
     std::function<std::uint8_t()> ngplus_level;
+    // The host changed the join password while hosting: this game's own client takes it for its reconnects.
+    std::function<void(const std::string&)> password_changed;
 };
 
 // Most players at once for a server the title menu's Host starts: the options' number (1 to 16, more taken as 16),
@@ -83,9 +85,11 @@ private:
         std::string name, password, relay_via, relay_key, relay_room, relay_list;
         std::uint16_t port = 0;
         bool upnp = false, invite = false, pvp = false, approve_joins = false;
-        bool same_network_open = true;   // (players from a private address join without the password)
+        bool same_network_open = false;   // (players from a private address join without the password: chosen only)
         std::uint8_t max_players = 0;  // HostMaxPlayers'
         std::uint32_t pose_upload_kbps = 0;
+        bool public_game = false;   // (HosCoopHostOptions::public_game)
+        std::string bans_file;      // (HosCoopHostOptions::bans_file)
     };
     struct JoinJob {
         std::string name, password;

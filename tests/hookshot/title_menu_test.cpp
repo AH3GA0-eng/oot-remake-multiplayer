@@ -3,6 +3,7 @@
 // Host and Join in plain words, the addresses for a home network or VPN, and the host's save loaded after a join.
 #include <doctest/doctest.h>
 
+#include <map>
 #include <string>
 #include <variant>
 
@@ -837,6 +838,24 @@ TEST_CASE("title menu: after a re-read the open title gets OpenTitle's buttons f
     CHECK(static_cast<std::size_t>(without.btn_num_frame) == without.count);
 }
 
+TEST_CASE("title menu: the open title is arranged on its requests' layout, the screen's +0xf0 then +0x28 (row 193)") {
+    // Player logs (row 193): the screen's +0xe0 held the layout + 0xb8 in every game: it is the request queue's slot
+    // array, not a layout. The walk the game's update makes: the object at +0xf0, its +0x28.
+    const std::uint64_t screen = 0x1000, owner = 0x5000, layout = 0x9d40;
+    std::map<std::uint64_t, std::uint64_t> mem{{screen + 0x28, layout}, {screen + 0xe0, layout + 0xb8},
+                                               {screen + 0xf0, owner}, {owner + 0x28, layout}};
+    const auto read = [&](std::uint64_t a) { const auto it = mem.find(a); return it != mem.end() ? it->second : 0; };
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) == layout);
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) == read(screen + 0x28));   // (ArrangeTitle's check passes)
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) != read(screen + 0xe0));
+    mem[screen + 0xf0] = 0;   // (no owner yet: nothing is arranged)
+    CHECK(CoopTitleMenu::RequestsLayout(read, screen) == 0);
+    CHECK(CoopTitleMenu::RequestsLayout(read, 0) == 0);
+    // With the check passing, an empty list gives New Game first again (Geno's #308: Start on a file select mod).
+    CHECK(std::string(ArrangementFor(false).texts[0].label) == "0000");
+    CHECK(ArrangementFor(false).sound_type == 0);
+}
+
 TEST_CASE("title menu: Skip title screen is free solo and held while co-op does anything (patch 0028, report 133)") {
     SkipTitleInput in;   // solo, co-op idle: Longshot's Skip title screen may choose
     CHECK(SkipTitleHold(in) == nullptr);
@@ -1006,6 +1025,34 @@ TEST_CASE("title menu: list_room is off unless coop-options.ini turns it on, and
     CHECK(options.find("relay = relay.example:27600") != std::string::npos);   // (the other lines kept)
 }
 
+TEST_CASE("title menu: public_game (the Host view's Private / Public choice) is private unless chosen, and remembered") {
+    using CoopTitleMenu::Options;
+    CHECK_FALSE(Options::Read("", "").public_game);   // private: the default
+    CHECK(Options::Read("", "public_game = on\r\n").public_game);
+    Options o = Options::Read("", "");
+    std::string coop, options;
+    o.public_game = true;
+    o.Write(coop, options);
+    CHECK(Options::Read(coop, options).public_game);
+    o.public_game = false;
+    o.Write(coop, options);
+    CHECK_FALSE(Options::Read(coop, options).public_game);
+    CHECK_FALSE(CoopTitleMenu::IniGet(options, "public_game").has_value());   // (the line is commented out, as others)
+}
+
+TEST_CASE("title menu: a ready room name for a public game is a word, a dash and four digits") {
+    using CoopTitleMenu::Options;
+    for (std::uint64_t seed = 0; seed < 200; ++seed) {
+        const std::string n = Options::RandomRoomName(seed);
+        const auto dash = n.find('-');
+        REQUIRE(dash != std::string::npos);
+        CHECK(n.size() == dash + 5);
+        for (std::size_t i = 0; i < dash; ++i) CHECK((n[i] >= 'a' && n[i] <= 'z'));
+        for (std::size_t i = dash + 1; i < n.size(); ++i) CHECK((n[i] >= '0' && n[i] <= '9'));
+    }
+    CHECK(Options::RandomRoomName(1) != Options::RandomRoomName(2));
+}
+
 namespace {
 PlayerChoice::Pad TitlePad(std::uint64_t buttons, int focused, bool coop_row = false) {
     PlayerChoice::Pad p;
@@ -1124,4 +1171,47 @@ TEST_CASE("title menu: the relay and the room name: written when set, the kit's 
     CHECK(RelayOk("relay.example.net:27530"));
     CHECK(RelayOk(""));
     CHECK_FALSE(RelayOk("has space"));
+    CHECK(RelayOk("relay.example.net"));
+    CHECK(RelayOk("10.0.0.2:1"));
+    CHECK(RelayOk("relay-1.example.net:65535"));
+    CHECK_FALSE(RelayOk("relay.example.net:0"));       // (a port from 1 to 65535)
+    CHECK_FALSE(RelayOk("relay.example.net:65536"));
+    CHECK_FALSE(RelayOk("relay.example.net:"));
+    CHECK_FALSE(RelayOk("relay.example.net:27x30"));
+    CHECK_FALSE(RelayOk(":27530"));                    // (no host)
+    CHECK_FALSE(RelayOk("relay_example.net"));         // (the server's host letters: letters, digits, . and -)
+    CHECK_FALSE(RelayOk("a:b:27530"));
+}
+
+TEST_CASE("title menu: a bare Join name is a PC or a room, and its line through the relay") {
+    CHECK(BareJoinName("mypc") == "mypc");
+    CHECK(BareJoinName("forest-gang kokiri") == "forest-gang");
+    CHECK(BareJoinName("  DESKTOP-4F2A9 ") == "DESKTOP-4F2A9");
+    CHECK_FALSE(BareJoinName("192.168.1.20 kokiri").has_value());   // (a dot: an address)
+    CHECK_FALSE(BareJoinName("mypc:27511").has_value());            // (a port: a PC)
+    CHECK_FALSE(BareJoinName("forest-gang@relay.example.net").has_value());
+    CHECK_FALSE(BareJoinName("pc").has_value());                    // (too short for a room: a PC only)
+    CHECK_FALSE(BareJoinName("").has_value());
+    CHECK(RoomJoinLine("forest-gang kokiri", "relay.example.net:27530") == "forest-gang@relay.example.net:27530 kokiri");
+    CHECK(RoomJoinLine("forest-gang", " relay.example.net ") == "forest-gang@relay.example.net");
+    // (the room line is one ReadJoin takes, and that the relay join reads)
+    const auto t = ReadJoin(RoomJoinLine("forest-gang kokiri", "relay.example.net:27530"), {});
+    REQUIRE(std::holds_alternative<JoinAddress>(t));
+    CHECK(std::get<JoinAddress>(t).server == "forest-gang@relay.example.net:27530");
+    CHECK(std::get<JoinAddress>(t).password == "kokiri");
+}
+
+TEST_CASE("title menu: an unchanged relay or room name line is kept as the player wrote it") {
+    std::string c, opt = "relay=old.example.net:27530   # my friend's\r\nrelay_room = old-room ; ours\r\n";
+    Options o = Options::Read("", opt);
+    CHECK(o.relay == "old.example.net:27530");
+    CHECK(o.relay_room == "old-room");
+    o.pvp = true;   // (something else changes: the relay lines stay as they were)
+    o.Write(c, opt);
+    CHECK(opt.find("relay=old.example.net:27530   # my friend's\r\n") != std::string::npos);
+    CHECK(opt.find("relay_room = old-room ; ours\r\n") != std::string::npos);
+    o.relay_room = "new-room";   // (a changed one is written)
+    o.Write(c, opt);
+    CHECK(IniGet(opt, "relay_room") == "new-room");
+    CHECK(opt.find("relay=old.example.net:27530   # my friend's\r\n") != std::string::npos);
 }

@@ -12,7 +12,6 @@
 //   (coop_hold.h), at the same place in main;
 // - settings: coop.ini beside longshot.exe, then the LICHII_COOP_* variables,
 //   as in the emulator (the kit's launcher sets them from coop-options.ini).
-#include "coop_keyboard.h"
 #include "coop_hookshot.h"
 
 #include <algorithm>
@@ -39,6 +38,7 @@
 #include "coop_camera.h"
 #include "coop_cheats.h"
 #include "coop_cheats_panel.h"
+#include "coop_char_colours.h"
 #include "coop_chatbox.h"
 #include "coop_draw.h"
 #include "coop/host/map_drop_log.hpp"
@@ -118,6 +118,7 @@
 #include "hos_coop_host.h"
 #include "hos_coop_world.h"
 #include "hos_coop_view.h"
+#include "coop_export_guard.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -441,20 +442,20 @@ void LogBossNative() {
         c.copy_own_run == said.copy_own_run && c.copy_own_late == said.copy_own_late &&
         c.copy_life_held == said.copy_life_held && c.copy_killed == said.copy_killed &&
         c.copy_finished == said.copy_finished && c.copy_shot_hits == said.copy_shot_hits &&
-        c.copy_hits_to_owner == said.copy_hits_to_owner &&
+        c.copy_hits_to_owner == said.copy_hits_to_owner && c.copy_own_stuns == said.copy_own_stuns &&
         c.plain_wakes == said.plain_wakes && c.plain_deaths == said.plain_deaths) {
         return;
     }
     said_ms = now;
     said = c;
     LOG_INFO(Core, "coop: bosses: ours sent {} brain + {} action verbs ({} by plug); copies: {} own skipped, {} brain + "
-                   "{} action verbs put in ({} waited for a node), {} own run in our event or after our hit ({} late, {} hits by our shots; "
+                   "{} action verbs put in ({} waited for a node), {} own run in our event or after our hit ({} late, {} hits by our shots, {} own stuns; "
                    "{} hits that took life left to the owner), "
                    "{} own minions not made, {} busy; {} own Life steps held at 1, {} let die after the owner's, {} ended in their death; "
                    "plain enemies: {} own other phases told, {} own wakes run, {} deaths begun; "
                    "owner's brain verbs given to copies {} ({} the copy was in already)",
              c.owner_brain, c.owner_action, c.plug_actions, c.copy_skipped, c.brain_applied, c.action_applied,
-             c.action_waiting, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_hits_to_owner, c.minions_stopped, c.busy, c.copy_life_held,
+             c.action_waiting, c.copy_own_run, c.copy_own_late, c.copy_shot_hits, c.copy_own_stuns, c.copy_hits_to_owner, c.minions_stopped, c.busy, c.copy_life_held,
              c.copy_killed, c.copy_finished, c.plain_wants, c.plain_wakes, c.plain_deaths, c.brain_came,
              c.brain_already);
 }
@@ -613,6 +614,7 @@ CoopHostMenu::Menu& HostMenu() {
         };
         h.client_id = [] { return CoopTitle::ClientId(); };
         h.ngplus_level = [] { return CoopNgPlus::Level(); };  // (Navi) New Game+ for our server
+        h.password_changed = [](const std::string& password) { CoopHook::SetJoinPassword(password); };
         h.log = [](const std::string& line) { LOG_INFO(Core, "{}", line); };
         h.default_name = [] {
             const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
@@ -1305,6 +1307,7 @@ bool Start(const HosCoopApi* api) {
 
 void LocalProbe();   // (below)
 void LocalLayer(void* ctx);   // (below)
+void DressCharacters(void* ctx);   // (below)
 
 // A test's view of the menus (LICHII_COOP_TEST_STATE=1 only): coop-test-state.txt in the game's folder, 5 times a
 // second: the pause page, the title, co-op's menu. No lock of ours held (each part takes its own).
@@ -1352,6 +1355,7 @@ void Frame(void* ctx, int site) {
         CoopLook::Frame();   // a look chosen in the pause menu, once it closed
         LocalProbe();
         if (ctx != nullptr) LocalLayer(ctx);
+        if (ctx != nullptr) DressCharacters(ctx);
     }
     if (site == HOS_COOP_SITE_PRESENT && !g_present_seen.exchange(true)) {
         LOG_INFO(Core, "coop: Hookshot calls co-op at each present (loads and pause included)");
@@ -1874,6 +1878,39 @@ void LocalLayer(void* ctx) {
     second.Step(first);
 }
 
+// Character Select's Customize options on the puppets, co-op's own (coop_char_colours.h): each frame, the game's own
+// model calls for each live puppet that is due. Solo nothing is live, so nothing is done.
+void DressCharacters(void* ctx) {
+    if (g_api == nullptr || g_api->call == nullptr) return;
+    const auto views = CoopPuppet::DressTargets();
+    if (views.empty()) return;
+    static void* frame_ctx = nullptr;
+    frame_ctx = ctx;
+    static const CoopCharColours::Game game = [] {
+        CoopCharColours::Game g;
+        g.read = [](std::uint64_t a, void* out, std::size_t n) { return CoopRuntime::Read(a, out, n); };
+        g.write = [](std::uint64_t a, const void* in, std::size_t n) { return CoopRuntime::Write(a, in, n); };
+        g.call = [](std::uint64_t f, const std::array<std::uint64_t, 8>& x) -> std::optional<std::uint64_t> {
+            HosCoopCall k{};
+            k.function = f;
+            for (std::size_t i = 0; i < 8; i++) k.x[i] = x[i];
+            std::uint64_t x0 = 0;
+            if (!g_api->call(frame_ctx, &k, &x0)) return std::nullopt;
+            return x0;
+        };
+        return g;
+    }();
+    CoopCharColours::Game g = game;
+    g.main_base = CoopRuntime::MainBase();
+    std::vector<CoopCharColours::Target> targets;
+    targets.reserve(views.size());
+    for (const auto& v : views) {
+        targets.push_back({v.actor, v.cell, v.custom, v.mods_routine, 0, std::hash<std::string>{}(v.actor_name)});
+    }
+    CoopCharColours::TheWardrobe().Frame(g, targets, SteadyMs(),
+                                         [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
+}
+
 // Local co-op (coop_local_game.h): the exe's pads (patch 0016, hos_coop_pads.h) and the Player's wraps 16, 17 and 19.
 // An exe without them: CoopLocal says NotSupported. LICHII_COOP_LOCAL=<pad slot> starts a second player on that pad
 // at the first frame in play, without the menu (tests).
@@ -1951,8 +1988,8 @@ void UseSaveSwitch() {
     }
     CoopSave::SetSwitch(
         [root] {
-            char buf[1024];
-            return root(buf, sizeof buf) ? std::string(buf) : std::string();
+            char buf[1024] = {};   // (save-crash-0118: read up to its end inside the buffer, never past it)
+            return root(buf, sizeof buf) ? std::string(CoopBoundary::EndedText(buf, sizeof buf)) : std::string();
         },
         [remount](const std::string& dir) { return remount(dir.c_str()) != 0; });
 }
@@ -1976,58 +2013,100 @@ void UseSlotOpens() {
 }
 
 COOP_HOOKSHOT_EXPORT int hos_coop_start(const HosCoopApi* api) {
-    if (!CoopHookshot::Start(api)) return 0;
-    UseSaveSwitch();
-    UseSlotOpens();
-    CoopSave::SetSaveRequests(true);   // (RequestHostAutoSave, on the calc thread's call site)
-    CoopHookshot::UseLocalPads();
-    return 1;
+    static CoopBoundary::Site site{"hos_coop_start"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        if (!CoopHookshot::Start(api)) return 0;
+        UseSaveSwitch();
+        UseSlotOpens();
+        CoopSave::SetSaveRequests(true);   // (RequestHostAutoSave, on the calc thread's call site)
+        CoopHookshot::UseLocalPads();
+        return 1;
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_frame(void* ctx, int site) {
-    CoopHookshot::Frame(ctx, site);
+    static CoopBoundary::Site guard_site{"hos_coop_frame"};
+    CoopExportGuard::Guard(guard_site, [&] {
+        CoopHookshot::Frame(ctx, site);
+    });
 }
 COOP_HOOKSHOT_EXPORT uint32_t hos_coop_hold(uint64_t component, uint32_t bits) {
-    return CoopHookshot::Hold(component, bits);
+    static CoopBoundary::Site site{"hos_coop_hold"};
+    return CoopExportGuard::Guard(site, static_cast<uint32_t>(bits), [&]() -> uint32_t {
+        return CoopHookshot::Hold(component, bits);
+    });
 }
 // The world hooks (hos_coop_world.h): Hookshot's host/coop_world.c, on the game's threads.
 COOP_HOOKSHOT_EXPORT int hos_coop_world(uint32_t event, uint64_t a, uint64_t b) {
-    return CoopHookshot::World(event, a, b);
+    static CoopBoundary::Site site{"hos_coop_world"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::World(event, a, b);
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_wrap(uint32_t id, int phase, uint64_t* x, void* ctx) {
-    return CoopHookshot::Wrap(id, phase, x, ctx);
+    static CoopBoundary::Site site{"hos_coop_wrap"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::Wrap(id, phase, x, ctx);
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_stop(void) {
-    CoopHookshot::Stop();
+    static CoopBoundary::Site site{"hos_coop_stop"};
+    CoopExportGuard::Guard(site, [&] {
+        CoopHookshot::Stop();
+    });
 }
 // Host and Join from the game's menu (hos_coop_host.h).
 COOP_HOOKSHOT_EXPORT int hos_coop_host_start(const HosCoopHostOptions* options) {
-    return CoopHookshot::HostMenu().HostStart(options);
+    static CoopBoundary::Site site{"hos_coop_host_start"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::HostMenu().HostStart(options);
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_join(const HosCoopJoinOptions* options) {
-    return CoopHookshot::HostMenu().Join(options);
+    static CoopBoundary::Site site{"hos_coop_join"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::HostMenu().Join(options);
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_host_answer(const char* answer_code) {
-    return CoopHookshot::HostMenu().Answer(answer_code);
+    static CoopBoundary::Site site{"hos_coop_host_answer"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::HostMenu().Answer(answer_code);
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_leave(void) {
-    CoopHookshot::HostMenu().Leave();
+    static CoopBoundary::Site site{"hos_coop_leave"};
+    CoopExportGuard::Guard(site, [&] {
+        CoopHookshot::HostMenu().Leave();
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_status(HosCoopStatus* out) {
-    CoopHookshot::HostMenu().Status(out);
+    static CoopBoundary::Site site{"hos_coop_status"};
+    CoopExportGuard::Guard(site, [&] {
+        CoopHookshot::HostMenu().Status(out);
+    });
 }
 // Typing (hos_coop_api.h): the chat box. (Linux: Longshot calls these on the window's thread, SDL's: a Ctrl+V there
 // reads SDL's clipboard, which needs no wl-paste or xclip: CoopClipboard::OnSdlThread)
 COOP_HOOKSHOT_EXPORT int hos_coop_key(uint32_t vk, int repeat) {
-#ifndef _WIN32
-    const CoopClipboard::OnSdlThread sdl_thread;
-#endif
-    return CoopHookshot::TypeKey(vk, repeat != 0) || CoopModsRuntime::Key(vk, repeat != 0) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_key"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+    #ifndef _WIN32
+        const CoopClipboard::OnSdlThread sdl_thread;
+    #endif
+        return CoopHookshot::TypeKey(vk, repeat != 0) || CoopModsRuntime::Key(vk, repeat != 0) ? 1 : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_char(uint32_t ch) {
-    return CoopHookshot::TypeChar(ch) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_char"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::TypeChar(ch) ? 1 : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_keys_taken(void) {
-    return CoopHookshot::KeysTaken() ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_keys_taken"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::KeysTaken() ? 1 : 0;
+    });
 }
 // The Discord status's second line (Longshot patch 0026, host/discord_rpc.c, every 5 s on its own thread):
 // "Co-op: N players" in a session, "Solo" with co-op idle. 1 = written (cut to cap, always ended); 0 = none
@@ -2070,86 +2149,119 @@ COOP_HOOKSHOT_EXPORT int hos_coop_title_hold(void) noexcept {
 }
 // The mouse (hos_coop_api.h): the cheats panel's clicks.
 COOP_HOOKSHOT_EXPORT int hos_coop_mouse(float fx, float fy, int event) {
-    return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_mouse"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return CoopHookshot::Mouse(fx, fy, event) ? 1 : 0;
+    });
 }
 // Drawing over the picture (hos_coop_draw.h), on Hookshot's render thread.
 // The title menu (hos_coop_api.h, patch 0004): the game's title screen and the pad first.
 COOP_HOOKSHOT_EXPORT void hos_coop_title(void* ctx, uint64_t screen, int event) {
-    if (g_on) {
-        CoopTitle::OnTitle(ctx, screen, event);
-    }
+    static CoopBoundary::Site site{"hos_coop_title"};
+    CoopExportGuard::Guard(site, [&] {
+        if (g_on) {
+            CoopTitle::OnTitle(ctx, screen, event);
+        }
+    });
 }
 // The pause menu's Multiplayer tab (coop_pause_tab.h, patch 0030): every menu screen's update, on the game's threads,
 // and the page the mouse's tab strip counts (4 while our page shows, else -1).
 // The code mods' menu screens (coop_mod_api.h version 2) from the same call: read only when a mod asked for them.
 COOP_HOOKSHOT_EXPORT void hos_coop_game_screen(void* ctx, uint64_t screen) noexcept {
-    if (g_on) {
-        CoopPauseTab::OnScreen(ctx, screen);
-        try {
-            // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
-            // choose_focused would press the game's button under our page)
-            // (nor while co-op's rows are on the title's buttons: a mod's Continue is co-op's row there)
-            if (CoopPauseTab::MousePage() != 4 && !CoopTitle::RowsOurs()) {
-                CoopModsRuntime::Screen(ctx, screen);
+    static CoopBoundary::Site site{"hos_coop_game_screen"};
+    CoopExportGuard::Guard(site, [&] {
+        if (g_on) {
+            CoopPauseTab::OnScreen(ctx, screen);
+            try {
+                // (not while our Multiplayer page is in front: the screen behind it is not the player's, and a mod's
+                // choose_focused would press the game's button under our page)
+                // (nor while co-op's rows are on the title's buttons: a mod's Continue is co-op's row there)
+                if (CoopPauseTab::MousePage() != 4 && !CoopTitle::RowsOurs()) {
+                    CoopModsRuntime::Screen(ctx, screen);
+                }
+            } catch (...) {
+                // (the mods' screens skip this update: the game's own goes on)
             }
-        } catch (...) {
-            // (the mods' screens skip this update: the game's own goes on)
         }
-    }
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_game_pause_page(void) noexcept {
-    return g_on ? CoopPauseTab::MousePage() : -2;   // (-2: no page of ours: the mouse keeps the fifth tab out)
+    static CoopBoundary::Site site{"hos_coop_game_pause_page"};
+    return CoopExportGuard::Guard(site, static_cast<int>(-2), [&]() -> int {
+        return g_on ? CoopPauseTab::MousePage() : -2;   // (-2: no page of ours: the mouse keeps the fifth tab out)
+    });
 }
 // The Multiplayer tab of Hookshot's menu (hos_coop_menu.h, patch 0012), from Hookshot's menu tick and present thread.
 // (original game, coop_original.h: one tab, the switch alone, from Hookshot's threads: g_original_mutex)
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_tabs(void) {
-    return g_on ? CoopPause::Tabs() : g_original_on ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_menu_tabs"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return g_on ? CoopPause::Tabs() : g_original_on ? 1 : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT const char* hos_coop_menu_tab_name(int tab) {
-    if (!g_on) return g_original_on && tab == 0 ? g_original.Name() : nullptr;
-    return CoopPause::TabName(tab);
+    static CoopBoundary::Site site{"hos_coop_menu_tab_name"};
+    return CoopExportGuard::Guard(site, static_cast<const char*>(nullptr), [&]() -> const char* {
+        if (!g_on) return g_original_on && tab == 0 ? g_original.Name() : nullptr;
+        return CoopPause::TabName(tab);
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_page(int tab, HosCoopMenuPage* out) {
-    if (!g_on) {
-        if (!g_original_on || tab != 0) return 0;
-        std::lock_guard lock(g_original_mutex);
-        return g_original.Page(out) ? 1 : 0;
-    }
-    return CoopPause::Page(tab, out) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_menu_page"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        if (!g_on) {
+            if (!g_original_on || tab != 0) return 0;
+            std::lock_guard lock(g_original_mutex);
+            return g_original.Page(out) ? 1 : 0;
+        }
+        return CoopPause::Page(tab, out) ? 1 : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_input(int tab, int event, int arg, int arg2) {
-    if (!g_on) {
-        if (!g_original_on || tab != 0) return 0;
-        std::lock_guard lock(g_original_mutex);
-        return g_original.Input(event, arg, arg2) ? 1 : 0;
-    }
-    return CoopPause::Input(tab, event, arg, arg2) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_menu_input"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        if (!g_on) {
+            if (!g_original_on || tab != 0) return 0;
+            std::lock_guard lock(g_original_mutex);
+            return g_original.Input(event, arg, arg2) ? 1 : 0;
+        }
+        return CoopPause::Input(tab, event, arg, arg2) ? 1 : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_wanted(void) {
-    return g_on ? CoopPause::Wanted() : HOS_COOP_MENU_WANT_NOTHING;
+    static CoopBoundary::Site site{"hos_coop_menu_wanted"};
+    return CoopExportGuard::Guard(site, static_cast<int>(HOS_COOP_MENU_WANT_NOTHING), [&]() -> int {
+        return g_on ? CoopPause::Wanted() : HOS_COOP_MENU_WANT_NOTHING;
+    });
 }
 // The picture beside the tab's page (hos_coop_menu_picture.h, patch 0019): the Customize page's Link.
 COOP_HOOKSHOT_EXPORT int hos_coop_menu_picture(int tab, HosCoopMenuPicture* out) {
-    return g_on && CoopPause::Picture(tab, out) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_menu_picture"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return g_on && CoopPause::Picture(tab, out) ? 1 : 0;
+    });
 }
 // The gameplay camera (hos_coop_view.h, patch 0019): around your own Link while the Customize page shows him.
 COOP_HOOKSHOT_EXPORT int hos_coop_view(double eye[3], double target[3]) {
-    if (!g_on || eye == nullptr || target == nullptr) {
-        return 0;
-    }
-    if (CoopLookView::Camera(eye, target)) {
-        return 1;
-    }
-    // Down but not out, spectating (coop_dbno_game.h): the game's own camera, as it follows our Link, moved
-    // onto the player we watch, so it follows them the same way (the right stick still turns it).
-    if (const auto off = CoopDbno::SpectateOffset()) {
-        for (int i = 0; i < 3; ++i) {
-            eye[i] += (*off)[i];
-            target[i] += (*off)[i];
+    static CoopBoundary::Site site{"hos_coop_view"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        if (!g_on || eye == nullptr || target == nullptr) {
+            return 0;
         }
-        return 1;
-    }
-    return 0;
+        if (CoopLookView::Camera(eye, target)) {
+            return 1;
+        }
+        // Down but not out, spectating (coop_dbno_game.h): the game's own camera, as it follows our Link, moved
+        // onto the player we watch, so it follows them the same way (the right stick still turns it).
+        if (const auto off = CoopDbno::SpectateOffset()) {
+            for (int i = 0; i < 3; ++i) {
+                eye[i] += (*off)[i];
+                target[i] += (*off)[i];
+            }
+            return 1;
+        }
+        return 0;
+    });
 }
 static_assert(CoopPadOrder::kHoldAll == COOP_MOD_HOLD_ALL);
 COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) noexcept {
@@ -2205,63 +2317,75 @@ COOP_HOOKSHOT_EXPORT uint64_t hos_coop_pad(uint64_t buttons, int32_t stick[4]) n
     }
 }
 COOP_HOOKSHOT_EXPORT int hos_coop_draw_wanted(void) {
-    return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted() ||
-                    CoopKeyboard::Wanted())
-               ? 1
-               : 0;
+    static CoopBoundary::Site site{"hos_coop_draw_wanted"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return g_on && (CoopDraw::Wanted(CoopHookshot::DrawScene()) || CoopModsRuntime::OverlayWanted())
+                   ? 1
+                   : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_draw(const HosCoopDraw* d) {
-    if (g_on && d != nullptr) {
-        static std::atomic<bool> said{false};
-        if (!said.exchange(true)) {
-            LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{}); plain look: "
-                     "this Hookshot has no hos_coop_draw2 (build it again with our patch for the game look)",
-                     static_cast<int>(d->width), static_cast<int>(d->height));
+    static CoopBoundary::Site site{"hos_coop_draw"};
+    CoopExportGuard::Guard(site, [&] {
+        if (g_on && d != nullptr) {
+            static std::atomic<bool> said{false};
+            if (!said.exchange(true)) {
+                LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{}); plain look: "
+                         "this Hookshot has no hos_coop_draw2 (build it again with our patch for the game look)",
+                         static_cast<int>(d->width), static_cast<int>(d->height));
+            }
+            CoopHookshot::NoGameLook();
+            CoopHookshot::NoteDrawn(*d);
+            // An older Hookshot's table ends at text_width: the rest stays empty.
+            HosCoopDraw t{};
+            t.width = d->width;
+            t.height = d->height;
+            t.user = d->user;
+            t.rect = d->rect;
+            t.circle = d->circle;
+            t.triangle = d->triangle;
+            t.text = d->text;
+            t.text_width = d->text_width;
+            CoopDraw::Draw(t, CoopHookshot::DrawScene());
+            CoopModsRuntime::Overlay(t);
         }
-        CoopHookshot::NoGameLook();
-        CoopHookshot::NoteDrawn(*d);
-        // An older Hookshot's table ends at text_width: the rest stays empty.
-        HosCoopDraw t{};
-        t.width = d->width;
-        t.height = d->height;
-        t.user = d->user;
-        t.rect = d->rect;
-        t.circle = d->circle;
-        t.triangle = d->triangle;
-        t.text = d->text;
-        t.text_width = d->text_width;
-        CoopDraw::Draw(t, CoopHookshot::DrawScene());
-        CoopModsRuntime::Overlay(t);
-        CoopKeyboard::Draw(t, 0);   // (the pause menu's on-screen keyboard, over the rest)
-    }
+    });
 }
 // The game's camera for the name tags (hos_coop_draw.h), on the thread that records Hookshot's draws: published as
 // the emulator's renderer does (lichii/hook/coop_camera_track.h), the largest scene target of a frame. The game's
 // clip y runs up, as on the emulator ("clip y up"); LICHII_COOP_CAMERA_FLIP_Y turns the markers over if not.
 COOP_HOOKSHOT_EXPORT int hos_coop_camera_wanted(uint64_t frame, float width, float height) {
-    return g_on && CoopCamera::Wanted() && CoopCamera::Better(frame, width, height) ? 1 : 0;
+    static CoopBoundary::Site site{"hos_coop_camera_wanted"};
+    return CoopExportGuard::Guard(site, static_cast<int>(0), [&]() -> int {
+        return g_on && CoopCamera::Wanted() && CoopCamera::Better(frame, width, height) ? 1 : 0;
+    });
 }
 COOP_HOOKSHOT_EXPORT void hos_coop_camera(uint64_t frame, const float* block, float width, float height) {
-    if (!g_on || !CoopHookshot::CameraBlockOk(block, width, height)) {
-        return;
-    }
-    static std::atomic<bool> said{false};
-    if (!said.exchange(true)) {
-        LOG_INFO(Core, "coop: Hookshot hands co-op the game's camera ({}x{} scene): name tags on",
-                 static_cast<int>(width), static_cast<int>(height));
-    }
-    CoopCamera::Publish(frame, block + CoopHookshot::kCameraMatrix, width, height, false);
-}
-COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
-    if (g_on && d != nullptr) {
+    static CoopBoundary::Site site{"hos_coop_camera"};
+    CoopExportGuard::Guard(site, [&] {
+        if (!g_on || !CoopHookshot::CameraBlockOk(block, width, height)) {
+            return;
+        }
         static std::atomic<bool> said{false};
         if (!said.exchange(true)) {
-            LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",
-                     static_cast<int>(d->width), static_cast<int>(d->height));
+            LOG_INFO(Core, "coop: Hookshot hands co-op the game's camera ({}x{} scene): name tags on",
+                     static_cast<int>(width), static_cast<int>(height));
         }
-        CoopHookshot::DrawWithLook(*d);
-        CoopModsRuntime::Overlay(*d);
-        CoopKeyboard::Draw(*d, CoopHookshot::g_look_state.load() == CoopHookshot::kLookOn ? CoopHookshot::g_look.medium : 0);   // (over the rest)
-    }
+        CoopCamera::Publish(frame, block + CoopHookshot::kCameraMatrix, width, height, false);
+    });
+}
+COOP_HOOKSHOT_EXPORT void hos_coop_draw2(const HosCoopDraw* d) {
+    static CoopBoundary::Site site{"hos_coop_draw2"};
+    CoopExportGuard::Guard(site, [&] {
+        if (g_on && d != nullptr) {
+            static std::atomic<bool> said{false};
+            if (!said.exchange(true)) {
+                LOG_INFO(Core, "coop: drawing over Hookshot's picture: chat lines, name tags ({}x{})",
+                         static_cast<int>(d->width), static_cast<int>(d->height));
+            }
+            CoopHookshot::DrawWithLook(*d);
+            CoopModsRuntime::Overlay(*d);
+        }
+    });
 }
 }

@@ -42,18 +42,22 @@ var System = {
     IO: {
         Path: {
             Combine: function (a, b) { return fso.BuildPath(a, b); },
-            GetDirectoryName: function (p) { return fso.GetParentFolderName(p); }
+            GetDirectoryName: function (p) { return fso.GetParentFolderName(p); },
+            GetFileName: function (p) { return fso.GetFileName(p); }
         },
         File: {
             Exists: function (p) { return fso.FileExists(p); },
             ReadAllText: function (p) { return readFile(p); },
             WriteAllText: function (p, t) { writeFile(p, t); },
-            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); }
+            Delete: function (p) { if (fso.FileExists(p)) fso.DeleteFile(p); },
+            Copy: function (a, b, over) { fso.CopyFile(a, b, over); }
         },
         Directory: {
             Exists: function (p) { return fso.FolderExists(p); },
             CreateDirectory: function (p) { mkdirs(p); },
             Move: function (a, b) { fso.MoveFolder(a, b); },
+            GetDirectories: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).SubFolders); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; },
+            GetFiles: function (p) { var r = [], e = new Enumerator(fso.GetFolder(p).Files); for (; !e.atEnd(); e.moveNext()) r.push(e.item().Path); return r; },
             // (rmdir without /s: a link goes, not what it names; a folder with files in it would stay)
             Delete: function (p, recursive) {
                 deleted.push(p);
@@ -108,6 +112,14 @@ writeFile(fso.BuildPath(kit, "coop-options.ini"),
           "name = Saria\r\ncolor = red\r\nLICHII_COOP_PUPPET=1\r\nLICHII_COOP_PAD=2\r\n# LICHII_COOP_KEYBOARD=off\r\n");
 mkdirs(fso.BuildPath(game, "user\\save"));
 writeFile(fso.BuildPath(game, "user\\save\\host.sav"), "x");
+mkdirs(fso.BuildPath(game, "ngx"));                       // DLSS's runtime, built in after the instances were made
+writeFile(fso.BuildPath(game, "ngx\\nvngx_dlss.dll"), "dlss");
+mkdirs(fso.BuildPath(game, "logs"));
+writeFile(fso.BuildPath(game, "newfile.dll"), "new");
+writeFile(fso.BuildPath(game, "coop.ini"), "own");
+writeFile(fso.BuildPath(game, "coop-saves.ini"), "solo");
+writeFile(fso.BuildPath(game, "coop-name-checked.txt"), "solo");
+// (written by the solo game after the instances were made: must stay each instance's own)
 var instances = [];
 for (var i = 0; i < 3; i++) {
     instances[i] = fso.BuildPath(root, "content\\OoTCoopLongshot\\Instance" + i);
@@ -194,6 +206,12 @@ for (var q = 0; q < 3; q++) {
           ls.indexOf("vsync=0") >= 0, "longshot_options.ini " + q + ": " + ls);
     check(readFile(fso.BuildPath(instances[q], "player-key.txt")).length >= 32, "player-key.txt " + q);
 }
+check(readFile(fso.BuildPath(instances[0], "ngx\\nvngx_dlss.dll")) === "dlss" && (fso.GetFolder(fso.BuildPath(instances[0], "ngx")).Attributes & 1024) !== 0, "ngx folder linked into an instance made before it");
+check(readFile(fso.BuildPath(instances[1], "newfile.dll")) === "new", "a new game DLL copied in");
+check(!fso.FileExists(fso.BuildPath(instances[1], "coop-saves.ini")) && !fso.FileExists(fso.BuildPath(instances[1], "coop-name-checked.txt")), "per-player files the solo game wrote are not taken");
+check(!fso.FolderExists(fso.BuildPath(instances[0], "logs")), "logs stay the instance's own");
+var noted = readFile(fso.BuildPath(game, "nucleus-players\\instances.txt"));
+check(noted === "1=" + instances[0] + "\r\n2=" + instances[1] + "\r\n3=" + instances[2] + "\r\n", "instances.txt: " + noted);
 check(readFile(fso.BuildPath(instances[0], "coop.ini")).indexOf("name = Saria\r\n") >= 0, "player 1 name");
 check(readFile(fso.BuildPath(instances[1], "coop.ini")).indexOf("name = A name that is f\r\n") >= 0, "name cut to 16");
 check(readFile(fso.BuildPath(instances[2], "coop.ini")).indexOf("name = Player 3\r\n") >= 0, "empty name: Player 3");
@@ -239,8 +257,10 @@ Context.ExePath = fso.BuildPath(instances[1], "longshot.exe");
 Context.Nickname = "Mido";
 Context.GamepadId = 3;
 Context.IsKeyboardPlayer = false;
+writeFile(fso.BuildPath(game, "newfile.dll"), "rebuilt");   // a rebuild replaced the DLL
 Game.Play();
 check(readFile(fso.BuildPath(instances[1], "coop.ini")).indexOf("password = " + pw + "\r\n") >= 0, "password from session.txt");
+check(readFile(fso.BuildPath(instances[1], "newfile.dll")) === "rebuilt", "a DLL the handler copied is copied again after a rebuild");
 check(readFile(fso.BuildPath(instances[1], "coop-options.ini")).indexOf("LICHII_COOP_PAD=3\r\n") >= 0, "Nucleus's pad 3");
 
 // Runs again (the next session): links stay, a new password.
@@ -270,9 +290,10 @@ attrMode = "number";
 // One choice on Nucleus's setup screen: This PC, Host on this PC (the default) or Join a game on this network.
 var opt = Game.Options.length === 1 ? Game.Options[0] : {};
 check(Game.Options.length === 1 && opt.name === "This PC" && opt.key === "ThisPC", "the option This PC");
-check(opt.values && opt.values.length === 2 && opt.values[0] === "Host on this PC" &&
-      opt.values[1] === "Join a game on this network" && opt.def === "Host on this PC",
-      "its two values, Host on this PC the default: " + (opt.values ? opt.values.join(" | ") : ""));
+check(opt.values && opt.values.length === 3 && opt.values[0] === "Host on this PC" &&
+      opt.values[1] === "Join a game on this network" && opt.values[2] === "Join a game on another PC" &&
+      opt.def === "Host on this PC",
+      "its three values, Host on this PC the default: " + (opt.values ? opt.values.join(" | ") : ""));
 
 // A run as player p (0-based); returns its coop.ini.
 function playAs(p) {
@@ -463,6 +484,79 @@ newSession();
 var back = playAs(0);
 check(startedWindows.length === 1 && back.indexOf("server = 127.0.0.1\r\n") >= 0 && back.indexOf("join_lan") < 0 &&
       fso.FileExists(sessionTxt), "host after join: " + back);
+
+// Join a game on another PC: no server started, every game's coop.ini points at the host, the guard skipped, the
+// handler closes no coop_server, a bad code tells the player.
+function noHostLine(p) {
+    var t = readFile(fso.BuildPath(instances[p], "coop.ini"));
+    return t !== "" && !/^\s*(server|port|password)\s*=/mi.test(t);   // written, and no host line (starts solo)
+}
+var REMOTE = { ThisPC: "Join a game on another PC" }, joinTxt = fso.BuildPath(game, "nucleus-players\\join.txt");
+check(coopSha256([97, 98, 99]).slice(0, 4).join(",") === "186,120,22,191", "SHA-256 of abc: " + coopSha256([97, 98, 99]).slice(0, 4).join(","));
+var invite = "CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GA";
+writeFile(joinTxt, invite + "\r\n");
+newSession();
+Context.Options = REMOTE;
+Game.KillProcessesOnClose = ["coop_server"];
+System.Diagnostics.Process.running = 1;        // a Host.bat of this PC is running: not our business
+logged = [];
+var j1 = playAs(0), j2 = playAs(1), j3 = playAs(2);
+System.Diagnostics.Process.running = 0;
+check(startedWindows.length === 0 && startedServers.length === 0, "remote: no server started");
+check(logged.join("\n").indexOf("already running") < 0, "remote: the running-server guard is skipped");
+check(Game.KillProcessesOnClose.length === 0, "remote: nothing closed at the end (no coop_server killed)");
+var joinOk = true, js = [j1, j2, j3];
+for (var q = 0; q < 3; q++) {
+    joinOk = joinOk && js[q].indexOf("server = 203.0.113.5\r\nport = 27510\r\n") >= 0 &&
+             js[q].indexOf("password = ABCDEFGHJKLMNPQRSTUV\r\n") >= 0;
+}
+check(joinOk, "remote: every game's coop.ini points at the host: " + j3);
+// A later start that runs the script anew per player: from session.txt.
+coopSession = null;
+check(playAs(1).indexOf("server = 203.0.113.5\r\nport = 27510\r\n") >= 0, "remote: a later player from session.txt");
+// The Same network / VPN line, with and without a port.
+writeFile(joinTxt, "26.1.2.3:27600 hunter2x\r\n");
+newSession();
+check(playAs(0).indexOf("server = 26.1.2.3\r\nport = 27600\r\n") >= 0, "remote: address:port password");
+writeFile(joinTxt, "25.9.9.9 hunter2x\r\n");
+newSession();
+var lineNoPort = playAs(0);
+check(lineNoPort.indexOf("server = 25.9.9.9\r\nport = 27510\r\n") >= 0 && lineNoPort.indexOf("password = hunter2x\r\n") >= 0,
+      "remote: address password, the kit port");
+// Bad input: the player is told, no server started, nothing joined.
+var bads = [invite.substring(0, invite.length - 1), "CHFSA-6JFPP-5AATB-UCVDW-EXFYG-ZH2J3-KSGWK-S2GB", "hello", "999.1.1.1 pw", "",
+            "EHDDG-3ACVT-ASCAS-DASCS-NB2JP-PE7EA-GJEUQ-WC2NA-MLPZ3-JS"];
+for (var bi = 0; bi < bads.length; bi++) {
+    writeFile(joinTxt, bads[bi] + "\r\n");
+    newSession();
+    logged = [];
+    writeFile(sessionTxt, "stale\r\n10.0.0.1\r\n27510\r\n");
+    for (var dp = 0; dp < 2; dp++) {
+        writeFile(fso.BuildPath(instances[dp], "coop.ini"), "server = 203.0.113.5\r\nport = 27510\r\npassword = oldhost\r\n");   // the last session's host
+    }
+    var badThrew = false, bj = "", bj2 = "", badThrew2 = false;
+    try { bj = playAs(0); } catch (e1) { badThrew = true; }
+    try { bj2 = playAs(1); } catch (e2) { badThrew2 = true; }   // a later player: nothing either
+    check(badThrew && badThrew2 && startedWindows.length === 0 && startedServers.length === 0 &&
+          logged.join("\n").indexOf("Nothing is started") >= 0 && !fso.FileExists(sessionTxt) && noHostLine(0) && noHostLine(1),
+          "remote: '" + bads[bi] + "' tells the player, starts nothing, no host line in coop.ini, no stale session: " + logged.join(" | "));
+}
+// A bad code keeps the player's own lines (the name typed in the game, the look): only the host's lines go, and the
+// next start still has them.
+writeFile(joinTxt, "hello\r\n");
+newSession();
+writeFile(fso.BuildPath(instances[0], "coop.ini"),
+          "server = 203.0.113.5\r\nport = 27510\r\npassword = oldhost\r\nname = Kokiri Kid\r\nlook_boots = black\r\ncolor = 3\r\n");
+try { playAs(0); } catch (e3) { }
+var noHost = readFile(fso.BuildPath(instances[0], "coop.ini"));
+check(noHostLine(0) && noHost.indexOf("name = Kokiri Kid\r\n") >= 0 && noHost.indexOf("look_boots = black\r\n") >= 0 &&
+      noHost.indexOf("color = 3\r\n") >= 0, "remote: a bad code keeps the name and look in coop.ini: " + noHost);
+fso.DeleteFile(joinTxt);
+Context.Options = undefined;
+newSession();
+var afterBad = playAs(0);
+check(afterBad.indexOf("name = Kokiri Kid\r\n") >= 0 && afterBad.indexOf("look_boots = black\r\n") >= 0,
+      "the start after a bad code still has the name and look: " + afterBad);
 
 // What the player set in the game stays over a new start: the name typed in the game and the look in coop.ini, and the
 // settings the game saved beside it (coop-options.ini); the controller lines are the handler's again.

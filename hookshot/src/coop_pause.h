@@ -93,6 +93,9 @@ void JoinPasteNow();
 // The page's Join view: join `room` (a room name) on the kit's relay (coop-options.ini's relay), with `password` (the
 // host's join password, "" none). No relay set, refused or failed: PageSays why.
 void JoinRoomNow(const std::string& room, const std::string& password);
+// A private game picked on the Lobby tab's Public games: the Multiplayer tab on its Join page with the room typed,
+// the Password row chosen (CoopPauseMenu::Menu::PrefillJoin).
+void OpenJoinRoom(const std::string& room);
 // A relay is set in coop-options.ini (relay = ...): a room name can be joined through it.
 bool RelaySet();
 // Auto-rejoin (coop_auto_rejoin.h; coop-options.ini auto_rejoin): on or off, saved at once; and whether a dropped

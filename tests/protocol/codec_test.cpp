@@ -2004,9 +2004,9 @@ TEST_CASE("down but not out: types 470 to 472, mode and state on the session cha
     CHECK(may_send(Sender::server, t));
   }
 
-  // The defaults are the ones a server starts with: on, 45 s, 3 s, three hearts.
+  // The defaults are the ones a server starts with: on, 45 s, 5 s (row 174), three hearts.
   Message mode = DbnoMode{};
-  CHECK(std::get<DbnoMode>(mode) == DbnoMode{0, true, 45, 30, 12});
+  CHECK(std::get<DbnoMode>(mode) == DbnoMode{0, true, 45, 50, 12});
   CHECK_FALSE(sender_of(mode));  // no player field: the server says who set it
   Bytes b = must_encode(mode);
   REQUIRE(b.size() == kHeaderSize + 5);
@@ -2723,6 +2723,33 @@ TEST_CASE("boss cutscene messages: types 520 and 521, on the session channel, bo
   Message given = BossHeart{2, 4, true, 20};
   CHECK(check_received(given, Sender::server, kChannelSession) == Error::none);
   CHECK(check_received(given, Sender::client, kChannelSession) == Error::wrong_sender);  // a client names itself 0
+}
+
+TEST_CASE("BOSS_ALIVE: the host's save load, its bosses alive (row 159)") {
+  const Message alive = BossAlive{0, 0x03e0, 0x0060};
+  CHECK(type_of(alive) == MessageType::boss_alive);
+  CHECK(static_cast<std::uint16_t>(MessageType::boss_alive) == 522);
+  CHECK(channel_of(alive) == kChannelProgress);  // after the FLAG_RESET it follows
+  CHECK(check_received(alive, Sender::client, kChannelProgress) == Error::none);
+  CHECK(check_received(alive, Sender::client, kChannelSession) != Error::none);
+  Message relayed = alive;
+  CHECK(set_sender(relayed, 1));
+  CHECK(check_received(relayed, Sender::server, kChannelProgress) == Error::none);
+  Bytes b = must_encode(alive);
+  CHECK(b.size() == kHeaderSize + 5);
+  Message back;
+  REQUIRE(decode(b, back) == Error::none);
+  CHECK(back == alive);
+  Bytes out;
+  CHECK(encode(BossAlive{0, 0x0400, 0}, out) == Error::bad_value);       // past the ten bosses
+  CHECK(encode(BossAlive{0, 0x0001, 0x0002}, out) == Error::bad_value);  // alive but not read
+  CHECK(encode(BossAlive{kMaxPlayers + 1, 1, 1}, out) == Error::bad_value);
+  CHECK(out.empty());
+  b[kHeaderSize + 2] = 0x07;  // known's high byte (little end): bit 10, past the ten bosses
+  CHECK(decode(b, back) == Error::bad_value);
+  b = must_encode(alive);
+  b[kHeaderSize + 3] = 0x01;  // alive's low byte: boss 0, not read by the host
+  CHECK(decode(b, back) == Error::bad_value);
 }
 
 TEST_CASE("bad boss cutscene messages are refused") {

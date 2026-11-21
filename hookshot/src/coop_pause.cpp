@@ -16,6 +16,7 @@
 #include "common/logging.h"
 #include "coop/protocol/messages.hpp"
 #include "coop_auto_rejoin.h"
+#include "coop_char_colours.h"
 #include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
@@ -43,6 +44,7 @@
 #include "coop_voice.h"
 #include "hos_coop_host.h"
 #include "nat_codes.hpp"
+#include "nat_net.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -94,6 +96,7 @@ bool g_coop_on = false;      // co-op came with the game's start (coop.ini named
 bool g_shown = false;        // the tab shows in Hookshot's menu
 bool g_native = false;       // the title's own rows show its pages instead (OpenNative): no overlay
 std::string g_doing;         // what the tab started: "hosting", "joined", "" none
+bool g_hosted_public = false;  // the game hosting now was started as a public game (the Host page's Game row)
 // Auto-rejoin (coop_auto_rejoin.h): the planner, and what the player did since its last update (its own Host or Join,
 // a Leave), which stop what it planned; g_auto_join: the join being made is the planner's, not the player's.
 CoopAutoRejoin::Planner g_rejoin;
@@ -111,9 +114,15 @@ bool g_copy_tried = false;
 bool g_answer_copy_tried = false;
 std::uint64_t g_session = 0;   // one more for each Host or Join: a clipboard result of an earlier one is dropped
 std::string g_answer_note;   // what became of the friend's answer code the host pasted ("" when none)
+// A bare name joined as a PC on the home network (CoopTitleMenu::BareJoinName) with a relay set: its room line, joined
+// next when no game there answered within kPcTryMs (a router or ISP that answers any name). Empty: none.
+std::string g_room_fallback;
+std::uint64_t g_room_fallback_ms = 0;
+constexpr std::uint64_t kPcTryMs = 6000;
 std::string g_join_text;     // the code (or address) this join used: remembered once connected
 bool g_join_saved = false;
 std::vector<std::string> g_lan_lines;   // "Same network"'s or "VPN"'s lines while they are shown
+std::string g_lan_password;             // the join password those lines hold (a new one: they are old)
 std::uint64_t g_next_session_ms = 0;
 std::atomic<int> g_wanted{HOS_COOP_MENU_WANT_NOTHING};
 
@@ -159,7 +168,7 @@ std::vector<std::string> StatusLines(const HosCoopStatus& st, const CoopLobby::S
     v.invite = st.invite;
     v.answer = st.answer;
     v.copied = g_copied;
-    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty()) {
+    if (v.host && v.state == HOS_COOP_HOSTING && !g_lan_lines.empty() && g_lan_password == st.password) {
         return g_lan_lines;
     }
     std::vector<std::string> lines = CoopTitleMenu::PlainStatus(v);
@@ -219,6 +228,7 @@ CoopPauseMenu::Session SessionNow() {
     default: s.state = State::kOff; break;
     }
     s.hosting = g_doing == "hosting";
+    s.public_game = s.hosting && g_hosted_public;
     s.by_launcher = g_coop_on;
     if (s.hosting) {
         s.players = st.players;
@@ -238,6 +248,7 @@ void RefreshSession(bool now) {
     if (now || NowMs() >= g_next_session_ms) {
         g_next_session_ms = NowMs() + 250;
         g_menu.SetSession(SessionNow());
+        g_menu.SetCharacter(CoopCharColours::ShownCharacter() != 0);   // (#308's Customize page: Link's colours wait)
     }
 }
 
@@ -360,6 +371,22 @@ void Follow(const HosCoopStatus& st) {
             LOG_INFO(Core, "coop: multiplayer tab: {}", said);   // (the English detail, for the log)
         }
     }
+    // A bare name tried as a PC: no game answered there in time, so it is the room of that name on the relay.
+    if (!g_room_fallback.empty()) {
+        if (g_doing != "joined" || CoopLobby::Now().connected) {
+            g_room_fallback.clear();
+        } else if (NowMs() - g_room_fallback_ms >= kPcTryMs) {
+            const std::string line = std::exchange(g_room_fallback, std::string());
+            const auto bare = CoopTitleMenu::BareJoinName(line.substr(0, line.find('@')));
+            LOG_INFO(Core, "coop: multiplayer tab: join: no game answered at that PC: as a room on the relay");
+            CoopHookshot::HostMenu().Leave();
+            g_doing.clear();
+            g_menu.SetNote({"No game answered at a PC called " + bare.value_or("that") + ": trying the room " +
+                            bare.value_or("") + " on your relay."});
+            Join(line);
+            return;
+        }
+    }
     // Once the session took this game in: the host's name is known then (PlayerList).
     if (g_doing == "joined" && st.state == HOS_COOP_CONNECTED && !g_join_saved && !g_join_text.empty() &&
         CoopLobby::Now().connected) {
@@ -391,7 +418,9 @@ void Follow(const HosCoopStatus& st) {
         const CoopLobby::Seen seen = CoopLobby::Now();
         if (local_port != 0 && seen.connected && seen.self != 0 && seen.self == seen.host) launcher_port = local_port;
     }
-    if ((host && st.state == HOS_COOP_HOSTING) || launcher_port != 0) {
+    // (a public game, in the game or Host.bat's (coop-options.ini public_game): the relay only, no LAN line)
+    if ((host && st.state == HOS_COOP_HOSTING && !g_hosted_public) ||
+        (launcher_port != 0 && !g_menu.options().public_game)) {
         const CoopTitleMenu::Options& o = g_menu.options();
         CoopLan::Game g;
         g.name = o.name;
@@ -520,7 +549,7 @@ bool Host() {
     h.invite = 1;
     h.pvp = o.pvp ? 1 : 0;
     h.approve_joins = o.approve_joins ? 1 : 0;
-    h.same_network_password = o.same_network_password ? 1 : 0;   // (off: this network's players need none)
+    h.same_network_open = o.same_network_open ? 1 : 0;   // (off, the default: this network's players need the password too)
     h.max_players = static_cast<std::uint8_t>(o.max_players);
     // coop-options.ini's relay lines, as Host.bat uses them (issue 261: a room name friends type in Join a game).
     h.relay_via = o.relay.empty() ? nullptr : o.relay.c_str();
@@ -530,6 +559,13 @@ bool Host() {
     // room name without one; never the player's name unless they typed it there)
     const std::string& shown = o.list_name.empty() ? o.relay_room : o.list_name;
     h.relay_list = o.list_room && !o.relay_room.empty() ? shown.c_str() : nullptr;
+    // A public game (the Host page's Game row): anyone joins with no password, relay only, always listed.
+    h.public_game = o.public_game ? 1u : 0u;
+    // The host's kept bans (by player key), beside coop.ini: a player banned once stays out of every game hosted here.
+    const std::string bans_file = CoopFiles::Utf8Path(CoopRuntime::GameDir() / "coop-bans.txt");
+    h.bans_file = bans_file.c_str();
+    if (o.public_game) h.relay_list = shown.c_str();
+    g_hosted_public = o.public_game;
     g_doing = "hosting";
     ++g_session;
     g_copied = false;
@@ -547,13 +583,41 @@ bool Host() {
 
 // False when it did not start: refused (co-op on already, the code not readable; the menu's note says why) or the
 // join could not start (the session's lines say why).
-bool Join(const std::string& text) {
+// Whether this PC finds `name` as a PC (a name on the home network, or in DNS). The lookup blocks, as the plain
+// address join's own lookup does (CoopHostMenu::Menu::Join).
+bool PcFound(const std::string& name) {
+    if (enet_initialize() != 0) {
+        return true;   // (no network: the join itself says so)
+    }
+    const bool found = coop::server::nat::resolve(name, CoopTitleMenu::kDefaultPort).has_value();
+    enet_deinitialize();
+    return found;
+}
+
+bool Join(const std::string& text_in) {
     if (!g_auto_join) g_player_acted = true;
     if (Busy()) {
         g_menu.SetNote({"Co-op is on already in this game: stop it first, or start the game again."});
         return false;
     }
     namespace nat = coop::server::nat;
+    // A bare name ("mypc", "forest-gang"): a PC on the home network first, then a room on the relay.
+    std::string text = text_in;
+    std::string fallback;   // (a bare name joined as a PC: its room, should no game answer there)
+    const auto bare = CoopTitleMenu::BareJoinName(text);
+    const std::string relay(CoopTitleMenu::Trim(g_menu.options().relay));
+    if (bare && !nat::looks_like_code(text) && PcFound(*bare)) {
+        if (!relay.empty()) fallback = CoopTitleMenu::RoomJoinLine(text, relay);
+    } else if (bare && !nat::looks_like_code(text)) {
+        if (relay.empty()) {
+            g_menu.SetNote({"No PC called " + *bare + " was found. To join a room by its name, set a relay first: "
+                            "Co-op Settings, Relay. Or type the host's IP address."});
+            LOG_INFO(Core, "coop: multiplayer tab: join: a bare name is no PC here and no relay is set");
+            return false;
+        }
+        text = CoopTitleMenu::RoomJoinLine(text, relay);
+        LOG_INFO(Core, "coop: multiplayer tab: join: a bare name is no PC here: as a room on the relay");
+    }
     CoopTitleMenu::CodeResult code;
     code.looks_like_code = nat::looks_like_code(text);
     if (code.looks_like_code) {
@@ -580,7 +644,7 @@ bool Join(const std::string& text) {
     if (!std::exchange(g_name_retry, false)) g_name_suffix.clear(), g_name_tries = 0;   // (a join of the player's own)
     std::string name = o.name;
     if (!g_name_suffix.empty()) {   // (at most 16 bytes in all: the name cut before a UTF-8 letter's start)
-        std::size_t n = std::min(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
+        std::size_t n = (std::min)(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
         while (n > 0 && n < name.size() && (static_cast<unsigned char>(name[n]) & 0xc0) == 0x80) --n;
         name = std::string(CoopTitleMenu::Trim(name.substr(0, n))) + g_name_suffix;
     }
@@ -591,6 +655,8 @@ bool Join(const std::string& text) {
     j.password = password.empty() ? nullptr : password.c_str();
     g_doing = "joined";
     g_join_text = text;
+    g_room_fallback = fallback;
+    g_room_fallback_ms = NowMs();
     g_join_saved = false;
     ++g_session;
     g_answer_copied = false;
@@ -606,6 +672,7 @@ bool Join(const std::string& text) {
 
 void Leave() {
     g_player_left = true;
+    g_room_fallback.clear();
     LOG_INFO(Core, "coop: multiplayer tab: {}", g_doing == "hosting" ? "stop hosting" : "leave the friend's game");
     CoopHookshot::HostMenu().Leave();
     CoopTitle::StopSaveWait();
@@ -716,6 +783,7 @@ void CopyLan(bool vpn) {
         if (session != g_session) {
             return;   // (hosted again or joined since: these lines are old)
         }
+        g_lan_password = password;
         g_lan_lines = vpn ? CoopTitleMenu::VpnLines(addresses, port, password, copied)
                           : CoopTitleMenu::HomeLines(addresses, port, password, copied);
         LOG_INFO(Core, "coop: multiplayer tab: host: {}: {} address(es){}", vpn ? "VPN" : "same network",
@@ -1003,30 +1071,32 @@ bool g_finding = false;
 void RefreshFound(std::uint64_t now) {
     const bool want = (g_shown || g_native) && g_menu.page() == CoopPauseMenu::Page::kFind;
     if (!want) {
-        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(false, now, {});
+        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(CoopRoomList::Viewer::kMenu, false, now, {});
         g_finding = false;
         return;
     }
     g_finding = true;
     const bool online = g_menu.find_online();
     CoopLanNet::Look(!online, now);
-    CoopRoomList::Look(online, now, g_menu.options().relay);
+    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, online, now, g_menu.options().relay);
     std::vector<CoopPauseMenu::Menu::Found> games;
     std::string state;
     const int mine = coop::protocol::kProtocolVersion;
     if (online) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
-            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopPauseTab::ListValue(r.players, r.max, r.protocol == mine),
-                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine});
+            // (the same words as the Lobby tab's and the pause tab's Public games: CoopRoomList::DetailText)
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopI18n::Tr(CoopRoomList::DetailText(r, mine)),
+                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine,
+                             r.is_public});
         }
-        state = rooms.state;
+        state = rooms.state.empty() ? std::string() : CoopI18n::Tr(rooms.state);
     } else {
         for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
             games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),
                              CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine), h.address,
                              h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players, h.game.max,
-                             h.game.protocol == mine});
+                             h.game.protocol == mine, false});
         }
     }
     g_menu.SetFound(std::move(games), std::move(state));
@@ -1371,6 +1441,13 @@ void CloseNative() {
     if (!g_native) return;
     g_native = false;
     if (!g_shown) g_menu.Hide();
+}
+
+void OpenJoinRoom(const std::string& room) {
+    Open(CoopPauseMenu::Page::kJoin);
+    std::lock_guard lock(g_mutex);
+    g_menu.PrefillJoin(room);
+    LOG_INFO(Core, "coop: multiplayer tab: a private game from the Lobby's Public games: the Join page, its password next");
 }
 
 void Open(CoopPauseMenu::Page page) {

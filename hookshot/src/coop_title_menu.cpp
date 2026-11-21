@@ -243,6 +243,18 @@ bool PasswordOk(std::string_view password) {
     });
 }
 
+std::string Options::RandomRoomName(std::uint64_t seed) {
+    static constexpr const char* kWords[] = {"forest", "lake",  "field", "river",  "valley", "meadow",
+                                             "canyon", "grove", "cliff", "marsh",  "harbor", "summit"};
+    std::uint64_t x = seed * 0x9E3779B97F4A7C15ull + 0xD1B54A32D192ED03ull;   // (splitmix64)
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    x ^= x >> 31;
+    const char* word = kWords[x % (sizeof kWords / sizeof kWords[0])];
+    const unsigned digits = static_cast<unsigned>((x >> 16) % 9000) + 1000;
+    return std::string(word) + "-" + std::to_string(digits);
+}
+
 Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     Options o;
     if (const auto v = IniGet(coop_ini, "name"); v && NameOk(*v)) {
@@ -274,10 +286,11 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.show_players = On(IniGet(options_ini, "LICHII_COOP_SHOW_PLAYERS"));
     o.pvp = On(IniGet(options_ini, "pvp"));
     o.approve_joins = On(IniGet(options_ini, "approve_joins"));
-    o.same_network_password = On(IniGet(options_ini, "same_network_password"));
+    o.same_network_open = On(IniGet(options_ini, "same_network_open"));
     o.auto_rejoin = On(IniGet(options_ini, "auto_rejoin"));
     o.original_game = On(IniGet(options_ini, "original_game"));
     o.list_room = On(IniGet(options_ini, "list_room"));
+    o.public_game = On(IniGet(options_ini, "public_game"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
         o.password = *v;
@@ -346,7 +359,17 @@ bool RoomNameOk(std::string_view room) {
 bool RelayOk(std::string_view relay) {
     if (relay.empty()) return true;
     if (relay.size() > 128) return false;
-    return std::all_of(relay.begin(), relay.end(), [](unsigned char c) { return c > 0x20 && c < 0x7f; });
+    // host[:port], as the server reads it (server/relay_link.cpp parse_relay_address): a host of letters, digits, '.'
+    // and '-', then a port from 1 to 65535 when one is given.
+    std::string_view host = relay;
+    if (const auto colon = relay.rfind(':'); colon != std::string_view::npos) {
+        const std::string_view port = relay.substr(colon + 1);
+        if (port != Trim(port) || !ParsePort(port)) return false;
+        host = relay.substr(0, colon);
+    }
+    return !host.empty() && std::all_of(host.begin(), host.end(), [](unsigned char c) {
+        return std::isalnum(c) != 0 || c == '.' || c == '-';
+    });
 }
 
 void Options::Write(std::string& coop_ini, std::string& options_ini) const {
@@ -362,11 +385,17 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
     o = original_game ? IniSet(o, "original_game", "on", true) : IniUnset(o, "original_game");
-    o = same_network_password ? IniSet(o, "same_network_password", "on", true) : IniUnset(o, "same_network_password");
+    o = same_network_open ? IniSet(o, "same_network_open", "on", true) : IniUnset(o, "same_network_open");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
+    o = public_game ? IniSet(o, "public_game", "on", true) : IniUnset(o, "public_game");
     // (the relay: the kit's default needs no line; a room name, or none)
-    o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
-    o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);
+    // A line whose value did not change is kept as the player wrote it (its spacing and a comment after it).
+    if (std::string(Trim(IniGet(o, "relay").value_or(kDefaultRelay))) != relay) {
+        o = relay == kDefaultRelay ? IniUnset(o, "relay") : IniSet(o, "relay", relay, true);
+    }
+    if (std::string(Trim(IniGet(o, "relay_room").value_or(""))) != relay_room) {
+        o = relay_room.empty() ? IniUnset(o, "relay_room") : IniSet(o, "relay_room", relay_room, true);
+    }
     o = upnp ? IniUnset(o, "upnp") : IniSet(o, "upnp", "no", true);
     o = password.empty() ? IniUnset(o, "server_password") : IniSet(o, "server_password", password, true);
     o = debug_panel ? IniSet(o, "LICHII_COOP_DEBUG_PANEL", "1", false) : IniUnset(o, "LICHII_COOP_DEBUG_PANEL");
@@ -481,6 +510,24 @@ bool AddressOk(std::string_view typed) {
     }
     const std::string_view port = t.substr(colon + 1);
     return port == Trim(port) && ParsePort(port).has_value();
+}
+
+std::optional<std::string> BareJoinName(std::string_view join_line) {
+    const std::string_view t = Trim(join_line);
+    const std::string_view address = t.substr(0, t.find_first_of(" \t"));
+    if (address.empty() || address.find_first_of(".:@") != std::string_view::npos || !RoomNameOk(address)) {
+        return std::nullopt;
+    }
+    return std::string(address);
+}
+
+std::string RoomJoinLine(std::string_view join_line, std::string_view relay) {
+    const std::string_view t = Trim(join_line);
+    const std::size_t space = t.find_first_of(" \t");
+    const std::string_view password = space == std::string_view::npos ? std::string_view{} : Trim(t.substr(space));
+    std::string out = std::string(t.substr(0, space)) + "@" + std::string(Trim(relay));
+    if (!password.empty()) out += " " + std::string(password);
+    return out;
 }
 
 JoinTarget ReadJoin(std::string_view typed, const CodeResult& code) {

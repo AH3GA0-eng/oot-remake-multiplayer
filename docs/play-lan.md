@@ -10,7 +10,7 @@ Host and Join are in the game's menu, first tab **Multiplayer** ([setup.md](setu
 
 1. **The host** opens **Host** in the Multiplayer tab (and optionally picks another **Port** from 1 to 65535; default 27510), then chooses **Same network** (friends in the same house) or **VPN** (friends on Radmin VPN, Hamachi, ZeroTier, Tailscale or WireGuard with you). The game shows one line, for example `192.168.1.20:27510 abcdefghijklmnopqrst` (this PC's address and port, a space, the session's join password), and has copied it. **VPN** finds the VPN program's network card by its name and uses its address (Radmin VPN `26.x.x.x`, Hamachi `25.x.x.x`, Tailscale `100.x.x.x`, ZeroTier and WireGuard whatever they give); with no VPN running it says **No VPN found**.
 2. The host pastes that line into a chat with the friends (Ctrl+V), or tells them the address, the port and the password (the word after the address). It holds the join password, so keep it among friends.
-3. **The others** open **Join** in the Multiplayer tab and paste the line into **Room or address** (Ctrl+V), or type the host's address there, its **Port** and **Password** (the word after the address) below it, then choose **Join**. On the same network (an address such as `192.168.x.x` or `10.x.x.x`) the password can be left empty: the host lets its own network in without it, unless it set **Password on this network** to **Needed** in Co-op Settings. The pause menu's Multiplayer page, **Browse games**, lists the games on this network; pick one and **Join this game**, with no password to type ([protocol.md](protocol.md), "Same network").
+3. **The others** open **Join** in the Multiplayer tab and either paste the line on the page (Ctrl+V, or A on **Room or address** with a controller), or type the host's address into **Room or address**, then **Port** and **Password** (the word after the address), then choose **Join**. On the same network (an address such as `192.168.x.x` or `10.x.x.x`) the password can be left empty: the host lets its own network in without it when it set **Password on this network** to **Not needed** in Co-op Settings (Needed by default). Only on a network you trust: a tunnel, a VPN or a port forward on it brings players from the internet in from such an address too. The pause menu's Multiplayer page, **Find a game**, lists the games on this network; pick one and **Join this game** (no password to type when its host chose Not needed, else its password; [protocol.md](protocol.md), "Same network").
 4. If Windows asks about the firewall on the host's PC, allow the game on private networks.
 
 The invite code is for friends over the internet: it holds the host's internet address, which many routers do not let back into the same house. A joiner on a newer version than 0.10.1 also tries this PC and the home network with it, so the invite code then works in the same house and on the same PC too (with Host.bat's own password, or one of 20 letters or more: a short password is not sent across the home network). On 0.10.1, use the **Same house** address. **Copy the code again** on the Host screen brings the invite code back.
@@ -112,11 +112,28 @@ Player 1's start runs the kit's own `start-server.cmd`, as `Host.bat` does:
 - The players on this PC join by themselves at 127.0.0.1.
 - The first time, Windows may ask to let `coop_server.exe` through its firewall: allow it ([Firewall](#firewall) above). The Nucleus windows may cover the prompt and the server window: press Alt+Tab to find them.
 
+### Two PCs, two or more players on each (Join a game on another PC)
+
+PC 1 uses Nucleus with **This PC: Host on this PC** (above) and its server window shows the invite code. On **PC 2**, Nucleus can join that host too, with every game of PC 2:
+
+1. On PC 2, copy `OoTCoop.js` from the newer kit's `nucleus` folder into Nucleus's `handlers` folder again (the handler of 0.11.7 or older has no such choice).
+2. Put the host's invite code (or, for a VPN or the same network, its line `address:port password`) as the **first line** of `nucleus-players\join.txt` beside the game (make the file; the folder appears at the first start), or just copy it: with no `join.txt`, the handler reads the clipboard. Nucleus's options are lists of choices, so there is no box to type it in.
+3. Under **This PC** choose **Join a game on another PC**, set up the players and press **Play**. No server is started on PC 2: every game there writes its `coop.ini` to join the host directly, with the host's join password.
+4. A code the handler cannot read (a letter missing, an answer code, a code from a newer version) is told to you in a message box (and Nucleus's log) and nothing is started (the first game's start is abandoned with an error, no game opens); fix `join.txt` and press **Play** again.
+
+Ending the session closes only the games: this mode closes no `coop_server.exe`, so a server of your own on PC 2 keeps running. The games connect straight to the host's address from the code, with no join helper (the helper window of `Join.bat` serves one game only). That works when the host's router forwards the port (UPnP) or you are on a VPN or the same network (use the host's **Same network or VPN** line then); if the answer-code way through the routers is the only one that works for you, play one game per PC with the game's own **Join** instead.
+
+**"Co-op is already running" when starting a second game by hand:** `play.ps1` refuses a second copy of the same kit's exe. Nucleus makes one folder per player, so this mode does not meet it; by hand, use a second kit folder (as above).
+
 The game windows start in front of the server window. To see the invite code again, Alt+Tab to the window named **Squadala server**, or paste the clipboard right after the start.
 
 ### Join a game on this network
 
-With **This PC: Join a game on this network**, nobody on this PC starts a server. Each game joins the first game hosted on your network that it can join, with no password: a host lets its own network in. To join one host only, put `join_lan_host = <host's name>` in the kit's `coop-options.ini`. With no host found after 60 seconds, the game says so: pick one in the pause menu's Multiplayer page, **Browse games**. Saves, controllers and the 15 seconds between starts are as above. Ending the session still closes every `coop_server.exe` on this PC.
+With **This PC: Join a game on this network**, nobody on this PC starts a server. Each game joins the first game hosted on your network that it can join, with no password: a host lets its own network in. To join one host only, put `join_lan_host = <host's name>` in the kit's `coop-options.ini`. With no host found after 60 seconds, the game says so: pick one in the pause menu's Multiplayer page, **Browse games**. Saves, controllers and the 15 seconds between starts are as above. Ending the session closes only the games: this mode closes no `coop_server.exe`, so a server of your own on this PC keeps running.
+
+### Join a game on another PC
+
+With **This PC: Join a game on another PC**, nobody on this PC starts a server and every game joins one host elsewhere. Copy the host's invite code (or its Same network / VPN line, `address:port password`), or put it as the first line of `nucleus-players\join.txt` beside the game, then press Play. Each game connects directly to the host's address, so the host needs a router forward, a VPN or the same network. A missing or wrong code starts nothing and says why.
 
 ## Something does not work
 
