@@ -7499,3 +7499,78 @@ TEST_CASE("objects: row 178, the copies' fall line is the owner's fall guard's")
     CHECK(CoopObjects::IsBoss("Enemy_MiddleBoss_Poe_Meg"));
     CHECK_FALSE(CoopObjects::IsBoss("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part follows its root
 }
+
+// Player report 200 (Gerudo Fortress): the other player beat the jail guard while we were in the outdoor prison;
+// our copy of their guard died with them and our game ran its own defeat event, which warped our Link into the
+// cell's room below (under the map). Away from our Link's fight the copy now goes without a death.
+TEST_CASE("objects: report 200, a copy of another game's encounter killed away from our fight goes without a death") {
+    using CoopObjects::OutOfItsFight;
+    const proto::Vec3 guard{23.3f, 102.5f, -66.8f};                                   // cell 1's guard
+    CHECK(OutOfItsFight(false, proto::Vec3{1.1f, 122.0f, -103.4f}, guard));           // in the outdoor prison
+    CHECK(OutOfItsFight(false, proto::Vec3{23.0f, 110.0f, -66.0f}, guard));           // right above: a roof
+    CHECK_FALSE(OutOfItsFight(false, proto::Vec3{26.1f, 102.6f, -65.3f}, guard));     // in the fight
+    CHECK_FALSE(OutOfItsFight(false, proto::Vec3{40.0f, 104.0f, -60.0f}, guard));     // 18 m: in its room still
+    CHECK_FALSE(OutOfItsFight(true, proto::Vec3{1.1f, 122.0f, -103.4f}, guard));      // a dungeon: as before
+    CHECK_FALSE(OutOfItsFight(false, std::nullopt, guard));                            // our place unknown
+
+    constexpr const char* kGuard = "Enemy_MiddleBoss_GerudoThief";
+    REQUIRE(CoopObjects::IsLateEncounter(kGuard));
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, 0x5a17c0de0b1e0200ULL};
+    proto::ObjectSpawn relayed;
+    relayed.player_number = 1;
+    relayed.id = id;
+    relayed.actor = kGuard;
+    relayed.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+    const auto copy_of_theirs = [&](Sync& s) {
+        s.SetDeleteEvents(true);
+        s.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(s, 0, {}, 2);
+        s.Receive(relayed);
+        Tick(s, 100 * kMs, {}, 2);
+        Tick(s, 100 * kMs + kEncounterWaitUs, {}, 2);
+        Tick(s, 100 * kMs + 2 * kEncounterWaitUs, {}, 2);
+        const auto creates = s.Creates();
+        REQUIRE(creates.size() == 1);
+        s.Bind({{creates[0].key, 0x900}});
+        Tick(s, 200 * kMs + 2 * kEncounterWaitUs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+        REQUIRE(s.IdOf(0x900));
+        return creates[0].key;
+    };
+    const auto zero_for = [](const Step& st, std::uint64_t address) {
+        return std::any_of(st.writes.begin(), st.writes.end(),
+                           [&](const LifeWrite& w) { return w.address == address && (w.life <= 0 || w.hurt > 0); });
+    };
+    const std::uint64_t t = 300 * kMs + 2 * kEncounterWaitUs;
+
+    // We stand 20 m above it (the prison over the cell): its owner's kill deletes our copy, no killing life.
+    Sync far;
+    const auto key = copy_of_theirs(far);
+    far.SetPlayer(proto::Vec3{1.0f, 20.0f, 0.0f});
+    far.Bind({{key, 0x900}});
+    Tick(far, t, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+    far.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+    far.Bind({{key, 0x900}});
+    const Step gone = Tick(far, t + 10 * kMs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+    CHECK(far.GoneWithoutDeath(0x900));
+    CHECK_FALSE(zero_for(gone, 0x900));
+    const auto removes = far.Removes();
+    CHECK(std::find(removes.begin(), removes.end(), 0x900ULL) != removes.end());
+    CHECK(far.GoesWithoutDeath(0x900, t + 20 * kMs));  // (asked again from the life path: still gone)
+
+    // In the fight: as before, our game kills it itself (its own kill counts).
+    Sync near;
+    const auto key2 = copy_of_theirs(near);
+    near.Bind({{key2, 0x900}});
+    Tick(near, t, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+    near.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+    near.Bind({{key2, 0x900}});
+    Tick(near, t + 10 * kMs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+    CHECK_FALSE(near.GoneWithoutDeath(0x900));
+    CHECK_FALSE(near.GoesWithoutDeath(0x900, t + 20 * kMs));
+
+    // Our own enemy (no director copy) never goes so, wherever we stand.
+    Sync own;
+    own.SetPlayer(proto::Vec3{1.0f, 20.0f, 0.0f});
+    Tick(own, 0, {Enemy(0x700, 0x1234, 8, 1.0f, kGuard)}, 2);
+    CHECK_FALSE(own.GoesWithoutDeath(0x700, 10 * kMs));
+}

@@ -3,6 +3,7 @@
 #include "coop/protocol/animation_words.hpp"
 #include "coop_sensor_claim.h"
 #include "coop_bomb_share.h"
+#include "coop_dungeon.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
 #include "coop_world.h"
@@ -666,6 +667,15 @@ bool IsLateEncounter(std::string_view name) {
     return name != "Enemy_KotakeKoumeBattleManager";
 }
 
+bool OutOfItsFight(bool dungeon, const std::optional<coop::protocol::Vec3>& link, const coop::protocol::Vec3& enemy) {
+    if (dungeon || !link) {
+        return false;  // (a dungeon's rooms count their own kills; our Link's place not known: as before)
+    }
+    const float across = std::hypot(enemy[0] - (*link)[0], enemy[2] - (*link)[2]);
+    const float rise = std::fabs(enemy[1] - (*link)[1]);
+    return across > kFightReachM || rise > kFightRiseM;
+}
+
 std::string_view AnimationBase(std::string_view name) {
     for (const std::string_view suffix : {"_ModelOnlyLOD", "_LOD"}) {
         if (name.size() > suffix.size() && name.ends_with(suffix)) {
@@ -1254,6 +1264,48 @@ std::optional<std::uint8_t> Sync::OwnerOf(std::uint64_t address) const {
 bool Sync::OwnerSaysDead(std::uint64_t address) const {
     const auto it = objects_.find(address);
     return it != objects_.end() && (it->second.dead_at != 0 || it->second.owner_life_zero);
+}
+
+bool Sync::GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return false;
+    }
+    Object& o = it->second;
+    if (o.quiet_gone) {
+        return true;
+    }
+    if (!bound_.contains(address) || !IsLateEncounter(o.name)) {
+        return false;  // only a director's copy of another game's encounter (our own game made the others)
+    }
+    if (const auto own = owners_.find(o.id); own != owners_.end() && own->second.player == self_) {
+        return false;  // handed to us: ours to fight and to die here
+    }
+    if (!OutOfItsFight(CoopDungeon::IsDungeonScene(scene_), player_, o.position)) {
+        return false;
+    }
+    o.quiet_gone = true;
+    o.dead_now = true;
+    if (o.dead_at == 0) {
+        o.dead_at = now_us;
+    }
+    o.hit_sum = 0;
+    o.hit_place.reset();
+    o.hit_record.reset();
+    o.place_seen.reset();
+    dead_.insert(address);  // (Removes, before the next walk lists it again)
+    char where[96];
+    std::snprintf(where, sizeof where, "%.0f m across, %.0f m up/down",
+                  std::hypot(o.position[0] - (*player_)[0], o.position[2] - (*player_)[2]),
+                  std::fabs(o.position[1] - (*player_)[1]));
+    notes_.emplace_back("report 200: its owner killed it away from our Link's fight (" + std::string(where) +
+                        "): our copy goes without a death (its own defeat event would take our Link): " + o.name);
+    return true;
+}
+
+bool Sync::GoneWithoutDeath(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && it->second.quiet_gone;
 }
 
 std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
@@ -2660,7 +2712,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // life goes to its own Life step once (direct, never a write), which CoopBossNative lets end it
     // (review-boss-0114, at every boss; Gohma's own clamp may still hold her at 1).
     for (auto& [address, o] : objects_) {
-        if (o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBossOrPart(o.name) ||
+        if (o.quiet_gone || o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBossOrPart(o.name) ||
             !(o.dead_at != 0 || o.owner_life_zero) ||
             std::find(dying_.begin(), dying_.end(), o.name) == dying_.end()) {
             continue;
@@ -3605,6 +3657,11 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     // Row 175: it died here first (our hit, sent to its owner): its own death runs here and ends
                     // it (the room logic goes on from it); no write and no delete.
                     notes_.emplace_back("dead in its owner's game after our kill: ours runs its own death: " + o->name);
+                } else if (o != nullptr && o->dead_at == 0 && GoesWithoutDeath(o->address, now_us)) {
+                    // Report 200: killed by its owner away from our Link's fight: deleted, no death here. Not a
+                    // copy killed here either: an own one of ours that turns up later is not killed by our game
+                    // (that would run the same defeat event; the shared Destroy flag keeps our logic from making it).
+                    copy_killed_.erase(remove->id);
                 } else if (o != nullptr && o->reacts && o->dead_at == 0) {
                     // Our game kills it itself (life 0 through the game), so
                     // its own kill counts: a room's enemy counter and shutter,
