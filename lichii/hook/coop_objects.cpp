@@ -2058,6 +2058,11 @@ public:
                         owner = root_owner;
                     }
                 }
+                if (owner && *owner != 0 && *owner != self &&
+                    (sync_.GoneWithoutDeath(s.address) ||
+                     (sync_.OwnerSaysDead(s.address) && sync_.GoesWithoutDeath(s.address, share_now_us_)))) {
+                    continue;  // report 200: its owner killed our copy of their encounter: no death run here, it goes
+                }
                 if (owner && *owner != 0) {
                     const bool owner_dead = sync_.OwnerSaysDead(s.address);
                     const bool plain = !IsBossOrPart(s.name);  // (seen with a BSA only under LICHII_COOP_ENEMY_BRAIN)
@@ -4819,6 +4824,13 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
+        // Report 200: another player's kill of our copy of their encounter (the Gerudo jail guard's death runs our
+        // game's own defeat event, which warps our Link to the cell): never given, the copy goes without a death
+        // (CoopObjects::CopyGoesWithoutDeath).
+        const bool lethal = !w.heal && !w.test_kill && (w.life <= 0 || (w.hurt > 0 && old >= 0 && w.hurt >= old));
+        if (lethal && sync_.GoesWithoutDeath(w.address, share_now_us_)) {
+            return;
+        }
         // An enemy (a boss too, or an actor we cannot name) is never written (the owner's native rule): its life
         // changes only through its game's own damage step (the replayed hit) or its own Life step (patch 0007);
         // else the change is lost. RouteLife decides (objects_test); this reads the game for it and acts.
