@@ -83,6 +83,7 @@ inline constexpr std::uint64_t kPaneOwnY = 0x70, kPaneScreenX = 0x4c, kPaneScree
 // strip's "text in" animation fades, from 0 to 1 in about 250 ms as the strip opens (seen in a run, 2026-11-19, on the
 // fourth tab's N_MenuChangeTextIn_00). kPaneAlpha takes it as its pane.
 inline constexpr std::uint64_t kTextAlphaBlock = 0xb0, kTextAlpha = 0xb0 + 0x74;
+inline constexpr float kFollowMost = 200.0f;   // the most our tab is moved from its own place to follow the fourth
 // (pane): the pane's place marked changed (bit 0x40 of its first word) and its matrices made again, as the game's own
 // place setter (main+0x20a3e0: (pane, x, y, z)) ends for a part after storing x and y at +0x6c; nothing for a pane whose
 // +0xa8 lacks bit 20. Read from main, 2026-11-19: a place written without it stays where it was drawn.
@@ -188,7 +189,12 @@ public:
         // the other way; 0 at once (now always: our pages open from System's buttons and leave in place).
         int slide = 0;
         bool set_texts = false;  // the pages: our rows' texts (once per screen object)
-        bool any() const { return set_page || set_texts; }
+        // The strip (0.11.9): the Character tab (Pa_Category_04) shown in the Plus menu, lit while the Character page
+        // shows, and System's tab lit while System (or a page of ours in its place) is the one shown; fill_tab once per
+        // opening of the strip (its word and Plus look, as the game fills its four).
+        bool set_tabs = false;
+        bool tab_shown = false, tab_lit = false, fill_tab = false;
+        bool any() const { return set_page || set_texts || set_tabs; }
     };
     Do OnScreen(const Facts& f, std::uint64_t now_ms);
     // Player 1's pad before the game gets it: the buttons the game gets.
@@ -246,6 +252,21 @@ public:
     // the game does not start them, the module took the press. nullptr when none.
     const char* TakePagesSound();
     void Sound(const char* name) { pages_sound_ = name; }   // a menu sound for the module's own move (the cells)
+    // The tab sound the module starts at the strip's next update (R onto the Character tab, L off it: the game's own
+    // mc_TabToRight / mc_TabToLeft, which its graph plays on MenuOverlay_00 for its own tabs). nullptr when none.
+    const char* TakeStripSound() { return std::exchange(strip_sound_, nullptr); }
+
+    // The Character tab (0.11.9; the owner: "Character customization is a tab of the + menu"): the strip's fifth tab,
+    // after System. Usable once the module found the pack's Pa_Category_04 in the strip (SetTabUsable). R on System
+    // (the menu open and still, nothing over it) shows the Character page in System's place, sliding in from the right
+    // as the game's pages do, and lights the tab; L (or ZL) slides it out and gives System back. B closes the menu as
+    // on any tab (a view of the page takes B first). The page is the Multiplayer page on Settings and look's Customize
+    // view (TakeCustomizeOpen), as Customize Link's button opened it.
+    void SetTabUsable(bool usable) { tab_ok_ = usable; }
+    bool TabUsable() const { return tab_ok_; }
+    bool CharacterShown() const { return shown_ && character_; }
+    // ZL (-1) or ZR (+1) on the Character page since the last call: its Customize page turns (0: none).
+    int TakePageTurn() { return std::exchange(page_turn_, 0); }
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
@@ -306,6 +327,12 @@ private:
     bool decide_ = false;
     bool refused_a_ = false;
     int slide_ = 0;   // the next set_page's Do::slide
+    bool tab_ok_ = false;      // the strip's Character tab found (SetTabUsable)
+    bool character_ = false;   // the page shown is the Character tab's (R from System), not a System button's
+    int page_turn_ = 0;        // TakePageTurn
+    const char* strip_sound_ = nullptr;
+    std::uint64_t tabs_gen_ = 0;   // the strip opening whose Character tab was filled (Do::fill_tab once per opening)
+    int tabs_set_ = -1;            // the tab state last set: -1 none, else bit 0 shown, bit 1 lit, bit 2 System lit
     int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
     bool settings_ok_ = false;
     int system_button_ = -1;
@@ -738,6 +765,11 @@ void SettingMove(int count, int dy, int* page, int* row, int per_page = kSetting
 // Row 199: the strip's last update says the menu is up: open or opening (state 1, 2) and seen within kMenuUpMs.
 inline constexpr std::uint64_t kMenuUpMs = 200;
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
+// One update ahead of `now`, from its step since `prev`, and not past `limit` when it heads for it. The module reads
+// the fourth tab's place and fades before the strip's own update, so they are one update old: the Character tab takes
+// them one update ahead to move with the fourth, not a frame after it.
+float Ahead(float prev, float now, float limit);
+
 int BrowseListed(const Session& s);
 int CellPages(int listed);
 // The list's index of a cell on the browser's page, -1 none.

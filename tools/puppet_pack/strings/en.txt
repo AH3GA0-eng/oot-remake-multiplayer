@@ -8,6 +8,10 @@
 # Translations: fr.txt, de.txt, ... (or the game's code for one region: USfr.txt, CNzh.txt), with
 # the same files and labels. A label a translation leaves out keeps its English text from here.
 
+[LayoutMsg/MenuOverlay_00.msbt]
+# The pause menu's fifth tab (pause_menu.py, 0.11.9): its text pane, T_Text_00 of the part Pa_Category_04.
+Pa_Category_04-T_Text_00 = Character
+
 [LayoutMsg/PlusMenu_00.msbt]
 # The Multiplayer page's five rows (pause_menu.py: Pa_Coop_00, a copy of the System page). The co-op
 # module changes some of them while the page shows (the session's state, the join code).

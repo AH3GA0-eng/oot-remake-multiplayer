@@ -175,6 +175,14 @@ public:
     // Character Select (coop_char_colours.h ShownCharacter): this game shows a character, not Link, so the
     // Customize page says Link's colours wait for Link (#308's live display; the character keeps its own).
     void SetCharacter(bool picked) { character_ = picked; }
+    // The Character tab (0.11.9): its Customize in pages of six (CoopLookMenu::Page::SetPaged), and the character
+    // shown (0 Link: every part; another: only rows that work, CoopLookMenu::kNoColourOptions until its gear is shown
+    // to take our colours in a run).
+    void SetCustomizePaged(bool on) { customize_.SetPaged(on); }
+    void SetShownCharacter(std::uint16_t character) { customize_.SetCharacter(character, false); }
+    void TurnCustomize(int step) {
+        customize_.Press(step > 0 ? CoopLookMenu::Input::kPageNext : CoopLookMenu::Input::kPagePrev);
+    }
     static constexpr const char* kCharacterNote =
         "A Character Select character is picked: it keeps its own colours (X on its Characters page); these colours show on Link when you pick Link again.";
     // The Find a game page's list (the Join page's first row): the games on this network or the relay's public

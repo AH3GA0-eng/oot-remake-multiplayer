@@ -48,6 +48,11 @@ OVERLAY_MSG = "LayoutMsg/MenuOverlay_00.msbt"
 PAGES_MSG = "LayoutMsg/PlusMenu_00.msbt"
 MALS_GLOB = "Mals/*.Product.*.sarc.zs"
 
+TAB = "Pa_Category_%02d"
+GAME_TABS = 4                 # Pa_Category_00..03
+NEW_TAB = TAB % GAME_TABS     # Pa_Category_04: the Character tab (0.11.9), after System
+TAB_ROOT = "RootPane"
+L_LABEL, R_LABEL = "T_BtnL_00", "T_BtnR_00"
 SYSTEM_PAGE = "Pa_System_00"
 NEW_PAGE = "Pa_Coop_00"
 SETTINGS_PAGE = "Pa_Settings_00"
@@ -71,12 +76,43 @@ def _new_id(name):
     return ui_pack.part_id(name)
 
 
+FIFTH_GAP = 50.0   # the fifth tab this much closer to System than the game's step (410 for 460), and R moved this far
+R_MOVE = 390.0     # right (990 -> 1380): R between the fifth tab's lit box and the rupee counter (seen in a run,
+                   # 2026-11-18: at 430 and 340 the lit box covered R)
+
+
 def _x(d, name):
     panes, _ = ui_pack.read_layout(d)
     for p in panes:
         if p.name == name:
             return struct.unpack_from("<f", d, p.record + 0x1c)[0]
     raise PauseMenuError("the layout has no %s" % name)
+
+
+def add_tab(d):
+    """MenuOverlay_00.buil with a fifth tab, Character (0.11.9; the owner: Character customization is a tab of the
+    Plus menu): a copy of the fourth (Pa_Category_03) a little less than the game's step to its right (the step from
+    tab 0 to tab 1, less FIFTH_GAP), under RootPane, stored hidden, and the R label moved R_MOVE to the right of it.
+    The game's four tabs and L stay: the strip's animation sets the tabs' places, so moving them in the layout does
+    nothing (the module spaces the five and shows ours; the way 0.11.6 had its Multiplayer tab, which ran)."""
+    panes, _ = ui_pack.read_layout(d)
+    names = {p.name for p in panes}
+    for i in range(GAME_TABS):
+        if TAB % i not in names:
+            raise PauseMenuError("the layout has no %s" % (TAB % i))
+    if NEW_TAB in names:
+        raise PauseMenuError("the layout has %s already" % NEW_TAB)
+    for name in (L_LABEL, R_LABEL, TAB_ROOT):
+        if name not in names:
+            raise PauseMenuError("the layout has no %s" % name)
+    last = TAB % (GAME_TABS - 1)
+    step = _x(d, TAB % 1) - _x(d, TAB % 0)
+    if step <= 0 or any(abs(_x(d, TAB % (i + 1)) - _x(d, TAB % i) - step) > 0.5 for i in range(GAME_TABS - 1)):
+        raise PauseMenuError("the game's tabs are not evenly spaced from left to right")
+    off = ui_pack.frame_offset(d, last, TAB_ROOT)
+    d = ui_pack.clone_parts(d, [ui_pack.Copy(last, NEW_TAB, (step - FIFTH_GAP + off[0], off[1]), parent=TAB_ROOT,
+                                             hidden=True)], new_id=_new_id)
+    return ui_pack.move_panes(d, {R_LABEL: (R_MOVE, 0.0)})
 
 
 def add_page(d):
@@ -180,8 +216,8 @@ def build(romfs, out_romfs, dicts, table, write, recompress, log=print, strings=
     run.commit(files, growth)
     for rel, data in files.items():
         write(out_romfs, rel, data)
-    log("pause menu: System's Multiplayer and Longshot Settings and their pages (%s, %s; %d languages)"
-        % (PAGES_LAYOUT, SYSTEM_LAYOUT, len(files) - 1))
+    log("pause menu: the Character tab, System's Multiplayer and Longshot Settings and their pages (%s, %s, %s; "
+        "%d languages)" % (OVERLAY_LAYOUT, PAGES_LAYOUT, SYSTEM_LAYOUT, len(files) - 1))
     return list(files)
 
 
@@ -194,8 +230,8 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
     raw = reader.read(COMMON_ARCHIVE)
     plain = dicts.decompress(raw)
     entries = sarc.read_entries(plain)
-    # (the tab strip, MenuOverlay_00, stays the game's own: our pages open from System's buttons)
-    for layout, edit in ((PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, _system_layout)):
+    # (the tab strip, MenuOverlay_00, gets the Character tab; our other pages open from System's buttons)
+    for layout, edit in ((OVERLAY_LAYOUT, add_tab), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, _system_layout)):
         olds = [data for name, data in entries if name == layout]
         if not olds:
             raise PauseMenuError("%s has no %s" % (COMMON_ARCHIVE, layout))
@@ -210,14 +246,15 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
         plain = dicts.decompress(raw)
         msgs = sarc.read_entries(plain)
         have = {name for name, _ in msgs}
-        if PAGES_MSG not in have:
+        if OVERLAY_MSG not in have or PAGES_MSG not in have:
             continue
-        if not ours.get(PAGES_MSG):
-            raise PauseMenuError("the strings have no [%s]" % PAGES_MSG)
+        for f in (OVERLAY_MSG, PAGES_MSG):
+            if not ours.get(f):
+                raise PauseMenuError("the strings have no [%s]" % f)
         packed = sarc.write([(name, ui_pack.add_labels(data, ours[name], replace=True)
-                              if name == PAGES_MSG else data) for name, data in msgs], data_align=16)
+                              if name in (OVERLAY_MSG, PAGES_MSG) else data) for name, data in msgs], data_align=16)
         growth.append((rel, len(plain), len(packed), True))
         files[rel] = recompress(dicts, raw, packed)
     if len(files) < 2:
-        raise PauseMenuError("no language has %s" % PAGES_MSG)
+        raise PauseMenuError("no language has %s and %s" % (OVERLAY_MSG, PAGES_MSG))
     return files, growth
