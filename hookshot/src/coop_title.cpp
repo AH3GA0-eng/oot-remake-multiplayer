@@ -847,7 +847,11 @@ void CloseAsk(bool seen) {
         std::lock_guard lock(g_mutex);
         pending = std::move(g_ask_pending);
         g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;   // (the title's own texts back on its buttons)
-        if (seen) g_sound = "button_decide";
+        // The ask gave its OK the title's cursor (the fourth button, StepAsk): once it is seen the cursor goes back
+        // to the first button (Continue, Start or New Game), where the title's set-up puts it. Left on the fourth,
+        // the next A chose the title's own row there (Multiplayer, then Host's page: smoke hs-players, kit-0119).
+        // Not when co-op's page or the host's save took the title: those give the focus themselves.
+        if (seen) g_sound = "button_decide", g_focus_to = 0;
     }
     if (seen && !CoopProblemAsk::WriteAsked(AskFolder(), CoopProblemAsk::AskedAfter(pending))) {
         LOG_WARNING(Core, "coop: title: bug-reports\\coop-asked.txt could not be written: the ask may come again");

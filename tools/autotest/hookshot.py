@@ -926,6 +926,22 @@ def add_renderer_options(p, wait=600):
                    help="seconds in all for one game's renderer start, progress or not")
 
 
+# What every test game gets unless the run's switches say otherwise (hs_steps.py TEST_GAME_DEFAULTS, the same):
+# - LICHII_COOP_TEST_OWN_SAVE=1: each game plays the save its scenario put in (the joiner would load the host's).
+# - LICHII_COOP_PROBLEM_ASK=0: no "The game crashed last time" page on the title. A test game folder keeps the crash
+#   records of earlier runs (a killed or crashed proof), so the page came up at a run's first title and took the
+#   load's A presses (smoke hs-players, kit-0119: B left on the title's Host page). A scenario that tests the ask
+#   turns it on in its switches.
+TEST_GAME_DEFAULTS = (("LICHII_COOP_TEST_OWN_SAVE", "1"), ("LICHII_COOP_PROBLEM_ASK", "0"))
+
+
+def test_game_defaults(env):
+    """env with TEST_GAME_DEFAULTS set where it has none of its own (the caller's environment or a switch wins)."""
+    for k, v in TEST_GAME_DEFAULTS:
+        env.setdefault(k, v)
+    return env
+
+
 SAVE_USER = "5a3c9e1f0b7d24680000000000000001"   # the user folder a Hookshot game reads its saves from
 
 
@@ -1118,8 +1134,7 @@ def run(a):
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
             env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
-            # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
-            env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
+            test_game_defaults(env)   # its own save, no crash ask on the title (TEST_GAME_DEFAULTS): a switch can undo it
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port
                 env["LICHII_COOP_NAME"] = x   # "A", "B": the scripts type /teleport A, /teleport B
