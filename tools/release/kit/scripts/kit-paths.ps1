@@ -1186,7 +1186,7 @@ function Install-KitOotrr([string]$Kit, [string]$ExeDir, [string]$Downloads = ''
         if (-not $why) {
             if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction Stop }
             New-Item -ItemType Directory -Force -Path $new | Out-Null
-            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
+            # (the zip holds one folder, OOTRR-<version>-windows-x64\, since 0.8.1 ...-windows-x64-portable\: ootrr.exe, LICENSE, NOTICE, README.md)
             & "$env:SystemRoot\System32\tar.exe" -x -f $zip -C $new --strip-components=1 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) { $why = "unpacking $($op.windows) failed (tar $LASTEXITCODE)" }
             else { $why = Test-KitOotrrRuns (Join-Path $new 'ootrr.exe') }
