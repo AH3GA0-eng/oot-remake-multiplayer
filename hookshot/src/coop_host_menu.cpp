@@ -512,6 +512,11 @@ void Menu::RunJoin(JoinJob job) {
                 }
             } else if (state == nat::JoinState::kWaitingForHost) {
                 std::lock_guard lock(mutex_);
+                if (helper.no_way() && status_.problem != HOS_COOP_PROBLEM_NO_WAY) {   // row 209
+                    status_.problem = HOS_COOP_PROBLEM_NO_WAY;
+                    CopyText(status_.message, sizeof status_.message,
+                             "no way through the routers was found (both strict, or CGNAT): join over a VPN network");
+                }
                 if (status_.state != HOS_COOP_WAIT_HOST) {
                     status_.state = HOS_COOP_WAIT_HOST;
                     CopyText(status_.answer, sizeof status_.answer, helper.answer_code());
