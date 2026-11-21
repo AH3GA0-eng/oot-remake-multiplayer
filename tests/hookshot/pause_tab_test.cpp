@@ -2494,54 +2494,186 @@ TEST_CASE("pause tab (0.11.9): the - menu's own page: up and down among its rows
     CHECK(p.MinusRow() == 0);
     p.OnPad(kPadDown, now + 54), p.OnPad(0, now + 56);
     CHECK(p.MinusRow() == 0);   // (no rows set for it yet)
-    // The + menu: the game gets one press of - (down, then let go), nothing else of the pad meanwhile.
+    // (0.11.9, one home: a row's view shows on this same page; the game never gets a - or + from us)
     p.SetMinusRows(0b111);
-    p.GoToPlus();
-    CHECK(p.GoingToPlus());
-    CHECK(p.ViewKept());
-    CHECK(p.OnPad(kPadA, now + 58) == kPadMinus);
-    CHECK(p.OnPad(kPadA, now + 60) == 0);
-    CHECK(p.GoingToPlus());   // (lane R1: that - closes the - menu; the + press comes once it is closed)
-    // The - menu goes (closing: still up, no + yet), then its updates stop: one press of + (down, then let go).
-    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 70);
-    CHECK(p.MinusTab() == -1);
-    // (the pad every frame, as in the game: a jump of more than the stale time with no call is a game stall, which
-    // Page::AfterStall carries the strip's last update over, so the closed - menu would still read up)
-    int pluses = 0;
-    std::uint64_t plus_at = 0;
-    for (std::uint64_t t = now + 72; t < now + 400; t += 16) {   // (the next step comes at now + 410)
-        if (p.OnPad(0, t) == kPadPlus) ++pluses, plus_at = t;
-    }
-    CHECK(pluses == 1);                    // (one press of +: down, then let go)
-    CHECK(plus_at >= now + 70 + 250);      // (only once the - menu's updates have stopped: its last at now + 70)
-    CHECK_FALSE(p.GoingToPlus());
-    CHECK(p.ViewKept());
-    // The + menu opens on System: the Multiplayer page shows there.
-    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 410);
-    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 410);
-    CHECK(p.Shown());
-    CHECK(p.Which() == 0);
-    CHECK_FALSE(p.ViewKept());   // (shown: the view is the page's own again)
+    CHECK(p.OnPad(kPadA, now + 58) == 0);
+    CHECK(p.TakeMinusDecide() == 0);
+    p.OnPad(0, now + 60);
+    for (std::uint64_t t = now + 62; t < now + 600; t += 16) CHECK((p.OnPad(0, t) & (kPadMinus | kPadPlus)) == 0);
+    CHECK(p.MinusTab() == 1);
 }
 
-TEST_CASE("pause tab (0.11.9): after our - the + press waits for the - menu to close, and gives up after a while") {
-    Page p;
+// The - page's views and its list on the right (the module's rows and lines set as MinusWords would).
+Page MinusPageOn(std::uint64_t now) {
+    Page p = UsablePage();
     p.SetMinusTabsUsable(true);
-    const std::uint64_t now = 1000;
     p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now);
-    p.OnPad(kPadR, now + 10), p.OnPad(0, now + 12);
+    p.OnPad(kPadR, now + 2), p.OnPad(0, now + 4);
+    p.TakeStripSound();
+    p.MinusTabChanged();
+    return p;
+}
+
+TEST_CASE("pause tab (0.11.9): a view on the - page: B steps back a view, on the tab's own rows B is the game's") {
+    std::uint64_t now = 1000;
+    Page p = MinusPageOn(now);
+    REQUIRE(p.MinusTab() == 0);
+    p.SetMinusRows(0b11111);
+    // The tab's own rows: B is the game's (the menu closes).
+    CHECK(p.OnPad(kPadB, now + 10) == kPadB);
+    CHECK_FALSE(p.TakeMinusBack());
+    p.OnPad(0, now + 12);
+    // A view shows (the module's): B is ours, once, with the game's cancel sound, kept from the game until let go.
+    p.SetMinusInView(true);
+    CHECK(p.OnPad(kPadB, now + 14) == 0);
+    CHECK(p.TakeMinusBack());
+    CHECK_FALSE(p.TakeMinusBack());
+    CHECK(std::string(p.TakeStripSound()) == "button_cancel");
+    CHECK(p.OnPad(kPadB, now + 16) == 0);   // (held: still ours)
+    p.OnPad(0, now + 18);
+    // The view's rows take A as the tab's did (the module acts on the view's row).
+    p.OnPad(kPadDown, now + 20), p.OnPad(0, now + 22);
+    CHECK(p.OnPad(kPadA, now + 24) == 0);
+    CHECK(p.TakeMinusDecide() == 1);
+    p.OnPad(0, now + 26);
+    // R: the next tab, the view gone with it (MinusTabChanged: the module's view back to the tab's rows).
+    p.OnPad(kPadR, now + 28), p.OnPad(0, now + 30);
+    CHECK(p.MinusTab() == 1);
+    CHECK(p.MinusTabChanged());
+    CHECK_FALSE(p.MinusTabChanged());
+    CHECK(p.OnPad(kPadB, now + 32) == kPadB);   // (no view on the new tab: the game's B)
+    CHECK_FALSE(p.TakeMinusBack());
+    p.OnPad(0, now + 34);
+    // The - menu closes: the tab and its view with it.
+    p.SetMinusInView(true);
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 40);
+    CHECK(p.MinusTab() == -1);
+    CHECK(p.MinusTabChanged());
+}
+
+TEST_CASE("pause tab (0.11.9): the - page's list: Right into it, up and down among the lines picked, A, Left or B back") {
+    std::uint64_t now = 1000;
+    Page p = MinusPageOn(now);
     p.SetMinusRows(0b111);
-    p.GoToPlus();
-    CHECK(p.OnPad(0, now + 14) == kPadMinus);
-    CHECK(p.OnPad(0, now + 16) == 0);
-    // The - menu stays open (its updates go on): never a +, and after the wait the view is not kept.
-    std::uint64_t t = now + 16;
-    for (; t < now + 3200; t += 100) {
-        p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), t);
-        CHECK(p.OnPad(0, t + 1) != kPadPlus);
-    }
-    CHECK_FALSE(p.GoingToPlus());
-    CHECK_FALSE(p.ViewKept());
+    p.SetMinusInView(true);
+    // No line to pick: Right does nothing.
+    p.OnPad(kPadRight, now + 10), p.OnPad(0, now + 12);
+    CHECK_FALSE(p.MinusInList());
+    // Lines 1, 2 and 4 can be picked (0 the header, 3 a note): Right goes onto the first.
+    p.SetMinusLines(0b10110, false);
+    CHECK(p.OnPad(kPadRight, now + 14) == 0);
+    p.OnPad(0, now + 16);
+    CHECK(p.MinusInList());
+    CHECK(p.MinusLine() == 1);
+    CHECK(std::string(p.TakeStripSound()) == "button_on");
+    // Down skips the note, stops at the last; up stops at the first; the rows' cursor stays.
+    p.OnPad(kPadDown, now + 18), p.OnPad(0, now + 20);
+    CHECK(p.MinusLine() == 2);
+    p.OnPad(kPadDown, now + 22), p.OnPad(0, now + 24);
+    CHECK(p.MinusLine() == 4);
+    p.OnPad(kPadDown, now + 26), p.OnPad(0, now + 28);
+    CHECK(p.MinusLine() == 4);
+    CHECK(p.MinusRow() == 0);
+    // A: that line, once; never a row's.
+    CHECK(p.OnPad(kPadA, now + 30) == 0);
+    CHECK(p.TakeMinusLineDecide() == 4);
+    CHECK(p.TakeMinusLineDecide() == -1);
+    CHECK(p.TakeMinusDecide() == -1);
+    p.OnPad(0, now + 32);
+    // The line picked gone (a game left the list): the nearest before it.
+    p.SetMinusLines(0b00110, false);
+    CHECK(p.MinusLine() == 2);
+    // B: back to the rows, not a view back and not the game's.
+    CHECK(p.OnPad(kPadB, now + 34) == 0);
+    CHECK_FALSE(p.MinusInList());
+    CHECK_FALSE(p.TakeMinusBack());
+    p.OnPad(0, now + 36);
+    // Left too.
+    p.OnPad(kPadRight, now + 38), p.OnPad(0, now + 40);
+    REQUIRE(p.MinusInList());
+    p.OnPad(kPadLeft, now + 42), p.OnPad(0, now + 44);
+    CHECK_FALSE(p.MinusInList());
+    // Every line gone: the list gives the pad back.
+    p.OnPad(kPadRight, now + 46), p.OnPad(0, now + 48);
+    REQUIRE(p.MinusInList());
+    p.SetMinusLines(0, false);
+    CHECK_FALSE(p.MinusInList());
+}
+
+TEST_CASE("pause tab (0.11.9): co-op's menu's page on the - page's list: the pad's moves are its own events") {
+    std::uint64_t now = 1000;
+    Page p = MinusPageOn(now);
+    p.SetMinusRows(0b1111);
+    p.SetMinusInView(true);
+    p.SetMinusLines(0b110, true);   // (Co-op settings: its rows on the list, its own selection)
+    p.OnPad(kPadRight, now + 10), p.OnPad(0, now + 12);
+    REQUIRE(p.MinusInList());
+    p.TakeMinusMoves();
+    // Up, down, left, right and A: that menu's own, each once; nothing to the game.
+    CHECK(p.OnPad(kPadDown, now + 14) == 0);
+    p.OnPad(0, now + 16);
+    CHECK(p.OnPad(kPadRight, now + 18) == 0);
+    p.OnPad(0, now + 20);
+    CHECK(p.OnPad(kPadLeft, now + 22) == 0);
+    p.OnPad(0, now + 24);
+    p.OnPad(kPadA, now + 26), p.OnPad(0, now + 28);
+    CHECK(p.TakeMinusMoves() == (Page::kMinusMoveDown | Page::kMinusMoveRight | Page::kMinusMoveLeft | Page::kMinusMoveA));
+    CHECK(p.TakeMinusMoves() == 0);
+    CHECK(p.MinusInList());   // (Left is the menu's: a choice changed, not back to the rows)
+    CHECK(p.TakeMinusLineDecide() == -1);
+    // B: the menu's Back, and the rows have the pad again.
+    CHECK(p.OnPad(kPadB, now + 30) == 0);
+    CHECK(p.TakeMinusListBack());
+    CHECK_FALSE(p.MinusInList());
+    CHECK_FALSE(p.TakeMinusBack());
+}
+
+TEST_CASE("pause tab (0.11.9): the Mods tab's page is its list: B is its Back on a mod's page, else the game's") {
+    std::uint64_t now = 1000;
+    Page p = MinusPageOn(now);
+    p.OnPad(kPadR, now + 10), p.OnPad(0, now + 12);
+    p.OnPad(kPadR, now + 14), p.OnPad(0, now + 16);
+    REQUIRE(p.MinusTab() == 2);
+    // No rows of its own: the list has the pad at once.
+    p.SetMinusRows(0);
+    p.SetMinusLines(0b1110, true);
+    p.OnPad(kPadDown, now + 18), p.OnPad(0, now + 20);
+    CHECK(p.MinusInList());
+    CHECK(p.TakeMinusMoves() == Page::kMinusMoveDown);
+    // On the mods' list: B is the game's (the menu closes).
+    CHECK(p.OnPad(kPadB, now + 22) == kPadB);
+    CHECK_FALSE(p.TakeMinusListBack());
+    p.OnPad(0, now + 24);
+    // On a mod's page: B is its Back, and the list keeps the pad (no rows to go back to).
+    p.SetMinusRawBack(true);
+    CHECK(p.OnPad(kPadB, now + 26) == 0);
+    CHECK(p.TakeMinusListBack());
+    CHECK(p.MinusInList());
+    p.OnPad(0, now + 28);
+    // L: Lobby again.
+    p.OnPad(kPadL, now + 30), p.OnPad(0, now + 32);
+    CHECK(p.MinusTab() == 1);
+    CHECK_FALSE(p.MinusInList());
+}
+
+TEST_CASE("pause tab (0.11.9): a field typed into on the - page: every button is the field's, B cancels it") {
+    std::uint64_t now = 1000;
+    Page p = MinusPageOn(now);
+    p.SetMinusRows(0b11);
+    p.SetMinusInView(true);
+    p.Field(0).Clear();
+    p.StartTyping(0);
+    REQUIRE(p.Typing() == 0);
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now + 498);   // (the - menu still up)
+    p.OnPad(0, now + 500);   // (past the start's moment)
+    CHECK(p.OnPad(kPadB, now + 510) == 0);
+    p.OnPad(0, now + 512);
+    CHECK(p.Typing() == -1);
+    CHECK_FALSE(p.TakeMinusBack());   // (that B was the field's Cancel, not a view back)
+    // Without the - page or our page: no typing starts.
+    Page q = UsablePage();
+    q.StartTyping(0);
+    CHECK(q.Typing() == -1);
 }
 
 TEST_CASE("pause tab (0.11.9): the - menu's Lobby and Multiplayer pages: every row opens something, none empty-handed") {
