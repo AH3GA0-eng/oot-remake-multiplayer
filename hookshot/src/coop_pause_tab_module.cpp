@@ -413,28 +413,44 @@ void SnailClose(const char* why) {
     LOG_INFO(Core, "coop: characters: Character Select's Customize screen left ({})", why);
 }
 
-bool SnailWrite(void* ctx, const CoopSnailCustom::Texts& t) {
+// His screen's texts from co-op's (the placeholders looked up for this opening first). kNoPlaceholders: one of them is
+// not in his message file (a start without the kit's merge: the fallback). Otherwise the panes whose text could not be
+// set are named in `failed` and the rest show (2026-11-21, lane 035925: the screen opened again for Saria went to the
+// fallback, "no co-op placeholders", on the same file: her fewer rows gave empty labels and values, which the game's
+// set-message call does not take, and any one pane's failure was taken for the placeholders' absence).
+enum class SnailWritten { kAll, kSome, kNoPlaceholders };
+SnailWritten SnailWrite(void* ctx, const CoopSnailCustom::Texts& t, std::string& failed) {
     for (int i = 0; i < kSnailSlots; ++i) {
         char label[20];
         std::snprintf(label, sizeof label, "Coop_Custom_%02d", i);
         if (!LiveLookupIn(ctx, g_snail_live[static_cast<std::size_t>(i)], "LayoutMsg/CharacterCustomize_00", label,
                           g_snail_gen)) {
-            return false;
+            failed = label;
+            return SnailWritten::kNoPlaceholders;
         }
     }
-    bool ok = LiveTextIn(ctx, g_snail_layout, "T_Head_00", g_snail_live[0], t.title);
+    using CoopSnailCustom::PaneText;
+    const auto set = [&](const char* path, LiveSlot& l, const std::string& text, bool force) {
+        if (LiveTextIn(ctx, g_snail_layout, path, l, PaneText(text), force)) return true;
+        failed += std::string(failed.empty() ? "" : ", ") + path;
+        return false;
+    };
+    set("T_Head_00", g_snail_live[0], t.title, false);
     char path[24];
     for (int f = 0; f < CoopSnailCustom::kOptions; ++f) {
         const std::size_t k = static_cast<std::size_t>(f);
         std::snprintf(path, sizeof path, "T_Label_%02d", f);
-        ok = LiveTextIn(ctx, g_snail_layout, path, g_snail_live[1 + k], t.labels[k]) && ok;
-        // (every value pane of the option: whichever his "Val" frame shows, co-op's value shows)
-        for (int v = 0; v < 16; ++v) {
+        set(path, g_snail_live[1 + k], t.labels[k], false);
+        // (every value pane of the option: whichever his "Val" frame shows, co-op's value shows; the first one must
+        // take it, the others stop at the first his layout does not have)
+        std::snprintf(path, sizeof path, "T_Val_%02d_00", f);
+        if (!set(path, g_snail_live[7 + k], t.values[k], false)) continue;
+        for (int v = 1; v < 16; ++v) {
             std::snprintf(path, sizeof path, "T_Val_%02d_%02d", f, v);
-            if (!LiveTextIn(ctx, g_snail_layout, path, g_snail_live[7 + k], t.values[k], v > 0)) break;
+            if (!LiveTextIn(ctx, g_snail_layout, path, g_snail_live[7 + k], PaneText(t.values[k]), true)) break;
         }
     }
-    return ok;
+    return failed.empty() ? SnailWritten::kAll : SnailWritten::kSome;
 }
 
 // One update of any game screen (OnScreen, before the kinds of ours): his Customize screen's.
@@ -471,12 +487,17 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
     if (auto look = g_snail.TakeChange()) CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
     const auto t = g_snail.Shown();
     if (t == g_snail_shown) return;
-    if (!SnailWrite(ctx, t)) {
+    std::string failed;
+    const SnailWritten w = SnailWrite(ctx, t, failed);
+    if (w == SnailWritten::kNoPlaceholders) {
         g_snail.Close();   // (his screen stays; its keys are kept from the game: the fallback)
         g_snail_fallback = true;
-        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: its texts cannot be set (no co-op "
-                       "placeholders in its messages: start the game from the kit): its keys are kept from it");
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: {} is not in its messages (start the "
+                       "game from the kit, which adds co-op's placeholders): its keys are kept from it", failed);
         return;
+    }
+    if (w == SnailWritten::kSome) {   // (the rest shows and co-op keeps the screen; tried again at the next change)
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: the text of {} could not be set", failed);
     }
     g_snail_shown = t;
 }
@@ -3596,6 +3617,22 @@ void CensusFromMenuState() noexcept {
 
 bool GameMenuUp() noexcept {
     return MenuUpFrom(g_strip_state.load(), g_strip_seen_ms.load(), NowMs());
+}
+
+std::array<MenuActor, 4> MenuActors() noexcept {
+    std::array<MenuActor, 4> out{};
+    try {
+        const std::uint64_t manager = Read<std::uint64_t>(CoopRuntime::MainBase() + kMenuManager);
+        const std::uint64_t obj = manager != 0 ? Read<std::uint64_t>(manager + kPouchObject) : 0;
+        if (obj == 0) return out;
+        for (int slot = 0; slot < 4; ++slot) {
+            const std::uint64_t at = obj + kPouchSlots + static_cast<std::uint64_t>(slot) * 0x20;
+            out[static_cast<std::size_t>(slot)] = {PouchActor(obj, slot), Read<std::uint32_t>(at + kPouchSlotId)};
+        }
+    } catch (...) {
+        out = {};
+    }
+    return out;
 }
 
 int MousePage() noexcept {
