@@ -260,6 +260,7 @@ std::optional<bool> BossHurt(const std::vector<Seen>& seen, std::span<const std:
 
 bool IsShared(std::string_view name) {
     if (IsOwnPuzzle(name)) return false;  // before the Npc_ rule: the pond owner is one
+    if (IsOwnFollower(name)) return false;  // before the Npc_ and Animal_ rules (row 214)
     // Enemy shots (Enemy_MoblinClub_ShockWave is named like an enemy)
     // stay with the spawn sync: the game whose enemy fired one sends it.
     if (CoopEnemyShots::IsEnemyShot(name)) return false;
@@ -269,11 +270,6 @@ bool IsShared(std::string_view name) {
         return !name.starts_with("Npc_Navi") && !name.starts_with("Npc_Equipment") &&
                !name.starts_with("Npc_Invisible");
     }
-    // The horse a player rides (CoopRide::kHorse) is each game's own: shared,
-    // one game's Epona was a copy, frozen or pulled back under its rider, or
-    // the other game drew two horses (its copy and the ride's stand-in).
-    // The ride sync (coop_ride.h) shows the other player's horse instead.
-    if (name == "Animal_Epona_Adult") return false;
     return name.starts_with("Enemy_") || name.starts_with("Animal_") ||
            CoopWorld::IsBreakable(name);
 }
@@ -298,13 +294,6 @@ bool IsOwnPuzzle(std::string_view name) {
     // and _GetGoldScale, coop/host game_items). The fish are shared (IsFish,
     // fishing-2): the lure rules give each fish to the game whose lure it
     // goes for.
-    // Player report #64 (dungeon-sync-b, Revirie's 0.11.0 log). Child Ruto in
-    // Jabu-Jabu (Npc_Zora_Ruto_Child_001) is lifted and carried by one Link
-    // (her 'Act_LiftRest' animations): her AI follows that game's own Link.
-    // Shared as an NPC copy, the owner's 'Crouch' was played over the carried
-    // Ruto, so she dropped as soon as she was picked up, and again when the
-    // owner left the room (a new owner). Each game runs its own Ruto; the
-    // room flags she sets (switches, rooms cleared) stay shared.
     // Player report #100 (GitHub #253). A Business Scrub
     // (Enemy_Scrub_Business, _Leaf, _Seed) is a shop: once beaten, its talk
     // event (Event/EventFlow/Enemy_Scrub_Business_Common) turns it to our
@@ -316,8 +305,35 @@ bool IsOwnPuzzle(std::string_view name) {
     // over a scrub our Link had beaten and was talking to (the fishman's and
     // Ruto's case). Each game runs its own; the items it sells stay shared.
     return name.starts_with("Enemy_Scrub_Deku_Brothers") || name.starts_with("Enemy_Scrub_Business") ||
-           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman") ||
-           name.starts_with("Npc_Zora_Ruto_Child");
+           name.starts_with("Enemy_Scrub_ForestStage") || name.starts_with("Npc_Hylia_Fishman");
+}
+
+bool IsOwnFollower(std::string_view name) {
+    // Row 214 (the owner's 0.11.8 playtest, Ganon's Castle collapse). An actor whose own AI goes with the
+    // local Link: it waits for it, runs ahead of it, comes to it or is carried by it. Each game's AI reads only
+    // its own Link and its own story flags (the escape's EscapeFromCrumblingGanonCastle_* are per game), so a
+    // copy that plays one owner's actor shows it going with that owner's Link, and an owner change (the
+    // distance rule, an event claim) puts one game's escort, at its place and step, on another game whose own
+    // AI is at another step: Zelda's owner went P4 -> P1 -> P2 -> P4 -> P2 in the escape and she was stuck
+    // for nearly every player. Each game runs its own; what they do for the story (flags, items) is shared by
+    // the flag and item syncs as before. From the game's own AI (romfs Pack/Actor, scan in docs/objects.md
+    // "Followers"):
+    // - Npc_Hylia_Zelda_Adult (and _Scalable): NpcHyliaZeldaAdult.AISchedulePatrolMove runs her rail and
+    //   waits at its points for the player (ReachToPlayerWhenRailPointWait, ReachToPlayerDistance,
+    //   IsPlayerGoesFirst). Placed in CrumblingGanonCastle (the escape), FinalBattleField and GanonStage.
+    // - Npc_Zora_Ruto_Child (player report #64): lifted and carried by one Link ('Act_LiftRest'); shared,
+    //   the owner's 'Crouch' was played over the carried Ruto, so she dropped as soon as she was picked up,
+    //   and again when the owner left the room (a new owner). Her room flags stay shared.
+    // - Animal_Dog_* (the Market's dogs, Richard in Market and Kakariko): Animal_Dog.brain.FollowPlayer.
+    // - Animal_Epona_Adult (CoopRide::kHorse), Animal_Epona_Child, Animal_Horse, Animal_Horse_For_Ingo:
+    //   HorseMoveToPlayer / QueryQuadrupedCalcFollowTargetPos (the horse comes to the Link that called it).
+    //   Shared, one game's Epona was a copy, frozen or pulled back under its rider, or the other game drew two
+    //   horses (its copy and the ride's stand-in); the ride sync (coop_ride.h) shows the other's horse.
+    // Not followers: the wagon and archery horses (no follow in their AI), Navi (never shared, Npc_Navi), the
+    // shop clerks and Pierre (ToPlayerDistance only turns them to the Link that talks or calls).
+    return name.starts_with("Npc_Hylia_Zelda_Adult") || name.starts_with("Npc_Zora_Ruto_Child") ||
+           name.starts_with("Animal_Dog_") || name.starts_with("Animal_Epona_") || name == "Animal_Horse" ||
+           name.starts_with("Animal_Horse_For_Ingo");
 }
 
 bool IsFish(std::string_view name) {
