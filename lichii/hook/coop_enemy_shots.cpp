@@ -54,8 +54,16 @@ constexpr std::array<Shot, 5> kBossShots{{
 // copy cannot (its AI runs in the owner's game), so a ball sent back into a copy stuns him there, and the stun
 // hands him to that player (the stun hand-over) for the sword: the first ball back stuns him for the group.
 // Each game sees only its own: none is sent.
-constexpr std::array<std::string_view, 3> kSplit{
-    {"PhantomGanon_Bullet_Thunder", "DungeonBossPhantomGanon_Bullet_", "DungeonBossGanondrof_Bullet_"}};
+// The rest of the bosses the same way (every-stage two-game runs, 2026-11-21: each of these was one shot, sent from
+// the owner's game): Twinrova's beams, the floor they leave and the guard breakers (each player soaks their own in
+// the Mirror Shield; one sent back into her stuns her there, and the stun hand-over gives her to that player),
+// Ganondorf's and Ganon's balls, shocks and shockwaves, King Dodongo's fire breath, and the Moblin's club
+// shockwave (a ground wave like Phantom Ganon's).
+constexpr std::array<std::string_view, 11> kSplit{{"PhantomGanon_Bullet_Thunder", "DungeonBossPhantomGanon_Bullet_",
+                                                    "DungeonBossGanondrof_Bullet_", "Twinrova_Bullet_",
+                                                    "KotakeKoumeTwinrova_Bullet_", "Ganondorf_Bullet_", "Ganon_Bullet_",
+                                                    "DungeonBossGanon_Bullet_", "DungeonBossDodongo_Bullet_",
+                                                    "Enemy_MoblinClub_ShockWave", "Dodongo_Bullet_"}};
 
 const Shot* Find(std::string_view name) {
     if (name.ends_with("_MirrorShieldReflect")) {
