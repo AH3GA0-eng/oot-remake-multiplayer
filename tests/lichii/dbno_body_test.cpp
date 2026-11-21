@@ -374,6 +374,39 @@ TEST_CASE("dbno body: an adult is asked the same Crawl and Wait (the HugeHit of 
     CHECK(Verbs(RunFrame(c, g, 2100)).empty());
 }
 
+TEST_CASE("dbno body: refusals while down are noted three times, then counted only") {
+    Guest g;
+    Crawl c;
+    c.Want(Want(false));
+    c.Skip(kBsa, Req(verb::kWait), false);
+    c.Want(Want(true));
+    c.TakeNotes();
+    // A boss fight: events come and go while our Link lies there, each a fresh round of asks, all refused.
+    std::uint64_t ms = 1000;
+    for (int round = 0; round < 20; ++round) {
+        c.Want(Want(true, true));
+        RunFrame(c, g, ms += 100, 2);
+        c.Want(Want(true));
+        RunFrame(c, g, ms += 100, 2);
+    }
+    int noted = 0;
+    for (const auto& n : c.TakeNotes()) {
+        noted += n.find("refused") != std::string::npos ? 1 : 0;
+    }
+    CHECK(noted == 3);
+    CHECK(c.Totals().refused >= 20);
+    // Up and down again: noted again.
+    c.Want(Want(false));
+    RunFrame(c, g, ms += 100);
+    c.Want(Want(true));
+    RunFrame(c, g, ms += 5000, 2);
+    int again = 0;
+    for (const auto& n : c.TakeNotes()) {
+        again += n.find("refused") != std::string::npos ? 1 : 0;
+    }
+    CHECK(again == 1);
+}
+
 TEST_CASE("dbno body: a fall or water while crawling passes, and the crawl is asked again on the ground") {
     Guest g;
     Crawl c;

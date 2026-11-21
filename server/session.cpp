@@ -2153,6 +2153,56 @@ bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
   return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
 }
 
+std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, std::uint64_t now_us) {
+  if (config_.boss_turn_us == 0 || o.root) return std::nullopt;
+  if (!in_fight(o, now_us)) {
+    o.fight_began = 0;
+    return std::nullopt;
+  }
+  if (o.fight_began == 0) o.fight_began = stamp(now_us);
+  const std::uint64_t turn_began = std::max(o.fight_began, o.changed_at);
+  if (now_us - turn_began < config_.boss_turn_us) return std::nullopt;
+  // A calm moment: nobody hit it lately, and it is not dying or in a cutscene.
+  if (owner_hit_lately(o, now_us)) return std::nullopt;
+  if (o.hit_at != 0 && now_us - o.hit_at < config_.boss_turn_quiet_us) return std::nullopt;
+  if (o.last_state) {
+    if (o.last_state->life && o.last_state->life->life <= 0) return std::nullopt;
+    if (const auto& a = o.last_state->animation;
+        a && (coop::protocol::anim::IsDeath(a->name) || coop::protocol::anim::IsEvent(a->name))) {
+      return std::nullopt;
+    }
+  }
+  // Nor while a shot of its owner's game flies there (Phantom Ganon's ball in
+  // a rally): a shot is never handed over, so its rally would go on in the old
+  // owner's game alone. A shot whose end was lost counts for 10 s at most.
+  for (const auto& [sid, s] : objects_) {
+    if (s.projectile && !s.removed && s.owner == owner && s.scene == o.scene && s.first_at != 0 &&
+        now_us - s.first_at < config_.boss_turn_shot_us) {
+      return std::nullopt;
+    }
+  }
+  // The next player by number after the owner, round: in the boss's area,
+  // ready (its intro played), up and playing.
+  const auto own = connections_.find(owner);
+  if (own == connections_.end()) return std::nullopt;
+  const std::uint8_t from = own->second.number;
+  std::optional<ConnectionId> after;  // the lowest number above the owner's
+  std::optional<ConnectionId> first;  // the lowest number of all (round)
+  for (ConnectionId other : o.present) {
+    if (other == owner || !has_loaded(other, o) || o.unready.contains(other)) continue;
+    const Connection& pc = connections_.at(other);
+    if (busy(pc)) continue;
+    const auto d = distance_to(pc, o, now_us);
+    if (!d || *d > config_.boss_turn_m) continue;
+    const auto lower = [&](const std::optional<ConnectionId>& than) {
+      return !than || pc.number < connections_.at(*than).number;
+    };
+    if (pc.number > from && lower(after)) after = other;
+    if (lower(first)) first = other;
+  }
+  return after ? after : first;
+}
+
 bool Session::hands_back_soon(const Object& o, ConnectionId to, std::uint64_t now_us) {
   if (config_.handover_back_us == 0) return false;
   const auto lately = [&](std::uint64_t at) {
@@ -2545,6 +2595,17 @@ void Session::run_ownership(std::uint64_t now_us) {
     if (o.boss && o.unready.contains(owner)) {
       if (auto next = best_other(o, owner, true, now_us); next && !o.unready.contains(*next)) {
         ++stats_.boss_to_ready;
+        ask_handover(oid, o, *next, now_us);
+        continue;
+      }
+    }
+
+    // A boss in a fight takes turns: its AI fights only its owner's Link, so
+    // every player gets it for a while (Phantom Ganon's ball, a charge, a
+    // breath aimed at each in turn).
+    if (o.boss) {
+      if (auto next = next_turn(o, owner, now_us)) {
+        ++stats_.boss_turns;
         ask_handover(oid, o, *next, now_us);
         continue;
       }
