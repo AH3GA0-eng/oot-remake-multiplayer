@@ -1410,7 +1410,9 @@ bool SystemOwn(std::uint64_t pane) {
 void SystemButtons(void* ctx) {
     const std::uint64_t now = NowMs();
     const int want = (g_page.Usable() && g_mp_button != 0 ? 1 : 0) | (g_page.SettingsUsable() && g_settings_button != 0 ? 2 : 0) |
-                     (g_page.Usable() && g_cl_button != 0 ? 4 : 0);
+                     (g_page.Usable() && g_cl_button != 0 && !g_page.TabUsable() ? 4 : 0);   // (0.11.9: the Character tab
+                                                                                            // is its home; the button only
+                                                                                            // with a pack without the tab)
     const bool over = g_page.Shown();
     if (want != g_settings_button_shown || over != g_sys_hidden) {
         if (over != g_sys_hidden) {
