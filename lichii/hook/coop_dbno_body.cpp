@@ -320,8 +320,11 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
                     // Not a refusal of the crawl: the slot took another
                     // request this frame. Skipping is on now: next frame.
                     next_ask_ms_ = 0;
-                    Note("our downed Link: " + Named(asked_verb_) +
-                         " waits: the slot took a request this frame (3); asked next frame");
+                    if (++refusals_noted_ <= 3) {   // (as the refusals below: a boss fight's events start many rounds)
+                        Note("our downed Link: " + Named(asked_verb_) +
+                             " waits: the slot took a request this frame (3); asked next frame" +
+                             (refusals_noted_ == 3 ? "; more while down are not noted" : ""));
+                    }
                 } else {
                     blocked_ = true;  // a real refusal: the game's own runs
                     // A refusal repeats while the game keeps our Link busy (60 lines in a boss fight's
@@ -381,7 +384,6 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
     const auto new_round = [this] {
         ++counts_.rounds;
         asks_ = 0;
-        refusals_noted_ = 0;
         next_ask_ms_ = 0;
         blocked_ = false;
         moved_ = false;
@@ -389,6 +391,7 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
     };
     if (want_.lying != was_lying_) {
         was_lying_ = want_.lying;
+        refusals_noted_ = 0;  // (the first few misses noted again each time our Link goes down, not each round)
         new_round();
         spot_rounds_ = 0;
         airborne_ = false;

@@ -407,6 +407,30 @@ TEST_CASE("dbno body: refusals while down are noted three times, then counted on
     CHECK(again == 1);
 }
 
+TEST_CASE("dbno body (row 190 + PR #308): slot-busy waits are noted three times a downing too, then counted only") {
+    Guest g;
+    Crawl c;
+    c.Want(Want(false));
+    c.Skip(kBsa, Req(verb::kWait), false);
+    c.Want(Want(true));
+    c.TakeNotes();
+    // A boss fight: each event starts a new round; every ask answered 3 (the slot took a request that frame).
+    std::uint64_t ms = 1000;
+    for (int round = 0; round < 20; ++round) {
+        c.Want(Want(true, true));
+        RunFrame(c, g, ms += 100, 3);
+        c.Want(Want(true));
+        RunFrame(c, g, ms += 100, 3);
+    }
+    int noted = 0;
+    for (const auto& n : c.TakeNotes()) {
+        noted += n.find("waits") != std::string::npos ? 1 : 0;
+    }
+    CHECK(noted == 3);
+    CHECK(c.Totals().busy >= 20);
+    CHECK(c.Totals().refused == 0);  // (3 is not a refusal)
+}
+
 TEST_CASE("dbno body: a fall or water while crawling passes, and the crawl is asked again on the ground") {
     Guest g;
     Crawl c;
