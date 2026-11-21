@@ -525,4 +525,34 @@ CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Weare
     return out;
 }
 
+std::string PuppetTunicsName(const TunicPaints& paints) {
+    if (paints.empty()) return kPuppetTunicsBase;
+    std::string name = kPuppetTunicsBase;
+    char hex[8];
+    for (const auto& [colour, rgb] : paints) {
+        std::snprintf(hex, sizeof hex, "%06X", static_cast<unsigned>(rgb & 0xFFFFFFu));
+        name += "|" + colour + "=" + hex;
+    }
+    return name;
+}
+
+CoopLookTunic::Texels PuppetTunicsTexels(const std::vector<std::pair<std::string, CoopLookTunic::Texels>>& copies,
+                                         const CoopLookTunic::Texels& green, const TunicPaints& paints) {
+    CoopLookTunic::Texels out;
+    for (const auto& [colour, texels] : copies) {
+        const auto paint = paints.find(colour);
+        if (paint == paints.end()) {
+            out.insert(out.end(), texels.begin(), texels.end());
+            continue;
+        }
+        const CoopLookTunic::Texels painted = TunicPainted(green, paint->second);
+        for (std::size_t i = 0; i < texels.size(); ++i) {
+            CoopLookTunic::Texture t = texels[i];   // (its name and offset: the copy's)
+            if (i < painted.size() && painted[i].texels.size() == t.texels.size()) t.texels = painted[i].texels;
+            out.push_back(std::move(t));
+        }
+    }
+    return out;
+}
+
 }  // namespace CoopLookParts

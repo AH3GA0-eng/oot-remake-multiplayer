@@ -1735,3 +1735,31 @@ TEST_CASE("look (row 198 guard): a texture of your Link found more than once is 
     places[2].texture = 3;
     CHECK(CoopLookTunic::Repeated(places).empty());
 }
+
+TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact colour of the player given it") {
+    const auto green = GreenTunic();
+    // Two copies as the pack wrote them (here: green's texels shifted, so they differ from the painting).
+    auto red = green, blue = green;
+    for (auto& t : red) t.texels.back() ^= 0xA5;
+    for (auto& t : blue) t.texels.front() ^= 0x11;
+    blue.back().texels.push_back(0);   // (a texture of another size: kept as written)
+    const std::vector<std::pair<std::string, CoopLookTunic::Texels>> copies = {{"red", red}, {"blue", blue}};
+    CHECK(CoopLookParts::PuppetTunicsName({}) == "ptunics");
+    CHECK(CoopLookParts::PuppetTunicsName({{"red", 0xFF6820}, {"blue", 0x123456}}) == "ptunics|blue=123456|red=FF6820");
+    // None painted: the base, every copy as written.
+    auto base = CoopLookParts::PuppetTunicsTexels(copies, green, {});
+    REQUIRE(base.size() == red.size() + blue.size());
+    CHECK(CoopLookTunic::SameLayout(base, base));
+    for (std::size_t i = 0; i < red.size(); ++i) CHECK(base[i].texels == red[i].texels);
+    // Blue given to a player in #123456: its textures from green in that colour, red's as written.
+    const auto painted = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", 0x123456}});
+    REQUIRE(painted.size() == base.size());
+    CHECK(CoopLookTunic::SameLayout(painted, base));   // (the wardrobe draws a painting over the base, texture by texture)
+    const auto want = CoopLookParts::TunicPainted(green, 0x123456u);
+    for (std::size_t i = 0; i < red.size(); ++i) CHECK(painted[i].texels == red[i].texels);
+    for (std::size_t i = 0; i + 1 < blue.size(); ++i) {
+        CHECK(painted[red.size() + i].texels == want[i].texels);
+        CHECK(painted[red.size() + i].name == blue[i].name);
+    }
+    CHECK(painted.back().texels == blue.back().texels);   // (another size: as written)
+}

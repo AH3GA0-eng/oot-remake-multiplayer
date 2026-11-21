@@ -221,4 +221,17 @@ std::string BootsPaintingName(const Wearers& wearers);
 // its wearer, marked with the letter's code as the pack marks them).
 CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Wearers& wearers);
 
+// 0.11.9, exact puppet tunics: the coloured tunic copies (coop_look/puppet-<colour>.bin, "red".."black", each the
+// textures of green.bin in its order), each repainted for the player it is given to (CoopColors::AssignTunicCopies).
+// The wardrobe's base (every copy as the pack wrote it), and a painting's name: kPuppetTunicsBase when none is
+// painted, else "ptunics|<colour>=RRGGBB|..." by colour.
+inline constexpr const char* kPuppetTunicsBase = "ptunics";
+using TunicPaints = std::map<std::string, std::uint32_t>;   // colour ("red") -> the exact colour it is painted in
+std::string PuppetTunicsName(const TunicPaints& paints);
+// The copies' texels for a painting: a copy given to a player, every texture of it from green painted in that
+// colour (TunicPainted) where it is the copy's size; a texture of another size (the child's dark tile, BC3 in the
+// copies and ASTC in green) and every other copy as the pack wrote it. `copies`: (colour, its texels), in order.
+CoopLookTunic::Texels PuppetTunicsTexels(const std::vector<std::pair<std::string, CoopLookTunic::Texels>>& copies,
+                                         const CoopLookTunic::Texels& green, const TunicPaints& paints);
+
 }  // namespace CoopLookParts
