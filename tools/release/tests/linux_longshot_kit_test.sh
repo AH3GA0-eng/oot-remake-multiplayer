@@ -589,6 +589,34 @@ if [[ $(uname -s) == Linux ]]; then
     : >"$log"
     bash "$kit/start-squadala.sh" --pack </dev/null >"$tmp/start5.txt" 2>&1; export CODE=$?
     check 'start --pack: the pack made again even when current, the game not started' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$1" && ! grep -q "^started" "$1" && grep -q "the puppet pack is made" "$2"' _ "$log" "$tmp/start5.txt"
+    # Issue 309 (0.11.8 Linux, Character Select on: "tunic colours do not change"): your own Link's colour needs, at
+    # every start and in this order, the pack's own tunic files (self_tunic.py, from data/coop-options.ini's color)
+    # and then every other mod's Link models renamed to them (merge_tables.py merge_self_models: Character Select's
+    # Model/Player_* win over the pack's, so without it your Link names the game's shared tunic textures and the
+    # module finds none of yours to paint), both before the game. Stand-ins log what start.sh gives them.
+    cat >"$D/tools/puppet_pack/self_tunic.py" <<'EOF'
+import os, sys
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write("self_tunic %s\n" % " ".join(sys.argv[1:]))
+print("green")
+EOF
+    cat >"$D/tools/puppet_pack/merge_tables.py" <<'EOF'
+import os, sys
+with open(os.environ["FAKE_LOG"], "a") as f:
+    f.write("merge_tables %s\n" % " ".join(sys.argv[1:]))
+EOF
+    mkdir -p "$D/game/mods"
+    : >"$log"
+    bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/start309.txt" 2>&1; export CODE=$?
+    check 'start (#309): your tunic files, then the mods'"'"' Link models renamed to them, then the game' bash -c \
+        '[ $CODE -eq 0 ] && s=$(grep -n "^self_tunic " "$1" | cut -d: -f1) && m=$(grep -n "^merge_tables " "$1" | cut -d: -f1) &&
+         g=$(grep -n "^started " "$1" | cut -d: -f1) && [ -n "$s" ] && [ -n "$m" ] && [ -n "$g" ] && [ "$s" -lt "$m" ] && [ "$m" -lt "$g" ]' _ "$log"
+    check 'start (#309): self_tunic.py reads the pack, data/coop-options.ini (where Customize saves) and coop.ini' grep -qF \
+        "self_tunic --pack $D/game/mods/contents/0400486024DEC000/coop-puppet --options $D/coop-options.ini --coop-ini $D/game/coop.ini" "$log"
+    check 'start (#309): merge_tables.py gets the game'"'"'s mods folder and its own romfs (the dictionaries)' grep -qF \
+        "merge_tables --mods $D/game/mods --romfs $D/game/romfs" "$log"
+    check 'start (#309): it says your Link wears the green files with your colour painted on' has "$D/logs/start.log" 'your coop-options.ini color is painted on'
+    rm -f "$D/tools/puppet_pack/self_tunic.py" "$D/tools/puppet_pack/merge_tables.py"
     chmod -w "$D"
     if [[ ! -w $D ]]; then
         bash "$kit/start-squadala.sh" --no-update </dev/null >"$tmp/start4.txt" 2>&1
