@@ -1348,10 +1348,15 @@ TEST_CASE("hookshot: a picked Steam Controller is its real pad and Steam's stand
     // Under Steam Input a Valve pad is two pads in SDL's list: the real one gives motion only, Steam's stand-in its
     // buttons. Picking the one named after the controller in Settings' Controller row left a game with no buttons.
     const std::string pads = ReadFile(kRepo / "hookshot" / "patches" / "0015-coop-pad-select.patch");
-    CHECK(pads.find("+    return pads[i].gc && (pads[i].steam || steam_pads_motion_only(pads[i].vendor, pads[i].steam, "
-                    "stand_in));") != std::string::npos);
+    // Only the real Valve pad (motion only) pairs, and only with exactly one stand-in open: two players' pads under
+    // Steam Input (two stand-ins: PlayStation, Switch Pro, Xbox) never merge, each counts by its own number.
+    CHECK(pads.find("+static int valve_real(int i) { return pads[i].gc && steam_pads_motion_only(pads[i].vendor, "
+                    "pads[i].steam, 1); }") != std::string::npos);
     CHECK(pads.find("+    if (!pick || pad_rank[i] == pick) return 1;\n+    if (pick < 0) return 0;") != std::string::npos);
-    CHECK(pads.find("+        if (pad_rank[k] == pick && steam_side(k, stand_in)) return 1;") != std::string::npos);
+    CHECK(pads.find("+    if (picked < 0 || !(valve_real(picked) || pads[picked].steam)) return 0;\n"
+                    "+    if (stand_ins != 1) {") != std::string::npos);
+    CHECK(pads.find("+    return pads[picked].steam ? valve_real(i) : pads[i].steam != 0;") != std::string::npos);
+    CHECK(pads.find("steam_side(") == std::string::npos);   // (ad2857c8's rule: every stand-in counted together)
     CHECK(pads.find("+    return !pick || pad_rank[i] == pick;") == std::string::npos);
     // Every user of the pick goes through pad_counts (buttons, motion; patch 0016's local pads keep their own rule).
     const std::string local = ReadFile(kRepo / "hookshot" / "patches" / "0016-coop-local-pads.patch");
