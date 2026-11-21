@@ -1050,7 +1050,8 @@ function Get-KitGameVariantFiles([string]$Game) {
         $names = @('longshot.exe', 'longshot_vk.dll', 'SDL2.dll', 'SDL3.dll' | ForEach-Object { if ($dir) { "$dir\$_" } else { $_ } }) + @('image.bin')
         if ($dir) { $names += 'longshot.exe' }   # (the builder's launcher on top)
     }
-    $names += 'exefs_patches.txt'
+    # (and Longshot's note itself: a build kept after a put back still knows the files Longshot copied in)
+    $names += 'exefs_patches.txt', '.longshot_installed.json'
     $out = @()
     foreach ($n in @($names | Sort-Object -Unique)) {
         $rel = "$n" -replace '/', '\'
@@ -1136,7 +1137,7 @@ function Find-KitGameVariant([string]$Kit, [string]$Stamp, [bool]$Dlss) {
 
 # The kept build $Dir copied back into $Game: every file staged as <name>.new first, then swapped in (a copy that stops
 # leaves the game as it was), exefs_patches.txt gone when that build had none, Longshot's note of what it copied in
-# gone (its next build copies those files again), and coop-built-from.txt last. $true when done.
+# put back with them, and coop-built-from.txt last. $true when done.
 function Restore-KitGameVariant([string]$Dir, [string]$Game) {
     $from = Join-Path $Dir 'files'
     $base = ([System.IO.Path]::GetFullPath($from)).TrimEnd('\') + '\'
@@ -1159,7 +1160,9 @@ function Restore-KitGameVariant([string]$Dir, [string]$Game) {
         return $false
     }
     if ($files -notcontains 'exefs_patches.txt') { Remove-Item -LiteralPath (Join-Path $Game 'exefs_patches.txt') -Force -ErrorAction SilentlyContinue }
-    Remove-Item -LiteralPath (Join-Path $Game '.longshot_installed.json') -Force -ErrorAction SilentlyContinue
+    # (Longshot's note comes back with them: its file list for the next keep; its stats differ from the copies, so its
+    # next build copies those files again, as after any copy)
+    if ($files -notcontains '.longshot_installed.json') { Remove-Item -LiteralPath (Join-Path $Game '.longshot_installed.json') -Force -ErrorAction SilentlyContinue }
     # (coop-built-from.txt as that build wrote it)
     Copy-Item -LiteralPath (Join-Path $Dir 'built-from.txt') -Destination (Join-Path $Game 'coop-built-from.txt') -Force
     try { (Get-Item -LiteralPath (Join-Path $Dir 'stamp.txt')).LastWriteTimeUtc = [DateTime]::UtcNow } catch { }

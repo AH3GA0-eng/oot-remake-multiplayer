@@ -529,7 +529,7 @@ for k in sorted(json.load(open(sys.argv[1], encoding="utf-8"))): print(k)' "$GAM
     else
         printf '%s\n' longshot longshot_vk.so libSDL2-2.0.so.0 image.bin
     fi
-    printf 'exefs_patches.txt\n'
+    printf 'exefs_patches.txt\n.longshot_installed.json\n'   # (the note too: a build kept after a put back still knows its files)
 }
 variant_text() { printf '%s\ndlss=%s' "$(printf '%s\n' "$1" | tr -d '\r' | sed 's/[[:space:]]*$//')" "$2"; }
 variant_dir() { printf '%s/%s' "$variants" "$(printf '%s' "$1" | sha256sum | cut -c1-20)"; }
@@ -571,7 +571,9 @@ variant_restore() {   # $1: a kept build: staged as <name>.new, then swapped in;
     ((${#staged[@]})) || return 1
     for f in "${staged[@]}"; do mv -f -- "$GAME/$f.new" "$GAME/$f"; done
     [[ -f $d/exefs_patches.txt ]] || rm -f "$GAME/exefs_patches.txt"
-    rm -f "$GAME/.longshot_installed.json"   # (Longshot's next build copies those files again)
+    # (Longshot's note comes back with them: its file list for the next keep; its stats differ from the copies, so its next
+    # build copies those files again, as after any copy)
+    [[ -f $d/.longshot_installed.json ]] || rm -f "$GAME/.longshot_installed.json"
     cp -f "$1/built-from.txt" "$game_stamp"
     touch "$1/stamp.txt"
 }
@@ -598,7 +600,7 @@ build_why() {
     want=$(printf '%s' "$game_want" | tr -d '\r')
     if [[ -z $have ]]; then
         printf 'the first build of the co-op game (15 to 60 minutes, once).'
-    elif [[ ${have%% *} != "${want%% *}" ]]; then
+    elif [[ ${have%% *} != "${want%% *}" ]]; then   # (the first word is the builder's SHA-256, LINUX.txt: the Longshot release)
         printf 'another Longshot version than the game was built for (about 15 to 45 minutes).'
     elif [[ $have == "$want" ]]; then
         printf 'built again as asked (5 to 60 minutes).'
@@ -859,6 +861,7 @@ find_pack_game() {
 # moved: no copy), and moved back here. The newest 2 stay. start-squadala.sh --pack (OOT_COOP_PACK_FRESH) always makes it.
 pack_keep=$DATA/pack-variants
 pack_keep_dir() { printf '%s/%s' "$pack_keep" "$(printf '%s' "$1" | sha256sum | cut -c1-20)"; }
+pack_saved=''
 pack_save() {
     local s d
     [[ -f $mod/coop_puppet.json && -f $mod/.coop-stamp && -z $(pack_gap) ]] || return 0
@@ -866,6 +869,7 @@ pack_save() {
     d=$(pack_keep_dir "$s")
     rm -rf "$d"
     { mkdir -p "$d" && mv "$mod" "$d/coop-puppet" && printf '%s' "$s" >"$d/key.txt"; } || { rm -rf "$d"; return 0; }
+    pack_saved=$d
     ls -1t "$pack_keep"/*/key.txt 2>/dev/null | tail -n +3 | while IFS= read -r s; do rm -rf "$(dirname -- "$s")"; done
 }
 if [[ -z ${OOT_COOP_PACK_FRESH-} ]] && ! [[ -f $mod/coop_puppet.json && $(cat "$mod/.coop-stamp" 2>/dev/null) == "$pack_stamp" && -z $(pack_gap) ]]; then
@@ -927,7 +931,14 @@ elif [[ -n $pack_from && -e $pack_from ]]; then
         rm -f "$pack_asked"
     else
         rm -f "$mod/.coop-stamp"
-        warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
+        # (the pack there before goes back in, so a make that failed, a full disk or a tool error, leaves the pack the game
+        # had; with its own stamp, another one, so the next start tries again)
+        if [[ -n $pack_saved && -f $pack_saved/coop-puppet/coop_puppet.json ]] && rm -rf "$mod" && mv "$pack_saved/coop-puppet" "$mod"; then
+            rm -rf "$pack_saved"
+            warn 'the puppet pack could not be made again (the lines above say why): the one from before stays, so the game starts with it. Every start tries again.'
+        else
+            warn 'the puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.'
+        fi
     fi
 else
     if [[ -n $pack_from ]]; then

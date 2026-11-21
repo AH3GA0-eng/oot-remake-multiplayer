@@ -41,7 +41,7 @@ try {
     Write-File (Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\coop_puppet.json') '{"sound": true, "tunics": {"red": ["x"]}}'
     Write-File (Join-Path $g 'mods\contents\0400486024DEC000\coop-puppet\romfs\x') 'tunic'
     Check ((Get-KitHookshotNeed $kit) -eq '') 'need: the game as built -> nothing'
-    Check (@(Get-KitGameVariantFiles $g).Count -eq 5) 'variant files: the five Longshot noted (no exefs_patches.txt without code mods)'
+    Check (@(Get-KitGameVariantFiles $g).Count -eq 6 -and (@(Get-KitGameVariantFiles $g) -contains '.longshot_installed.json')) 'variant files: the five Longshot noted and its note (no exefs_patches.txt without code mods)'
 
     # Character Select's code patch put in (on): the need is a build, no kept build of that stamp yet.
     Write-File (Join-Path $g 'mods\OoT Character Select\exefs\E0F3CCFAF50065AE.ips') 'PATCHEOF'
@@ -70,8 +70,8 @@ try {
     Set-Build 'off' $off $false
     Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`n"
     $on = Get-KitHookshotStamp $kit
-    Check ((Get-KitHookshotNeed $kit) -eq 'mods' -or (Get-KitHookshotNeed $kit) -eq 'variant') 'need: switched on again (list row on)'
-    # (a list row 'on' is a stamp of its own too; the same mods as built with Character Select, list removed: 'variant')
+    Check ($on -ne $withCs -and (Get-KitHookshotNeed $kit) -eq 'mods') 'need: an "on" row in the list is a stamp of its own, never built -> mods'
+    # (the same mods as built with Character Select, the list removed: 'variant')
     Remove-Item -LiteralPath (Join-Path $g 'mods\coop-mods.list') -Force
     Check ((Get-KitHookshotStamp $kit) -eq $withCs) 'stamp: back to the folder as it was built with Character Select'
     Check ((Get-KitHookshotNeed $kit) -eq 'variant') 'need: back to a stamp kept from before -> variant (no build)'
@@ -82,7 +82,7 @@ try {
     Check ((Read-File (Join-Path $g 'longshot.exe')) -eq 'longshot.exe cs' -and (Read-File (Join-Path $g 'image.bin')) -eq 'image.bin cs') 'restore: its exe and image.bin'
     Check ((Read-File (Join-Path $g 'exefs_patches.txt')) -eq 'patches cs') 'restore: its exefs_patches.txt (the Mods tab reads it)'
     Check ((Read-File (Join-Path $g 'coop-built-from.txt')) -eq $withCs) 'restore: its stamp, as the build wrote it'
-    Check (-not (Test-Path -LiteralPath (Join-Path $g '.longshot_installed.json'))) 'restore: Longshot''s note goes (its next build copies its files again)'
+    Check ((Read-File (Join-Path $g '.longshot_installed.json')) -like '*longshot_vk.dll*') 'restore: Longshot''s note comes back (its file list for the next keep)'
     Check ((Read-File (Join-Path $g 'user\save\slot0.bin')) -eq 'MY SAVE' -and (Read-File (Join-Path $g 'hookshot_coop.dll')) -eq 'MODULE') 'restore: saves and the module untouched'
     Check (-not @(Get-ChildItem -LiteralPath $g -Recurse -Filter '*.new' -File)) 'restore: no .new file left'
     Check ((Get-KitHookshotNeed $kit) -eq '') 'need: after the put back -> nothing'
@@ -158,7 +158,14 @@ try {
     # The build script: the pack is made only when stale, a kept one goes back first; -PackOnly always makes it.
     Check ($hb -match 'if \(-not \$PackOnly -and -not \(Test-KitPuppetPackStale') 'build script: a current pack is not made again'
     Check ($hb -match '\$back = Restore-KitPuppetPack \$kit \$mod \$packDir') 'build script: a kept pack goes back before one is made'
-    Check ($hb -match "if \(-not \`$PackOnly\) \{ \[void\]\(Save-KitPuppetPack \`$kit \`$mod\) \}") 'build script: the pack there is kept before it is made again'
+    Check ($hb -match "\`$keptPack = if \(-not \`$PackOnly\) \{ Save-KitPuppetPack \`$kit \`$mod \}") 'build script: the pack there is kept before it is made again'
+    Check ($hb -match "(?s)if \(\`$code -ne 0\) \{.*Move-KitFolder \(Join-Path \`$keptPack 'coop-puppet'\) \`$mod.*the one from before stays") 'build script: a failed make puts the pack from before back'
+    # (what that branch does: the kept pack moved back over a half-made one)
+    Set-Pack 'old' ''
+    $k2 = Save-KitPuppetPack $kit $mod
+    Write-File (Join-Path $mod 'half.bin') 'half made'
+    Remove-Item -LiteralPath $mod -Recurse -Force
+    Check ((Move-KitFolder (Join-Path $k2 'coop-puppet') $mod) -and (Read-File (Join-Path $mod 'coop_look\gear.bin')) -eq 'gear old') 'pack: the kept pack moves back in place'
 
     # --- Randomizer seeds: their size tables by content --------------------------------------------------
     $exe = Join-Path $tmp 'seedgame'

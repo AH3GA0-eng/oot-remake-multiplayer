@@ -298,7 +298,7 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         if ($why) { Write-Host "  $(($why -split '\. ')[0])." }
         Write-Host '  Making the puppet pack (how you see the other players; 1 to 4 minutes) ...'
         # (the pack there is kept for later: switching Character Select back puts it back in seconds)
-        if (-not $PackOnly) { [void](Save-KitPuppetPack $kit $mod) }
+        $keptPack = if (-not $PackOnly) { Save-KitPuppetPack $kit $mod } else { '' }
         $ErrorActionPreference = 'Continue'
         # The kit's pack command (kit-paths.ps1 Get-KitPackArgs: with the title's rows and the pause menu's tab), the
         # same one the test kits run. As the Linux kit's build.sh.
@@ -308,7 +308,18 @@ function Invoke-PuppetPackStep([string]$exeDir) {
         $made = $true
         $ErrorActionPreference = 'Stop'
         if ($code -eq 0) { Remove-Item -LiteralPath (Join-Path $hs 'pack-asked.txt') -Force -ErrorAction SilentlyContinue }
-        if ($code -ne 0) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+        if ($code -ne 0) {
+            # (the pack there before goes back in, so a make that failed, a full disk or a tool error, leaves the pack the game had)
+            if ($keptPack -and (Test-Path -LiteralPath (Join-Path $keptPack 'coop-puppet\coop_puppet.json'))) {
+                if (Test-Path -LiteralPath $mod) { Remove-Item -LiteralPath $mod -Recurse -Force -ErrorAction SilentlyContinue }
+                if (Move-KitFolder (Join-Path $keptPack 'coop-puppet') $mod) {
+                    Remove-Item -LiteralPath $keptPack -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host '  The puppet pack could not be made again (the lines above say why): the one from before stays, so the game starts with it. Every start tries again.' -ForegroundColor Yellow
+                    $code = -1
+                }
+            }
+            if ($code -ne -1) { Write-Host '  The puppet pack could not be made (the lines above say why): the game starts, and the other players show as names only until it is made. Every start tries again.' -ForegroundColor Yellow }
+        }
     } else {
         Write-Host '  No puppet pack this time: the other players show as names only.' -ForegroundColor Yellow
     }

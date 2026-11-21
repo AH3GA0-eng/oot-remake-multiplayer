@@ -231,11 +231,19 @@ printf '%s\n' "$nup_was" >"$D/game-files.txt"
 cp "$D/tools/puppet_pack/build.py" "$tmp/build.py.good"
 printf 'import sys\nprint("BuildError: Tex/x.bntx.zs: broken")\nsys.exit(1)\n' >"$D/tools/puppet_pack/build.py"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack4.txt" 2>&1; export CODE=$?
-check 'pack: a pack tool error is said plainly and the start goes on, the next start tries again' bash -c '[ $CODE -eq 0 ] && grep -q "BuildError" "$1" && grep -q "could not be made (the lines above say why): the game starts" "$1" && [ ! -f "$2/.coop-stamp" ]' _ "$tmp/pack4.txt" "$P"
+# (the pack there before is kept while the new one is made: a failed make puts it back, with its own stamp)
+check 'pack: a pack tool error is said plainly, the pack from before stays, the start goes on, the next start tries again' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "BuildError" "$1" && grep -q "could not be made again (the lines above say why): the one from before stays" "$1" &&
+        [ -f "$2/coop_puppet.json" ] && [ -f "$2/.coop-stamp" ] && [ ! -d "$3/pack-variants/$(ls "$3/pack-variants" 2>/dev/null | head -n 1)/coop-puppet" ]' _ "$tmp/pack4.txt" "$P" "$D"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack4b.txt" 2>&1
+check 'pack: still the broken tool: the next start tries again (the pack is not current for it)' bash -c 'grep -q "BuildError" "$1"' _ "$tmp/pack4b.txt"
 cp "$tmp/build.py.good" "$D/tools/puppet_pack/build.py"
 : >"$log"
 bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack5.txt" 2>&1; export CODE=$?
-check 'pack: the tool fixed: the next start makes the pack' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$2" && [ -f "$3/.coop-stamp" ]' _ "$tmp/pack5.txt" "$log" "$P"
+check 'pack: the tool fixed: the pack from before (made by this tool) is current again, not made again' bash -c '[ $CODE -eq 0 ] && ! grep -q "^puppet_pack" "$2" && grep -q "puppet pack: built already" "$1" && [ -f "$3/.coop-stamp" ]' _ "$tmp/pack5.txt" "$log" "$P"
+rm -f "$P/.coop-stamp"; : >"$log"
+bash "$kit/scripts/build.sh" </dev/null >"$tmp/pack6.txt" 2>&1; export CODE=$?
+check 'pack: no stamp (a make stopped half way): made again' bash -c '[ $CODE -eq 0 ] && grep -q "^puppet_pack" "$2" && [ -f "$3/.coop-stamp" ]' _ "$tmp/pack6.txt" "$log" "$P"
 
 # OoT Character Select by Snail (data/longshot/CHARACTER-SELECT.txt): fetched from his release onto the PC, never
 # carried. Offline with his zip and characters.json already in data/builder/charsel (their SHA-256 match): no network.
