@@ -132,6 +132,8 @@ class HostService {
   bool port_failed() const { return port_failed_; }
   std::uint16_t port() const;
   const Session* session() const;
+  // The console's moderation (Session::admin); "not hosting" when not running.
+  std::string admin(const std::string& line);
   // (Navi) New Game+: the hosting game's level (Session::set_ngplus). Between
   // service() calls, on the same thread.
   void set_ngplus(std::uint8_t level);
@@ -174,5 +176,9 @@ class HostService {
 
 // "1.2.3.4" for an IPv4 address held first dotted part highest.
 std::string show_ipv4(std::uint32_t ip);
+// The host's kept bans file (one lobby id of a player key, "k:" and hex, a line; comments and anything else skipped):
+// read sorted, written whole. The game's Host (coop-bans.txt) and coop_server --bans-file use it.
+std::vector<std::string> read_ban_file(const std::string& path);
+void write_ban_file(const std::string& path, const std::vector<std::string>& bans);
 
 }  // namespace coop::server

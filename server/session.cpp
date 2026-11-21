@@ -2792,22 +2792,26 @@ bool Session::object_in_fight(const ObjectId& id, std::uint64_t now_us) const {
 }
 
 void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_us) {
-  const auto answer = [&](LobbyResultCode result) {
-    send(id, kChannelSession, LobbyResult{a.action, a.target, result});
-  };
   if (!host_ || *host_ != id) {
     ++stats_.lobby_refused;
-    answer(LobbyResultCode::not_host);
+    send(id, kChannelSession, LobbyResult{a.action, a.target, LobbyResultCode::not_host});
     return;
   }
+  if (const auto result = apply_lobby(a, id, now_us, "the host")) {
+    send(id, kChannelSession, LobbyResult{a.action, a.target, *result});
+  }
+}
+
+std::optional<LobbyResultCode> Session::apply_lobby(const LobbyAction& a, std::optional<ConnectionId> actor,
+                                                    std::uint64_t now_us, const char* by) {
+  using Code = LobbyResultCode;
+  const auto answer = [](Code result) { return std::optional<Code>(result); };
   const std::optional<ConnectionId> target = connection_of(a.target);
   if (!target) {
-    answer(LobbyResultCode::no_player);
-    return;
+    return answer(LobbyResultCode::no_player);
   }
-  if (same_game(*target, id)) {  // the host, or a split-screen seat of its own game
-    answer(LobbyResultCode::is_host);
-    return;
+  if (actor && same_game(*target, *actor)) {  // the host, or a split-screen seat of its own game
+    return answer(LobbyResultCode::is_host);
   }
   Connection& t = connections_.at(*target);
   const std::string key = lobby_id(t);
@@ -2832,10 +2836,9 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
       actions_.push_back(DisconnectAction{*target});
     }
     remove_player(*target, LeaveReason::kicked, now_us,
-                  ban ? "banned by the host" : "kicked by the host");
+                  std::string(ban ? "banned by " : "kicked by ") + by);
     ++stats_.lobby_done;
-    answer(LobbyResultCode::done);
-    return;
+    return answer(LobbyResultCode::done);
   }
   std::uint8_t bit = lobby_mute::voice;
   bool on = true;
@@ -2844,14 +2847,13 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
     case LobbyActionKind::unmute_voice: on = false; break;
     case LobbyActionKind::mute_chat: bit = lobby_mute::chat; break;
     case LobbyActionKind::unmute_chat: bit = lobby_mute::chat; on = false; break;
-    default: return;  // kick and ban above; the codec takes nothing else
+    default: return std::nullopt;  // kick and ban above; the codec takes nothing else
   }
   const std::uint8_t before = lobby_mutes_of(t);
   const std::uint8_t after = on ? static_cast<std::uint8_t>(before | bit)
                                 : static_cast<std::uint8_t>(before & ~bit);
   if (after == before) {
-    answer(LobbyResultCode::unchanged);
-    return;
+    return answer(LobbyResultCode::unchanged);
   }
   if (after == 0) {
     lobby_mutes_.erase(key);
@@ -2860,9 +2862,80 @@ void Session::on_lobby(ConnectionId id, const LobbyAction& a, std::uint64_t now_
   }
   send_to_scene({}, std::nullopt, kChannelSession, LobbyMutes{t.number, after});
   ++stats_.lobby_done;
-  answer(LobbyResultCode::done);
-  log(who + (on ? " muted" : " unmuted") + (bit == lobby_mute::voice ? " (voice)" : " (chat)") +
-      " by the host");
+  log(who + (on ? " muted" : " unmuted") + (bit == lobby_mute::voice ? " (voice)" : " (chat)") + " by " + by);
+  return answer(LobbyResultCode::done);
+}
+
+std::string Session::admin(std::string_view line, std::uint64_t now_us) {
+  std::vector<std::string> w;
+  for (std::size_t i = 0; i < line.size();) {
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')) ++i;
+    std::size_t j = i;
+    while (j < line.size() && line[j] != ' ' && line[j] != '\t' && line[j] != '\r') ++j;
+    if (j > i) w.emplace_back(line.substr(i, j - i));
+    i = j;
+  }
+  const std::string help =
+      "commands: /players, /kick N, /ban N, /unban KEYID, /mute N voice|chat, /unmute N voice|chat";
+  if (w.empty()) return help;
+  const auto number = [&](std::size_t at) -> std::optional<std::uint8_t> {
+    if (w.size() <= at || w[at].empty() || w[at].size() > 3 ||
+        w[at].find_first_not_of("0123456789") != std::string::npos) {
+      return std::nullopt;
+    }
+    const int n = std::stoi(w[at]);
+    if (n < 1 || n > 255) return std::nullopt;
+    return static_cast<std::uint8_t>(n);
+  };
+  const auto said = [](std::optional<LobbyResultCode> r) -> std::string {
+    if (!r) return "not done";
+    switch (*r) {
+      case LobbyResultCode::done: return "done";
+      case LobbyResultCode::no_player: return "no player with that number";
+      case LobbyResultCode::unchanged: return "it was so already";
+      default: return "not done";
+    }
+  };
+  if (w[0] == "/players") {
+    std::string out = std::to_string(player_count()) + " player(s)";
+    for (const auto& [id, c] : connections_) {
+      if (c.state != State::joined) continue;
+      std::string key = lobby_id(c);
+      if (key.rfind("k:", 0) == 0 && key.size() > 14) key = key.substr(0, 14);   // (a short key id: k: + 12 hex)
+      out += "\n  " + std::to_string(c.number) + "  " + c.nickname + "  " + key +
+             (host_ && *host_ == id ? "  (hosts the save)" : "");
+    }
+    return out;
+  }
+  if ((w[0] == "/kick" || w[0] == "/ban") && number(1)) {
+    const auto kind = w[0] == "/ban" ? LobbyActionKind::ban : LobbyActionKind::kick;
+    return w[0].substr(1) + " " + w[1] + ": " + said(apply_lobby(LobbyAction{kind, *number(1)}, std::nullopt, now_us,
+                                                                 "the server"));
+  }
+  if ((w[0] == "/mute" || w[0] == "/unmute") && number(1) && w.size() == 3 && (w[2] == "voice" || w[2] == "chat")) {
+    const bool on = w[0] == "/mute";
+    const auto kind = w[2] == "voice" ? (on ? LobbyActionKind::mute_voice : LobbyActionKind::unmute_voice)
+                                      : (on ? LobbyActionKind::mute_chat : LobbyActionKind::unmute_chat);
+    return w[0].substr(1) + " " + w[1] + " " + w[2] + ": " +
+           said(apply_lobby(LobbyAction{kind, *number(1)}, std::nullopt, now_us, "the server"));
+  }
+  if (w[0] == "/unban" && w.size() == 2) {
+    std::string want = w[1];
+    if (want.rfind("k:", 0) != 0) want = "k:" + want;
+    if (want.size() < 2 + 8 || want.find_first_not_of("0123456789abcdef", 2) != std::string::npos) {
+      return "unban: give the key id /players or the bans file shows (8 or more of its hex digits)";
+    }
+    std::vector<std::string> gone;
+    for (const std::string& id : banned_ids_) {
+      if (id.rfind(want, 0) == 0) gone.push_back(id);
+    }
+    if (gone.size() != 1) return gone.empty() ? "unban: no ban with that key id" : "unban: more than one ban starts so";
+    banned_ids_.erase(gone[0]);
+    std::erase(config_.kept_bans, gone[0]);
+    log("a ban was lifted by the server (" + gone[0].substr(0, 14) + ")");
+    return "unban: done";
+  }
+  return help;
 }
 
 std::uint8_t Session::lobby_mutes_of(const Connection& c) const {

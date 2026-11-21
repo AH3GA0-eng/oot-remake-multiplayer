@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <utility>
 
 #include "coop/protocol/join_password.hpp"
@@ -62,6 +64,34 @@ HostStatus HostService::status() const {
 std::uint16_t HostService::port() const { return server_ ? server_->port() : 0; }
 
 const Session* HostService::session() const { return server_ ? &server_->session() : nullptr; }
+
+std::string HostService::admin(const std::string& line) {
+  if (!server_ || stopped_) return "not hosting";
+  return server_->admin(line);
+}
+
+std::vector<std::string> read_ban_file(const std::string& path) {
+  std::vector<std::string> out;
+  if (path.empty()) return out;
+  std::ifstream in(std::filesystem::u8path(path));
+  std::string line;
+  while (std::getline(in, line) && out.size() < 4096) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    const bool ok = line.size() > 2 && line.size() <= 2 + 64 && line.rfind("k:", 0) == 0 &&
+                    line.find_first_not_of("0123456789abcdef", 2) == std::string::npos;
+    if (ok) out.push_back(line);
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+void write_ban_file(const std::string& path, const std::vector<std::string>& bans) {
+  std::ofstream out(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
+  out << "# Players this host banned (their player key). They stay banned in every game you host.\n"
+         "# Delete a line (or this file) to let that player in again.\n";
+  for (const std::string& id : bans) out << id << "\n";
+}
 
 void HostService::set_ngplus(std::uint8_t level) {
   if (server_) server_->session().set_ngplus(level);

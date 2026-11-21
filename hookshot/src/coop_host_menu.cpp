@@ -48,7 +48,7 @@ constexpr std::uint16_t kPortTries = 5;
 std::vector<std::string> ReadBans(const std::string& path) {
     std::vector<std::string> out;
     if (path.empty()) return out;
-    std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
+    std::ifstream in(std::filesystem::u8path(path));
     std::string line;
     while (std::getline(in, line) && out.size() < 4096) {
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
@@ -62,7 +62,7 @@ std::vector<std::string> ReadBans(const std::string& path) {
 }
 
 void WriteBans(const std::string& path, const std::vector<std::string>& bans) {
-    std::ofstream out(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary | std::ios::trunc);
+    std::ofstream out(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
     out << "# Players this host banned (their player key). They stay banned in every game you host.\n"
            "# Delete a line (or this file) to let that player in again.\n";
     for (const std::string& id : bans) out << id << "\n";
