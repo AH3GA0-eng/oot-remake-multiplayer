@@ -1593,6 +1593,34 @@ void Sync::NoteTakeover(std::uint64_t address, std::uint64_t now_us, std::string
     }
 }
 
+void Sync::NoteOwnDeath(std::uint64_t address, std::uint64_t now_us, std::string_view name) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end() || !IsDeathAnimation(name)) {
+        return;
+    }
+    it->second.own_ai_at = now_us;  // row 97: its own AI acts
+    MarkOwnDeath(it->second, name, now_us, self_);
+}
+
+void Sync::MarkOwnDeath(Object& o, std::string_view own, std::uint64_t now_us, std::uint8_t self) {
+    if (!IsDeathAnimation(own)) {
+        return;
+    }
+    o.own_death_at = now_us;  // issue 133: its own death here (LifelessKillHere)
+    if (o.picture_die_at != 0) {
+        return;
+    }
+    const auto owner = owners_.find(o.id);
+    const std::string owners =
+        !o.received.empty() && o.received.back().animation ? o.received.back().animation->name : std::string{};
+    const bool other = owner != owners_.end() && owner->second.player != 0 && owner->second.player != self;
+    if (PictureDeathHere(o.name, o.life.has_value(), other, own, owners)) {
+        o.picture_die_at = now_us;  // row 175: its own death runs here; the owner's animation waits
+        o.picture_kill_due = true;
+        o.picture_die = std::string(own);
+    }
+}
+
 void Sync::NoteOwnBrainWant(std::uint64_t address, std::uint64_t now_us) {
     const auto it = objects_.find(address);
     if (it == objects_.end() || !it->second.reacts) {
@@ -2026,21 +2054,12 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         o.own_stun = own_stun;
         o.animation = s.animation;
-        if (s.animation && IsDeathAnimation(s.animation->name)) {
+        if (o.picture_die_at == 0 && s.animation) {
+            MarkOwnDeath(o, s.animation->name, now_us, self);
+        } else if (s.animation && IsDeathAnimation(s.animation->name)) {
             o.own_death_at = now_us;  // issue 133: its own death here (LifelessKillHere)
         }
-        if (o.picture_die_at == 0 && s.animation) {
-            const auto owner = owners_.find(o.id);
-            const std::string owners = !o.received.empty() && o.received.back().animation
-                                           ? o.received.back().animation->name
-                                           : std::string{};
-            const bool other = owner != owners_.end() && owner->second.player != 0 && owner->second.player != self;
-            if (PictureDeathHere(o.name, o.life.has_value(), other, s.animation->name, owners)) {
-                o.picture_die_at = now_us;  // row 175: its own death runs here; the owner's animation waits
-                o.picture_kill_due = true;
-                o.picture_die = s.animation->name;
-            }
-        } else if (o.picture_die_at != 0 && s.animation && !o.picture_replayed) {
+        if (o.picture_die_at != 0 && o.picture_die_at != now_us && s.animation && !o.picture_replayed) {
             // Review of bd5fab5c: a cut-off death is played again once. Its death seen playing again after it was
             // cut ends the replay; a later other animation is its own (a finished death), never cut again.
             if (!IsDeathAnimation(s.animation->name)) {
@@ -4193,6 +4212,30 @@ bool IsWeb(std::string_view actor) {
     return actor.starts_with("Obj_") && actor.find("SpiderWeb") != std::string_view::npos;
 }
 
+bool CoversOwnReaction(const PlayWish& wish, std::string_view slot_name) {
+    if (wish.slot != 0 || slot_name.empty()) {
+        return false;
+    }
+    if (wish.keep_own_death && IsDeathAnimation(slot_name) && !IsDeathAnimation(wish.name)) {
+        return true;
+    }
+    return wish.keep_own_stun && IsStunAnimation(slot_name) && !IsStunAnimation(wish.name);
+}
+
+bool DeathReadFromAnimation(std::string_view name, bool reacts, bool life_read) {
+    if (life_read) {
+        return false;  // (a life that can be read sends its fall as hits)
+    }
+    if (name.starts_with("Enemy_GhostPicturePerformer_Poe_")) {
+        return true;  // PictureDeathHere
+    }
+    if (!reacts || IsBossOrPart(name)) {
+        return false;
+    }
+    const GroupPart* part = PartOf(name);
+    return part == nullptr || !part->boss;  // LifelessKillHere
+}
+
 bool PlaysOver(std::string_view slot_name, std::string_view only_over) {
     if (only_over.empty()) {
         return true;
@@ -4303,6 +4346,10 @@ void Sync::Plays(std::uint64_t now_us, std::vector<PlayWish>& out) const {
             wish.frame =
                 CoopNpcAnim::Wrapped(FrameAfter(wanted->frame, wish.run, age), wish.loop);
         }
+        // Row 175: its own death (or a boss's own stun) here is read from its own animation: never covered by the
+        // owner's (CoversOwnReaction).
+        out.back().keep_own_death = DeathReadFromAnimation(o.name, o.reacts, o.life.has_value());
+        out.back().keep_own_stun = IsBossOrPart(o.name);
         // Issue 150: a boss's other slots (Gohma's eye guard and eyelids,
         // whose AS events open and close the eye's guard). Without them
         // each game's copy kept its own AI's guard: the eye stood open for

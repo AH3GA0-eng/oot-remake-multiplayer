@@ -937,6 +937,30 @@ public:
             if (!slot_name.empty() && !PlaysOver(slot_name, p.only_over)) {
                 continue;
             }
+            // Row 175 (runs 20261120-142219, -135153): our arrow's hit made the painting copy's own AI play its
+            // death, and the owner's 'Pct_Wait' put here at once erased it before any walk saw it (its death here
+            // is read from its own animation). Not covered: a death is told to Sync now (TakeOwnDeaths). One we
+            // played there (the owner's death or stun, row 169) is the owner's and is covered as usual.
+            const auto played = played_at_.find(key);
+            const bool played_by_us = played != played_at_.end() &&
+                                      AnimationBase(played->second.first) == AnimationBase(slot_name);
+            if (!played_by_us && CoversOwnReaction(p, slot_name)) {
+                if (IsDeathAnimation(slot_name) && own_deaths_.size() < 256 &&
+                    std::none_of(own_deaths_.begin(), own_deaths_.end(),
+                                 [&p](const auto& d) { return d.first == p.address; })) {
+                    own_deaths_.emplace_back(p.address, slot_name);
+                }
+                if (kept_own_.size() >= 512) {
+                    kept_own_.clear();
+                }
+                if (const auto [it, added] = kept_own_.insert(p.address); added) {
+                    LOG_INFO(Core, "coop: objects: copy {:#x} shows its own '{}': the owner's '{}' is not put over it "
+                                   "(row 175)",
+                             p.address, slot_name, p.name);
+                }
+                continue;
+            }
+            kept_own_.erase(p.address);
             // Issue 157: the name we played last is gone from slot 0, so the
             // copy's own AI chose another one (a Peahat rising for our Link).
             // It is put back below at once, so the walk would rarely see it:
@@ -1114,6 +1138,12 @@ public:
     std::vector<std::pair<u64, std::string>> TakeTakeovers() {
         std::lock_guard lock(mutex_);
         return std::exchange(took_over_, {});
+    }
+
+    // Present thread: the copies whose own death in slot 0 a play did not cover (row 175, CoversOwnReaction).
+    std::vector<std::pair<u64, std::string>> TakeOwnDeaths() {
+        std::lock_guard lock(mutex_);
+        return std::exchange(own_deaths_, {});
     }
 
     // Since the last ask: copy-frames held, and in how many of them the
@@ -1393,6 +1423,8 @@ private:
     std::unordered_map<u64, std::uint64_t> checked_sample_;  // actor: sample time checked
     std::unordered_map<u64, std::pair<std::string, u64>> played_at_;  // actor: name, ms
     std::vector<std::pair<u64, std::string>> took_over_;  // copies whose own AI changed slot 0, and to what
+    std::vector<std::pair<u64, std::string>> own_deaths_;  // row 175: copies whose own death was not covered
+    std::unordered_set<u64> kept_own_;  // row 175: copies showing their own death/stun now (logged once)
     std::unordered_map<std::string, u64> cells_;
     u64 block_ = 0;
     bool allocating_ = false;
@@ -5275,6 +5307,10 @@ private:
         // Copies whose own AI wanted another animation (issue 157).
         for (const auto& [a, name] : TheMover().TakeTakeovers()) {
             sync_.NoteTakeover(a, now_us, name);
+        }
+        // Row 175: a copy's own death the Mover did not cover: marked as a walk would mark it.
+        for (const auto& [a, name] : TheMover().TakeOwnDeaths()) {
+            sync_.NoteOwnDeath(a, now_us, name);
         }
         // The enemies' brain path: a plain copy whose own brain asked for another phase than its owner's wants
         // to act on our Link (issue 101; no play to give back: its brain is let run instead).
