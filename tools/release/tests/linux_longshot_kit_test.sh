@@ -337,8 +337,10 @@ check 'Character Select pack: switched off in the Mods tab makes the puppet pack
 check 'Character Select game: switched off in the Mods tab: built without its code, the build before kept, the line says why' \
     bash -c 'grep -q "^make_game .*--out" "$1" && grep -q "Building the game: the mods. code patches changed" "$2" &&
         grep -q "is kept, so going back to these mods takes seconds" "$2" && [ -f "$(ls -1d "$3"/game-variants/*/ | head -n 1)stamp.txt" ]' _ "$log" "$tmp/build-cs5.txt" "$D"
-rm -f "$D/game/mods/coop-mods.list"; : >"$log"
+# (on again as the Mods tab writes it: an "on" row, which the game reads as no row: the same stamp as before the switch)
+printf 'coop-mods 1\non OoT Character Select\n' >"$D/game/mods/coop-mods.list"; : >"$log"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs6.txt" 2>&1
+rm -f "$D/game/mods/coop-mods.list"
 check 'Character Select pack: switched on again puts the pack made before back (not made again)' \
     bash -c '! grep -q "^puppet_pack" "$1" && grep -q "list:on" "$2/.coop-stamp" && grep -q "is put back (seconds" "$3"' _ "$log" "$P" "$tmp/build-cs6.txt"
 check 'Character Select game: switched on again puts the build made before back (no make_game), with its stamp' \

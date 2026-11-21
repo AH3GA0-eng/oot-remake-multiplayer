@@ -988,6 +988,14 @@ function Get-KitCodeModsListHash([string]$List, $CodeMods) {
         if ($CodeMods.Contains($fold)) { $kept += "$($Matches[1]) $fold" }
     }
     if (-not $kept.Count) { return 'none' }
+    # Rows that change nothing are no change (player report 210): the game puts the mods the list does not name under the
+    # named ones, by folded name, on; so rows that are all "on" in that same order (Character Select switched off and on
+    # again leaves "on <it>") read as no list, and the build made before the switch is the one wanted.
+    $sorted = [string[]]@($CodeMods)
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    $same = $true
+    for ($i = 0; $i -lt $kept.Count; $i++) { if ($kept[$i] -cne "on $($sorted[$i])") { $same = $false; break } }
+    if ($same) { return 'none' }
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(($kept -join "`n"))) } finally { $sha.Dispose() }
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')

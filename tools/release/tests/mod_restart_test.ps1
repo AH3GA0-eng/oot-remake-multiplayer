@@ -70,8 +70,22 @@ try {
     Set-Build 'off' $off $false
     Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`n"
     $on = Get-KitHookshotStamp $kit
-    Check ($on -ne $withCs -and (Get-KitHookshotNeed $kit) -eq 'mods') 'need: an "on" row in the list is a stamp of its own, never built -> mods'
-    # (the same mods as built with Character Select, the list removed: 'variant')
+    # (switched off and on again on the Mods tab leaves an "on" row: the game reads it as no list, so the stamp is the one
+    # built with Character Select, and that build is kept -> 'variant', no build)
+    Check ($on -eq $withCs) 'stamp: an "on" row for the only code mod is the stamp without a list (no change for the game)'
+    Check ((Get-KitHookshotNeed $kit) -eq 'variant') 'need: Character Select switched off and on again -> variant (the build from before, no build)'
+    Write-File (Join-Path $g 'mods\Second Code\exefs\E0F3CCFAF50065AE.ips') 'PATCH2EOF'
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non Second Code`non OoT Character Select`n"
+    $moved = Get-KitHookshotStamp $kit
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`non Second Code`n"
+    Check ($moved -ne (Get-KitHookshotStamp $kit)) 'stamp: two code mods in another order than by name -> a stamp of its own (the order decides a byte both write)'
+    Remove-Item -LiteralPath (Join-Path $g 'mods\coop-mods.list') -Force
+    Check ((Get-KitHookshotStamp $kit) -like '*;list=none') 'stamp: two code mods on, by name, no list -> list=none'
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`non Second Code`n"
+    Check ((Get-KitHookshotStamp $kit) -like '*;list=none') 'stamp: the same two "on" in the order by name -> list=none (no change)'
+    Remove-Item -LiteralPath (Join-Path $g 'mods\Second Code') -Recurse -Force
+    Write-File (Join-Path $g 'mods\coop-mods.list') "coop-mods 1`non OoT Character Select`n"
+    # (the list removed too: the same)
     Remove-Item -LiteralPath (Join-Path $g 'mods\coop-mods.list') -Force
     Check ((Get-KitHookshotStamp $kit) -eq $withCs) 'stamp: back to the folder as it was built with Character Select'
     Check ((Get-KitHookshotNeed $kit) -eq 'variant') 'need: back to a stamp kept from before -> variant (no build)'

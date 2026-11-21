@@ -478,7 +478,15 @@ exefs_stamp() {
             seen[$fold]=1
             [[ -n ${code[$fold]+x} ]] && kept+=("$sw $fold")
         done < "$mods/coop-mods.list"
-        ((${#kept[@]})) && list=$(printf '%s' "$(printf '%s\n' "${kept[@]}")" | sha256sum | cut -d' ' -f1)
+        # (rows that change nothing are no change, player report 210: the game puts the mods the list does not name under
+        # the named ones, by folded name, on; rows all "on" in that same order, as Character Select switched off and on
+        # again leaves, read as no list. kit-paths.ps1 Get-KitCodeModsListHash)
+        if ((${#kept[@]})); then
+            local sorted=() i same=1
+            mapfile -t sorted < <(printf '%s\n' "${!code[@]}" | LC_ALL=C sort)
+            for i in "${!kept[@]}"; do [[ ${kept[$i]} == "on ${sorted[$i]-}" ]] || { same=0; break; }; done
+            ((same)) || list=$(printf '%s' "$(printf '%s\n' "${kept[@]}")" | sha256sum | cut -d' ' -f1)
+        fi
     fi
     printf ' exefs=%s;list=%s' "$(printf '%s\n' "${rows[@]}" | LC_ALL=C sort | paste -sd, -)" "$list"
 }
