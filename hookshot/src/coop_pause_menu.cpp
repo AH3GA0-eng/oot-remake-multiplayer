@@ -76,9 +76,9 @@ const char* const kHostPortHelp =
 // The Host page's Game row, its two choices' notes (docs/play-online.md "Public games").
 const char* const kPrivateHelp =
     "Private game (the default): friends join with your code or room name and the password. Nobody else can join.";
+// (each one literal: coop_i18n's table finds it whole)
 const char* const kPublicHelp =
-    "Public game: shows in Public games and anyone can join, no password. Only through the game list's server, so "
-    "players never see your internet address. Kick or ban players from the Lobby tab.";
+    "Public game: shows in Public games and anyone can join, no password. Only through the game list's server, so players never see your internet address. Kick or ban players from the Lobby tab.";
 
 // A join password is never drawn: one star per character.
 std::string Masked(const std::string& password) {
@@ -376,8 +376,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                            "Ends your game for everyone in it."});
         } else {
             out.push_back({Action("Start hosting", "Start", session_.by_launcher || guest), Act::kStartHost,
-                           options_.public_game ? "Starts a public game on this PC: it shows in Public games, and "
-                                                  "anyone can join without a password."
+                           options_.public_game ? "Starts a public game on this PC: it shows in Public games, and anyone can join without a password."
                                                 : "Starts a game on this PC and makes a code for your friends."});
             out.push_back({Choice("Game", options_.public_game ? "Public game" : "Private game"), Act::kGameKind,
                            options_.public_game ? kPublicHelp : kPrivateHelp});
@@ -386,8 +385,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                                                    : options_.relay_room.empty()        ? std::string("None")
                                                                                         : options_.relay_room),
                                Act::kRoom,
-                               "Your public game's name in Public games: 3 to 24 letters, digits, - or _. A ready one "
-                               "is offered; change it if you like."});
+                               "Your public game's name in Public games: 3 to 24 letters, digits, - or _. A ready one is offered; change it if you like."});
             }
             out.push_back({Choice("Players", std::to_string(options_.max_players)), Act::kPlayers,
                            "The most players in your game, you included."});

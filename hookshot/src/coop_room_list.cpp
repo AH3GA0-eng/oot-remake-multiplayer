@@ -11,6 +11,7 @@
 
 #include "common/logging.h"
 #include "coop/protocol/messages.hpp"
+#include "coop_i18n.h"
 #include "coop_pause_tab.h"
 #include "coop_title_menu.h"
 #include "relay_link.hpp"
@@ -41,12 +42,15 @@ Room FromListing(std::string room, std::string host, int players, int max, int v
 }
 
 std::string DetailText(const Room& r, int my_protocol) {
-    if (r.protocol > my_protocol) return "Needs an update: this game is newer than yours";
-    if (r.protocol != my_protocol) return "Another version: the host needs to update";
-    std::string out = r.is_public ? "Public game" : "Needs the host's password";
+    // (each piece in the player's language: coop_i18n's table has the pieces, not the built line)
+    using CoopI18n::Tr;
+    if (r.protocol > my_protocol) return Tr("Needs an update: this game is newer than yours");
+    if (r.protocol != my_protocol) return Tr("Another version: the host needs to update");
+    std::string out = r.is_public ? Tr("Public game") : Tr("Needs the host's password");
     if (r.max > 0) {
-        out += r.players >= r.max ? std::string(", Full")
-                                  : ", Players " + std::to_string(r.players) + "/" + std::to_string(r.max);
+        out += Tr(", ") + (r.players >= r.max ? Tr("Full")
+                                              : Tr("Players") + " " + std::to_string(r.players) + "/" +
+                                                    std::to_string(r.max));
     }
     return out;
 }
