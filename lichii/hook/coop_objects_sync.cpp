@@ -3759,7 +3759,15 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 o->hit_seq_in = sample->state.hit->seq;
                 record = sample->state.hit->record;
             }
-            if (life < have) {
+            if (life < have && !record && IsBossOrPart(o->name) && o->boss_stand_in_life != 0 &&
+                life >= o->boss_stand_in_life) {
+                // A boss copy, no hit record, and the stand-in hit for this life of the owner's was replayed once
+                // already: not again. Her game refuses it (its weak point is not hit), so every later sample asked
+                // again: a copy of Gohma took about 690 refused hits in one fight, reacting to each, its life staying
+                // 21 (four players, 2026-11-20). One replay per drop of the owner's life, as the copy shows the hit.
+                o->fight_until = now_us + kFightUs;
+            } else if (life < have) {
+                if (!record && IsBossOrPart(o->name)) o->boss_stand_in_life = life;
                 // Who hit it is not sent: its owner is the best guess. The hit is the owner's game's own (record);
                 // without one (no new seq: an older game, or a fall with no hit) the stand-in sword hit.
                 Lower(*o, life, now_us, writes, sample->player_number, std::nullopt, record);

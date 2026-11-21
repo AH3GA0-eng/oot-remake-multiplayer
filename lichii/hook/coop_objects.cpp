@@ -50,6 +50,7 @@
 
 #include "coop_objects.h"
 #include "coop_caller_orders.h"
+#include "coop_boss.h"
 #include "coop_hit_replay.h"
 #include "coop_every.h"
 #include "coop_event_result.h"
@@ -3961,6 +3962,7 @@ private:
                         memory_->Write32(value->second + 8, static_cast<u32>(*raised));
                         LOG_INFO(Core, "coop: objects: our Link's max life {} -> {} (from MaxLife)",
                                  max, *raised);
+                        CoopBoss::NoteMaxLifeFromOthers(*raised);   // (not our pickup: no heart claim)
                     }
                     // Rows 136/137: the host's older save lowered MaxLife; row 181: a second pickup of a boss's one
                     // container was put back. The component follows it (never in the frame it was raised).
