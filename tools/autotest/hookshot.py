@@ -1117,7 +1117,7 @@ def run(a):
             sock = "%s-%s" % (a.pipe, x) if WINDOWS else os.path.join(out, "control-%s.sock" % x)
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
-            env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
+            env = dict(os.environ, OOT_COOP_KIT_START="1", HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
             # Each game plays the save its scenario put in (the joiner would load the host's): a switch can undo it.
             env.setdefault("LICHII_COOP_TEST_OWN_SAVE", "1")
             if a.server:

@@ -1252,6 +1252,9 @@ bool Start(const HosCoopApi* api) {
         CoopPuppetConfig::Configure(PerceivedSafe());  // as the emulator's cave (coop_puppet_config.h)
     }
     CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
+    // The kit's start file sets OOT_COOP_KIT_START (play.ps1, start.sh, the autotest). Without it (and not Nucleus
+    // Co-op, which starts each game its own way) the chat says to use Start Squadala (player report 225).
+    CoopPackNotice::EnableDirect(!EnvOn("OOT_COOP_KIT_START") && !CoopLook::NucleusWrote(CoopFiles::ReadText(ini)));
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopLinkSound::SetProbe(EnvOn("LICHII_COOP_DEBUG_SOUND"));  // every user's sounds named once in the log
     // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours

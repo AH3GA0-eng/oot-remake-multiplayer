@@ -30,3 +30,21 @@ TEST_CASE("pack notice: off until the module turns it on, then the line says wha
 #endif
     CHECK(CoopPackNotice::TakeLines(true).empty());
 }
+
+TEST_CASE("pack notice: a game started by hand says to use the kit's start file once, with or without a pack") {
+    CoopPackNotice::EnableDirect(false);
+    CoopPackNotice::Enable(true);
+    CHECK(CoopPackNotice::TakeLines(false).empty());   // started by the kit: nothing to say
+    CoopPackNotice::EnableDirect(true);
+    const auto lines = CoopPackNotice::TakeLines(false);   // at once, nobody needs to be shown
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].find("not started with") != std::string::npos);
+    CHECK(lines[0].find("do not need your own Longshot build") != std::string::npos);
+#ifdef _WIN32
+    CHECK(lines[0].find("Start Squadala.bat") != std::string::npos);
+#else
+    CHECK(lines[0].find("start-squadala.sh") != std::string::npos);
+#endif
+    CHECK(CoopPackNotice::TakeLines(false).empty());   // once per run
+    CoopPackNotice::EnableDirect(false);
+}
