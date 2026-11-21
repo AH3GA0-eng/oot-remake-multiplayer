@@ -1072,6 +1072,11 @@ constexpr std::uint64_t kActorPos = 0x31c, kActorRot = 0x328, kActorPosAsk = 0x3
 // has a floor at his feet that hides what goes under it (lowered by 0.13 his soles went; at z -1.7 his boots, at
 // -2.2 his legs to the knee).
 constexpr float kModelX = 2.30f, kModelZ = -1.3f, kModelDropY = 0.0f;
+// Child Link: the game stands him higher on Equipment (y about 0.30, adult about -0.2) and its camera is closer, so the
+// adult's place is outside the picture (a tester's child save, 2026-11-20: no Link at all). His own, set with a tester.
+constexpr float kChildModelX = 1.25f, kChildModelZ = -0.35f;
+constexpr float kChildFromY = 0.05f;   // (his place's y on Equipment above this: child Link)
+std::atomic<bool> g_model_test{false};   // model.now set the place (a test run's): it holds for either Link
 // (a test run's own: model.now in the game's folder, "x drop z", read with LICHII_COOP_TEST_STATE=1: TestPouch)
 std::atomic<float> g_model_x{kModelX}, g_model_drop{kModelDropY}, g_model_z{kModelZ};
 constexpr float kModelTurnPerMs = 0.0035f;   // (the right stick at its end: a turn in about 1.8 s)
@@ -1086,6 +1091,9 @@ struct MenuModelState {
     bool back_was = false;
     std::uint64_t last_ms = 0;
     int type_was = -1;
+    std::uint64_t shown_ms = 0;  // when shown: what the menu holds is logged once a second later (Said)
+    bool said = false;
+    int slot = 0;                // the slot whose actor is moved (0, Link's on Equipment; another when 0 is empty)
 };
 MenuModelState g_model;                 // (the pages' update: g_mutex)
 std::atomic<float> g_model_spin{0.0f};  // the right stick's x (-1 .. 1), OnPad's
@@ -1118,12 +1126,32 @@ void MenuModel(void* ctx, const Facts& f, bool want) {
     if (want && !g_model.on) {
         g_model.type_was = Read<std::int32_t>(obj + kPouchType);
         Call(ctx, kSetPouchType, obj, kPouchEquipment);
-        g_model.on = true, g_model.saved = false, g_model.yaw = 0, g_model.last_ms = now;
+        g_model.on = true, g_model.saved = false, g_model.yaw = 0, g_model.last_ms = now, g_model.shown_ms = now;
         LOG_INFO(Core, "coop: pause tab: settings and look: the menu's Link shown on the page (its display type was {})",
                  g_model.type_was);
     }
     if (!g_model.on) return;
-    const std::uint64_t actor = PouchActor(obj, 0);
+    // (a tester's 4K game, 2026-11-20: Link not seen on the page though asked for; what the menu holds, said once)
+    if (!g_model.said && now - g_model.shown_ms > 1000) {
+        g_model.said = true;
+        std::string held;
+        for (int slot = 0; slot < 4; ++slot) {
+            const std::uint64_t a = PouchActor(obj, slot);
+            float at[3] = {};
+            if (a != 0) CoopRuntime::Read(a + kActorPos, at, sizeof at);
+            held += fmt::format("{}slot {}: {}", slot ? ", " : "", slot,
+                                a == 0 ? std::string("none") : fmt::format("an actor at ({:.2f}, {:.2f}, {:.2f})", at[0], at[1], at[2]));
+        }
+        LOG_INFO(Core, "coop: pause tab: settings and look: the menu's model ({} Link): display type {}, {}; moved: slot {}",
+                 !g_model.saved ? "no" : g_model.pos[1] > kChildFromY ? "child" : "adult",
+                 Read<std::int32_t>(obj + kPouchType), held, g_model.slot);
+    }
+    std::uint64_t actor = PouchActor(obj, g_model.slot);
+    if (actor == 0 && !g_model.saved) {   // (slot 0 empty: the first slot that has an actor)
+        for (int slot = 1; slot < 4 && actor == 0; ++slot) {
+            if ((actor = PouchActor(obj, slot)) != 0) g_model.slot = slot;
+        }
+    }
     if (!want) {
         if (g_model.saved && actor != 0 && actor == g_model.actor) PutModel(actor, g_model.pos, g_model.rot);
         if (f.page == kSystemPage && Read<std::int32_t>(obj + kPouchType) == kPouchEquipment) {
@@ -1158,7 +1186,9 @@ void MenuModel(void* ctx, const Facts& f, bool want) {
     }
     const float a = g_model.yaw0 + g_model.yaw, c = std::cos(a), s = std::sin(a);
     const float rot[9] = {c, 0, s, 0, 1, 0, -s, 0, c};
-    const float pos[3] = {g_model_x.load(), g_model.pos[1] + g_model_drop.load(), g_model_z.load()};
+    const bool child = !g_model_test.load() && g_model.pos[1] > kChildFromY;
+    const float pos[3] = {child ? kChildModelX : g_model_x.load(), g_model.pos[1] + g_model_drop.load(),
+                          child ? kChildModelZ : g_model_z.load()};
     PutModel(actor, pos, rot);
 }
 
@@ -2150,7 +2180,7 @@ void TestPouch(std::uint64_t manager) {
     if (const std::filesystem::path mf = CoopRuntime::GameDir() / "model.now"; std::filesystem::exists(mf, ec)) {
         float x = 0, dy = 0, z = 0;
         if (FILE* in = std::fopen(mf.string().c_str(), "rb")) {
-            if (std::fscanf(in, "%f %f %f", &x, &dy, &z) == 3) g_model_x = x, g_model_drop = dy, g_model_z = z;
+            if (std::fscanf(in, "%f %f %f", &x, &dy, &z) == 3) g_model_x = x, g_model_drop = dy, g_model_z = z, g_model_test = true;
             std::fclose(in);
         }
         std::filesystem::remove(mf, ec);
