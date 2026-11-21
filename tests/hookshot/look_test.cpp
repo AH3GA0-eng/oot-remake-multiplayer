@@ -1723,3 +1723,15 @@ TEST_CASE("look tunic: the wardrobe draws the tunic and the Cap trim as one pain
     CHECK(drawn(TextureOf(own, kChildParts).texels));
     CHECK(Changed(TextureOf(own, kChildParts).texels, parts.texels, 16) == std::vector<std::size_t>{16});
 }
+
+TEST_CASE("look (row 198 guard): a texture of your Link found more than once is named") {
+    using CoopLookTunic::Place;
+    std::vector<Place> places(4);
+    places[0].texture = 0, places[1].texture = 2, places[2].texture = 2, places[3].texture = 5;
+    const auto twice = CoopLookTunic::Repeated(places);
+    REQUIRE(twice.size() == 1);
+    CHECK(twice[0] == std::pair<std::size_t, std::size_t>{2, 2});
+    places.pop_back();
+    places[2].texture = 3;
+    CHECK(CoopLookTunic::Repeated(places).empty());
+}
