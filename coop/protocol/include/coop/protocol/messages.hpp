@@ -980,6 +980,12 @@ inline constexpr std::uint8_t unready = 1u << 3;
 // samples when it owns one) and takes turns. An older build never sets it: the server gives it no turn, as a
 // boss it owned would never send an attack end and keep its one owner for the rest of the fight.
 inline constexpr std::uint8_t takes_turns = 1u << 4;
+// Row 212 (gerudo-212): this game's own level logic made this encounter (not a copy of another game's) and answers
+// its death with its own defeat event: Gerudo Fortress's cell guards (GerudoFortress_Common_Level_CarpenterSet_0N:
+// SageOfSpirit_RescueCarpenter, Player_Event EventPlayerWarpToTargetActor, GerudoThiefDropKey). The server keeps
+// such an object with a game that sets this bit (OBJECT_OWNER never moves it to one that does not), so the death,
+// the key and the carpenter freed run in a game whose logic made the fight. An older server ignores the bit.
+inline constexpr std::uint8_t own_logic = 1u << 5;
 }  // namespace object_presence
 
 struct ObjectPresence {

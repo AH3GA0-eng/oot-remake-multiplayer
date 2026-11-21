@@ -476,6 +476,8 @@ struct Stats {
   std::uint64_t boss_to_near = 0;       // a boss asked over to the player near it (issue 150)
   std::uint64_t boss_turns = 0;          // a boss asked over to the next player's turn (boss_turn_us)
   std::uint64_t boss_kept_from_unready = 0;  // row 189: ticks a ready, unfit owner's boss was not asked to an unready game
+  std::uint64_t kept_by_logic = 0;      // row 212: a hand-over to a game whose logic did not make it, refused
+  std::uint64_t back_to_logic = 0;      // row 212: asked back to a game whose logic made it
   std::uint64_t boss_to_ready = 0;       // a boss asked from a game that has not played its intro to one that has
   std::uint64_t boss_stalled = 0;       // row 149: a boss held one move boss_stall_us: its fight lock freed
   std::uint64_t parts_to_root = 0;      // row 149: a fresh group member given its root's owner at the link
@@ -771,6 +773,10 @@ class Session {
     std::set<ConnectionId> unready;
     // Games that take boss turns (object_presence::takes_turns): an older build is never given a turn.
     std::set<ConnectionId> takes_turns;
+    // Row 212: games whose own level logic made it (object_presence::own_logic). Not empty: it is owned only by
+    // one of them (ask_handover refuses the others; run_ownership asks it back; its owner leaving gives it to
+    // another of them, or removes it when none is left).
+    std::set<ConnectionId> own_logic;
     // A HANDOVER_ASK the owner has not answered yet.
     struct Ask {
       ConnectionId to = 0;
@@ -981,6 +987,10 @@ class Session {
   // first (report 138).
   std::optional<ConnectionId> next_owner(const Object& o, ConnectionId except,
                                          std::uint64_t now_us) const;
+  // Row 212: of the games whose own logic made `o` (Object::own_logic), one that has it loaded, other than
+  // `except`: a fit one first, then the lowest player number. None: no such game has it.
+  std::optional<ConnectionId> logic_owner(const Object& o, std::optional<ConnectionId> except,
+                                          std::uint64_t now_us) const;
   // Joined, in the object's scene and with it loaded.
   bool has_loaded(ConnectionId id, const Object& o) const;
   // Metres from the player's Link to the object; none when either place is

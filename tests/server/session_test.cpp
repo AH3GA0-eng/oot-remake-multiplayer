@@ -7690,3 +7690,80 @@ TEST_CASE("dedicated: the player who hosts the progress has no host powers, the 
   // The console still acts.
   CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: done");
 }
+
+// Row 212 (gerudo-212): a Gerudo Fortress cell guard that a game's own cell logic made is listed with
+// object_presence::own_logic; it is owned only by such a game, whatever rule would hand it on.
+namespace {
+ObjectPresent logic_present(const std::string& scene, const std::vector<ObjectId>& ids, std::uint8_t flags = 0) {
+  ObjectPresent p = present_in(scene, ids);
+  for (auto& e : p.objects) e.flags = static_cast<std::uint8_t>(flags | object_presence::own_logic);
+  return p;
+}
+}  // namespace
+
+TEST_CASE("row 212: the near rule never gives a cell guard to a game that only has a copy") {
+  OwnerHarness h;
+  h.receive(1, logic_present("Field", {placed(7)}), kChannelOwnership);  // player 1's cell logic made it
+  h.stand(1, 50);
+  h.stand(2, 5);
+  h.clear();
+  h.run(4 * kSecond);
+  CHECK(h.asks() == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  CHECK(h.session.stats().kept_by_logic >= 1);
+  // Player 2's game makes its own guard too (its Link walked into that cell): now it may be player 2's.
+  h.receive(2, logic_present("Field", {placed(7)}), kChannelOwnership);
+  h.run(4 * kSecond);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+}
+
+TEST_CASE("row 212: a paused or dead owner keeps its own cell guard, a game whose logic made it too takes it") {
+  OwnerHarness h;
+  h.receive(1, logic_present("Field", {placed(7)}), kChannelOwnership);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
+  h.clear();
+  SUBCASE("only a copy elsewhere: it stays") {
+    h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+    h.run(10 * kSecond);
+    CHECK(h.asks() == 0);
+    CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  }
+  SUBCASE("player 2's logic made it too: it goes on there") {
+    h.receive(2, logic_present("Field", {placed(7)}), kChannelOwnership);
+    h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+    h.run(6'500'000);
+    CHECK(h.asks() == 1);
+  }
+}
+
+TEST_CASE("row 212: no boss turn to a game that only has a copy of the cell guard") {
+  TurnHarness h;
+  h.receive(1, logic_present("Field", {placed(7)}, object_presence::takes_turns), kChannelOwnership);
+  h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+  h.stand(1, 6);
+  h.stand(2, 3);
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);
+  h.clear();
+  h.run(21 * kSecond);
+  attack_ends(h, 1, 0, 11);
+  h.run(kSecond);
+  CHECK(h.asks() == 0);
+  CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  // A stun from player 2 (the hitter rule) does not take it either.
+  h.receive(2, Damage{0, placed(7), 0, 0, 0, {}, {}}, kChannelOwnership);
+  h.run(kSecond);
+  CHECK(h.asks() == 0);
+}
+
+TEST_CASE("row 212: owned by a copy holder, the guard is asked back, its maker unloading it gives it to nobody") {
+  OwnerHarness h;  // player 1 listed it first: player 1 owns it (an older server's hand-over, say)
+  h.receive(2, logic_present("Field", {placed(7)}), kChannelOwnership);  // player 2's logic made it
+  h.run(250'000);
+  REQUIRE(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+  CHECK(h.session.stats().back_to_logic == 1);
+  h.receive(1, HandoverState{0, placed(7), 0, state_at(0, 12)}, kChannelOwnership);
+  REQUIRE(h.session.object_owner(placed(7)) == owned(2, 1));
+  // Player 2's game unloads it (its Link left the cell): not handed to player 1's copy.
+  h.receive(2, present_in("Field", {}), kChannelOwnership);
+  CHECK(h.session.object_owner(placed(7)) == owned(0, 2));
+}

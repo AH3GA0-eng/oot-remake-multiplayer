@@ -1573,6 +1573,7 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
       o.first_at = stamp(now_us);
       o.present.insert(id);
       c.present.insert(oid);
+      if (e.flags & object_presence::own_logic) o.own_logic.insert(id);  // row 212, as below
       if (holding) {
         o.held = true;  // no owner and no OBJECT_OWNER yet: end_owner_hold decides
         continue;
@@ -1606,6 +1607,11 @@ void Session::on_object_present(ConnectionId id, Connection& c, const ObjectPres
       o.takes_turns.insert(id);
     } else {
       o.takes_turns.erase(id);
+    }
+    if (e.flags & object_presence::own_logic) {
+      o.own_logic.insert(id);
+    } else {
+      o.own_logic.erase(id);
     }
     // Tell a newcomer who owns it and the epoch to send with; its own made
     // enemy it knows.
@@ -2048,6 +2054,8 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
   o.chased_by.erase(id);
   o.unready.erase(id);  // its next presence says again whether it is ready
   o.takes_turns.erase(id);
+  // Row 212: was it one that only a game whose logic made it may own?
+  const bool kept = o.own_logic.erase(id) != 0 || !o.own_logic.empty();
   if (o.candidate == id) o.candidate.reset();
   if (o.made) {
     if (o.owner != id) return;
@@ -2055,6 +2063,9 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
     // an enemy nobody else has, is gone on every screen.
     std::optional<ConnectionId> next;
     if (!o.projectile) next = next_owner(o, id, now_us);
+    // Row 212: an encounter only its logic's game may own goes on with another such game, or nowhere: a copy
+    // left with a game whose logic never made the fight would run that game's defeat event at its death.
+    if (kept && next && !o.own_logic.contains(*next)) next.reset();
     // Native puppets phase 2: a bomb goes on with a sharing game in its
     // scene, which keeps its fuse (HANDOVER_STATE), so a lit one still goes
     // off once everywhere and an unlit one can still be lifted and stashed.
@@ -2075,7 +2086,10 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
     forget(it);  // nobody has it loaded: forgotten
     return;
   }
-  if (o.owner == id) change_owner(oid, o, next_owner(o, id, now_us), number, now_us);
+  if (o.owner != id) return;
+  std::optional<ConnectionId> next = next_owner(o, id, now_us);
+  if (kept && next && !o.own_logic.contains(*next)) next.reset();  // row 212: as a made one's, above
+  change_owner(oid, o, next, number, now_us);
 }
 
 // Report 138: the owner let go of it (its game unloaded it, or it left). A
@@ -2085,8 +2099,29 @@ void Session::drop_presence(ConnectionId id, std::uint8_t number, const ObjectId
 // turning the enemy to another Link). A busy one only when nobody else has it.
 std::optional<ConnectionId> Session::next_owner(const Object& o, ConnectionId except,
                                                 std::uint64_t now_us) const {
+  // Row 212: one only its logic's games may own goes to one of them first.
+  if (auto keeper = logic_owner(o, except, now_us)) return keeper;
   if (auto fit = best_other(o, except, true, now_us)) return fit;
   return best_other(o, except, false, now_us);
+}
+
+std::optional<ConnectionId> Session::logic_owner(const Object& o, std::optional<ConnectionId> except,
+                                                 std::uint64_t now_us) const {
+  std::optional<ConnectionId> best;
+  bool best_fit = false;
+  std::uint8_t best_number = 0;
+  for (ConnectionId k : o.own_logic) {
+    if (k == except || !has_loaded(k, o)) continue;
+    const Connection& kc = connections_.at(k);
+    const bool fit = !unfit_owner(kc, now_us);
+    const bool wins = !best || (fit && !best_fit) || (fit == best_fit && kc.number < best_number);
+    if (wins) {
+      best = k;
+      best_fit = fit;
+      best_number = kc.number;
+    }
+  }
+  return best;
 }
 
 bool Session::has_loaded(ConnectionId id, const Object& o) const {
@@ -2318,6 +2353,15 @@ void Session::ask_handover(const ObjectId& oid, Object& o, ConnectionId to,
                            std::uint64_t now_us) {
   auto target = connections_.find(to);
   if (!o.owner || target == connections_.end()) return;
+  // Row 212 (gerudo-212): Gerudo Fortress's cell guards. Each rule above (an unfit or paused owner, a boss turn,
+  // the hitter, the near rule, a chase) handed a guard to a game that only had a copy of it; when it died there,
+  // that game's own cell logic ran the defeat event (its Link warped to the cell, a second key, the carpenter freed
+  // there). One that a game's logic made goes only to such a game.
+  if (!o.own_logic.empty() && !o.own_logic.contains(to)) {
+    o.candidate.reset();
+    ++stats_.kept_by_logic;
+    return;
+  }
   o.ask = Object::Ask{to, now_us};
   o.candidate.reset();
   send(*o.owner, kChannelOwnership, HandoverAsk{oid, o.epoch, target->second.number});
@@ -2599,6 +2643,16 @@ void Session::run_ownership(std::uint64_t now_us) {
       continue;
     }
     if (o.projectile) continue;
+
+    // Row 212: owned by a game whose logic did not make it (handed on before that game said so, or by an older
+    // server's rules): back to a game whose logic did, when one can take it.
+    if (!o.own_logic.empty() && !o.own_logic.contains(owner)) {
+      if (auto keeper = logic_owner(o, owner, now_us)) {
+        ++stats_.back_to_logic;
+        ask_handover(oid, o, *keeper, now_us);
+      }
+      continue;
+    }
 
     // A group member goes where its root is, fight or not.
     if (o.root) {
