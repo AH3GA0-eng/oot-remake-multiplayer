@@ -44,6 +44,11 @@ std::vector<std::string> MicChoices(const std::vector<std::string>& listed, cons
 // ("..." at its end), with " (not connected)" when it is not listed.
 constexpr std::size_t kMicChars = 28;
 std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed);
+// The most bytes one of the title's own buttons shows (CoopTitleNative::RowText cuts a longer row, "..." at its end).
+constexpr std::size_t kTitleRowBytes = 40;
+// A game's name on a title row that has `rest` bytes after it ("1/4  Public", " asks for a password"), so the row's own
+// words are never the part cut: "room (host)" when it fits, else without " (host)", else the name cut, "..." at its end.
+std::string TitleGameName(const std::string& name, const std::string& host, std::size_t rest);
 
 struct Request {
     // kHost: start the server and join it. kJoin: `text` is the code or the
@@ -286,6 +291,7 @@ private:
     bool character_ = false;  // SetCharacter
     bool title_ = false;      // SetTitle
     std::string picked_;      // the title: the game picked on the list that asks for a password ("": none)
+    std::string picked_host_; // (its host, so a long name gives way on the page's note: TitleGameName)
     bool find_online_ = true;                 // the Find a game page lists the relay's rooms (else this network's)
     std::string find_search_, search_before_; // its search, as typed
     int find_filter_ = 0, find_sort_ = 0;      // its filter and order (CoopBrowse)

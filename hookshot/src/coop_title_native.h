@@ -21,7 +21,7 @@ inline constexpr int kButtons = 4, kRowButtons = 3;   // the game's own four (th
 // A pack with the list's buttons (tools/puppet_pack/title_menu.py: Pa_Button_04..13, stored hidden) has fourteen: a
 // page shows as many rows as the module allows (CoopTitle), never scrolled: pages of them, "Page 2 of 3" in the hint.
 inline constexpr int kMaxButtons = 14;
-inline constexpr std::size_t kTextBytes = 40;          // (a title button's width; the placeholder holds 63)
+inline constexpr std::size_t kTextBytes = CoopPauseMenu::kTitleRowBytes;   // (a button's width; its placeholder holds 63)
 inline constexpr std::size_t kHintBytes = 159;         // (the hint line's placeholder, Coop_Live_Hint, holds 159)
 
 // A row's words on a title button: "Your name: Link", "Players when you host: < 4 >", "Voice: On", a note's line.

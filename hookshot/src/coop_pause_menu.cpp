@@ -233,6 +233,21 @@ std::vector<std::string> MicChoices(const std::vector<std::string>& listed, cons
     return out;
 }
 
+std::string TitleGameName(const std::string& name, const std::string& host, std::size_t rest) {
+    const std::size_t room = rest < kTitleRowBytes ? kTitleRowBytes - rest : 0;
+    if (name.size() <= room) return name;
+    const std::string with = host.empty() ? std::string() : " (" + host + ")";
+    std::string t = name;
+    if (!with.empty() && t.size() > with.size() && t.compare(t.size() - with.size(), with.size(), with) == 0) {
+        t.resize(t.size() - with.size());   // (the host's name goes first: the room says which game)
+        if (t.size() <= room) return t;
+    }
+    if (room <= 3) return std::string();
+    std::size_t k = room - 3;
+    while (k > 0 && (static_cast<unsigned char>(t[k]) & 0xC0) == 0x80) --k;   // (never inside a letter)
+    return t.substr(0, k) + "...";
+}
+
 std::string MicWords(const std::string& chosen, const std::vector<std::string>& listed) {
     if (chosen.empty()) {
         return "Default";
@@ -654,7 +669,7 @@ void Menu::TitleListLines(std::vector<Line>& out, bool off) const {
     for (const Found& g : games) {
         const std::string kind = !g.online ? "This network" : g.is_public ? "Public" : "Public, password";
         const std::string value = !g.joinable ? g.players : g.players + "  " + kind;
-        out.push_back({Action(g.name, value, off || !g.joinable), Act::kFindGame,
+        out.push_back({Action(TitleGameName(g.name, g.host, 2 + value.size()), value, off || !g.joinable), Act::kFindGame,
                        !g.joinable ? "This game is full, or runs another version of co-op."
                                    : "A: Join   B: Back   Y: Refresh"});
     }
@@ -671,7 +686,8 @@ void Menu::TitleCodeLines(std::vector<Line>& out, bool off) const {
                                  : join_password_.empty() ? std::string("None") : Masked(join_password_);
     if (!note_.empty() && note_[0].rfind("Turned away", 0) == 0) out.push_back({Note(note_[0]), Act::kNone, {}});
     if (!picked_.empty()) {
-        out.push_back({Note(picked_ + " asks for a password"), Act::kNone, {}});
+        const std::string asks = " asks for a password";
+        out.push_back({Note(TitleGameName(picked_, picked_host_, asks.size()) + asks), Act::kNone, {}});
         out.push_back({Action("Password", password, off), Act::kJoinPassword,
                        "The host sees it on their Hosting screen. Type it with Letter, or on the keyboard."});
         out.push_back({Action("Join", "", off), Act::kJoinNow, "Joins the game with this password."});
@@ -1602,7 +1618,9 @@ void Menu::Decide(Act act) {
         if (online) {
             PrefillJoin(g.join);
             if (title_) {   // (the title: a page of the password and Join, the game's name over them)
-                picked_ = g.host.empty() ? g.join : g.join + " (" + g.host + ")";
+                // (the name the list showed: the room's join name can differ, "test-kokiri" for "kokiri (Mido)")
+                picked_ = !g.name.empty() ? g.name : g.host.empty() ? g.join : g.join + " (" + g.host + ")";
+                picked_host_ = g.host;
                 note_.clear();
                 Go(Page::kJoin, Act::kJoinPassword);
             }

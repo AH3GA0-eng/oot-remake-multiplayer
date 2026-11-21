@@ -1784,6 +1784,53 @@ TEST_CASE("pause tab: the title's Join opens on one list of both kinds, Enter a 
     CHECK(Names(m)[0] == "Browse games");
 }
 
+TEST_CASE("pause tab: a title row's game name gives way, never its players, kind or words (title-join-shots)") {
+    using CoopPauseMenu::TitleGameName;
+    using CoopPauseMenu::kTitleRowBytes;
+    // Fits: as it is.
+    CHECK(TitleGameName("kokiri (Mido)", "Mido", 2 + std::string("3/4  Public").size()) == "kokiri (Mido)");
+    // The relay's own public room was cut at its end on the run's list ("...: 0/16..."): the host's name goes first.
+    const std::string value = "0/16  Public";
+    CHECK(TitleGameName("Squadala public game (squadala)", "squadala", 2 + value.size()) == "Squadala public game");
+    // Still too long: the room cut, "..." at its end, the whole row within a button.
+    const std::string cut = TitleGameName("a-very-long-room-name-here-and-more (someone)", "someone", 2 + value.size());
+    CHECK(cut.size() + 2 + value.size() <= kTitleRowBytes);
+    CHECK(cut.substr(cut.size() - 3) == "...");
+    // Never inside a letter of more bytes.
+    std::string letters;
+    for (int i = 0; i < 15; ++i) letters += "\xe7\x8e\xa9";   // (15 letters of 3 bytes)
+    const std::string zh = TitleGameName(letters, "", 2 + value.size());
+    CHECK((zh.size() - 3) % 3 == 0);
+
+    // On the list and on the password page: the name the list showed (the room's join name can differ), and
+    // "asks for a password" whole.
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
+    m.SetTitle(true);
+    m.Open(Page::kJoin);
+    (void)m.TakeRequest();
+    Menu::Found big{"Squadala public game (squadala)", "0/16", "squadala-public", 0, true, "squadala", 0, 16, true, true,
+                    true};
+    Menu::Found priv{"kokiri (Mido)", "3/4", "test-kokiri", 0, true, "Mido", 3, 4, true, false, true};
+    Menu::Found longpriv{"the-longest-room-name-24 (SomeoneLong)", "1/4", "the-longest-room-name-24", 0, true,
+                         "SomeoneLong", 1, 4, true, false, true};
+    m.SetFound({big, priv, longpriv}, "");
+    CHECK(Names(m)[0] == "Squadala public game");
+    CHECK(m.view().rows[0].value == "0/16  Public");
+    SelectRow(m, "kokiri (Mido)");
+    m.Press(Input::kDecide);
+    CHECK(Names(m)[0] == "kokiri (Mido) asks for a password");
+    m.Press(Input::kBack);
+    m.SetFound({big, priv, longpriv}, "");
+    CHECK(Names(m)[2] == "the-longest-ro...");   // (its "1/4  Public, password" whole)
+    SelectRow(m, "the-longest-ro...");
+    m.Press(Input::kDecide);
+    CHECK(Names(m)[0] == "the-longest-room-... asks for a password");
+    CHECK(Names(m)[0].size() <= kTitleRowBytes);
+}
+
 TEST_CASE("pause tab: the title's Host opens on its choices, hosts on Start hosting, then shows the code and password") {
     Menu m;
     CoopTitleMenu::Options o;

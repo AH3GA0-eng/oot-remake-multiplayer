@@ -711,13 +711,26 @@ void ShowColumn(void* ctx, std::uint64_t screen, int buttons, bool hint,
     c.logo_off = logo_off;
 }
 
+// The game moves its cursor a step after it is asked (kSetFocus), so the cursor read back is the old one until then.
+// Every ask of ours is timed here: the hidden-focus guard below leaves a cursor that was just asked for alone (it read
+// the old cursor, on a button the new page hides, and its own ask then landed after the page's: the password page
+// opened on Back, not on Password; title-join-shots 2026-11-21).
+std::atomic<std::uint64_t> g_focus_asked_ms{0};
+constexpr std::uint64_t kFocusSettleMs = 250;
+
+std::optional<std::uint64_t> AskFocus(void* ctx, std::uint64_t screen, std::uint64_t button) {
+    g_focus_asked_ms = NowMs();
+    return GameCall3(ctx, Main(kSetFocus), screen, button, 0);
+}
+
 // The title's cursor never on a hidden button (the game's own walk, or Longshot's mouse, may reach the pack's hidden
 // list buttons): put on the last one shown. `shown`: the buttons shown now.
 void KeepFocusShown(void* ctx, std::uint64_t screen, int shown) {
+    if (NowMs() - g_focus_asked_ms.load() < kFocusSettleMs) return;   // (an ask of ours not taken yet: see above)
     const int f = FocusedIndex(screen);
     if (f < shown || shown <= 0) return;
     if (const std::uint64_t button = TitleButton(screen, shown - 1); button != 0) {
-        GameCall3(ctx, Main(kSetFocus), screen, button, 0);
+        AskFocus(ctx, screen, button);
         LOG_INFO(Core, "coop: title: the focus was on hidden button {}: on button {} instead", f, shown - 1);
     }
 }
@@ -768,7 +781,6 @@ void StepNative(void* ctx, std::uint64_t screen) {
     if (g_column.layout != layout) FindColumn(ctx, screen, layout);
     const bool hint = !look.hint.empty() && g_column.hint != 0 && SetLiveText(ctx, layout, kHintSlot, CoopI18n::Tr(look.hint));
     ShowColumn(ctx, screen, look.buttons, hint, look.dim);
-    KeepFocusShown(ctx, screen, look.buttons);
     if (!ok) {   // (an older pack: the page in the overlay, as before)
         const int page = g_native_page.exchange(-1);
         CoopPause::CloseNative();
@@ -778,10 +790,9 @@ void StepNative(void* ctx, std::uint64_t screen) {
         return;
     }
     if (refocus) {
-        if (const std::uint64_t button = TitleButton(screen, look.focus); button != 0) {
-            GameCall3(ctx, Main(kSetFocus), screen, button, 0);
-        }
+        if (const std::uint64_t button = TitleButton(screen, look.focus); button != 0) AskFocus(ctx, screen, button);
     }
+    KeepFocusShown(ctx, screen, look.buttons);   // (after the page's own cursor, which it then leaves alone)
     if (sound != nullptr) {
         if (const std::uint64_t at = g_api->scratch(ctx, sound, std::strlen(sound) + 1); at != 0) {
             GameCall3(ctx, Main(kScreenSound), screen, at);
@@ -867,7 +878,7 @@ void StepAsk(void* ctx, std::uint64_t screen) {
     }
     if (focus) {
         if (const std::uint64_t button = TitleButton(screen, CoopTitleNative::kButtons - 1); button != 0) {
-            GameCall3(ctx, Main(kSetFocus), screen, button, 0);
+            AskFocus(ctx, screen, button);
         }
     }
     if (sound != nullptr) {
@@ -964,7 +975,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
     }
     if (focus >= 0) {
         const std::uint64_t button = TitleButton(screen, focus);
-        const auto r = button != 0 ? GameCall3(ctx, Main(kSetFocus), screen, button, 0) : std::nullopt;
+        const auto r = button != 0 ? AskFocus(ctx, screen, button) : std::nullopt;
         LOG_INFO(Core, "coop: title: menu: the focus to button {}{}", focus, r ? "" : " (not made)");
     }
     if (decide >= 0) {

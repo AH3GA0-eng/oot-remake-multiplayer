@@ -1451,7 +1451,11 @@ bool NativeInput(int event, int arg, int arg2) {
 
 CoopPauseMenu::View NativeView() {
     std::lock_guard lock(g_mutex);
-    return g_native ? g_menu.view() : CoopPauseMenu::View{};
+    if (!g_native) return CoopPauseMenu::View{};
+    // (the session as Page() reads it for the overlay: without it the title's rows kept the page of the moment Start
+    // hosting was pressed, "Code: Starting..." and no Password row while hosting; title-join-shots 2026-11-21)
+    RefreshSession(false);
+    return g_menu.view();
 }
 
 CoopPauseMenu::Page NativePage() {
