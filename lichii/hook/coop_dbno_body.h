@@ -13,8 +13,29 @@
 //   wrap (a hit's reaction no longer stands it up, row 34), except the ones the
 //   world forces (kPassVerbs: falling, landing, sliding, swimming, diving, the
 //   void, an event, the game's death): those run, and the crawl is asked again
-//   once our Link is back on the ground (its next Walk or Wait). A refused
-//   crawl skips nothing. Up again: the game's "Wait" (40) is asked once.
+//   once our Link is back on the ground (its next Walk or Wait).
+//   The game takes ONE request per slot a frame (row 190; the lifted
+//   main+0xc08f0): the BSA keeps a record per slot ([bsa + 0x1c0 + 8 * slot],
+//   slots 0-4); a request finds bit 1 of its record's byte +0x7c set and
+//   answers 3 (main+0xc1238), else the accept path sets it (|= 0xa, 0 at
+//   main+0xc10f4) and the BSA update (main+0xcb9c0) clears it, once a slot.
+//   (2 = the slot has no record.) So 3 is never about the verb, the node,
+//   the flags or the ground: it says "this slot took a request this frame".
+//   The scheduler asks our Link's main slot (Walk / Wait) nearly every frame
+//   before our caller runs, so a Crawl asked on top always got 3. While a
+//   crawl round is on (lying, no event, not in the air, not really refused,
+//   asks left) the game's own requests ON THAT SLOT (except kPassVerbs) are
+//   skipped, leaving it free for our Crawl; and in a frame where the game's
+//   own request was let through on it (a kPassVerbs verb), nothing is asked:
+//   the slot is known busy. A 3 all the same is asked again next frame. A
+//   real refusal (any other result) skips nothing. A round is at most
+//   kMaxAsks asks; the next one starts on the ground after the world moved
+//   our Link (a kPassVerbs verb, or any other move of the game's that ran on
+//   the slot: a ladder, an item), else kRetryMs after the last ask and at
+//   most kSpotRounds times in a row: a crawl the game does not take where
+//   our Link stands is not asked for ever.
+//   Up again: the game's "Wait" (40) is asked once (answered 3 when the
+//   game's own Walk or Wait took the slot first: that one stands our Link up).
 //   The verb values are read from the scheduler modules' selector cases.
 // - Shield. The game's own named invincibility, as the AI node
 //   OneShotLifeSetInvincible gives it (run main+0x8d7520; inputs Bool,
@@ -106,6 +127,18 @@ inline constexpr std::array<std::int32_t, 10> kPassVerbs{verb::kFall,     verb::
                                                           verb::kSlide,    verb::kSlideLand, verb::kSwim,
                                                           verb::kWaterDive, verb::kPreAbyss, verb::kPreEvent,
                                                           verb::kPreDie};
+// The lying verb and the getting-up verb: the same for both ages. Both run
+// the same crawl AI (identical Player.action/scheduler.crawl modules in the
+// Player_Child and Player_Adult packs) and the same AS root; the crawl's
+// animations (Tunnel_St / Tunnel_Wait / Tunnel_Move_F / Tunnel_Ed /
+// Tunnel_Ed_B) are in the child's banks only (Player_Child_0x_Animation).
+// An adult was once given the game's HugeHit (136) instead (knocked flat):
+// in its proof run (hs-dbno-adult, 2026-11-16) the knock-down threw our Link
+// each time it was asked and the game's death and reload from the save
+// followed, so it is not used.
+constexpr std::int32_t DownVerb(bool /*adult*/) { return verb::kCrawl; }
+constexpr std::int32_t UpVerb(bool /*adult*/) { return verb::kWait; }
+constexpr const char* VerbName(std::int32_t v) { return v == verb::kCrawl ? "Crawl" : "Wait"; }
 constexpr bool Passes(std::int32_t v) {
     for (const std::int32_t p : kPassVerbs) {
         if (p == v) {
@@ -147,6 +180,7 @@ public:
     struct Wanted {
         bool lying = false;          // downed (or spectating): crawl, shielded, unseen
         bool event = false;          // our Link in an event: the event drives it
+        bool adult = false;          // our Link is Player_Adult (no crawl animations: HugeHit, see DownVerb)
         std::uint64_t bsa = 0;       // our Link's BSA component (0: none)
         std::uint64_t life = 0;      // our Link's Life component (0: none)
         std::uint64_t emitter = 0;   // our Link's PerceptionEmitter component (0: none)
@@ -183,7 +217,11 @@ public:
         std::uint64_t skipped = 0;     // the game's own requests skipped while crawling
         std::uint64_t passed = 0;      // kPassVerbs let through while crawling
         std::uint64_t asked = 0;       // our Crawl / Wait requests made
-        std::uint64_t refused = 0;     // ... that the game refused (result not 0)
+        std::uint64_t refused = 0;     // ... that the game really refused (result not 0 and not kSlotBusy)
+        std::uint64_t busy = 0;        // ... answered kSlotBusy: the slot had taken a request this frame
+        std::uint64_t held_back = 0;   // frames nothing was asked: the game's own request ran on the slot
+        std::uint64_t rounds = 0;      // crawl rounds started
+        std::uint64_t cleared = 0;     // the game's own requests skipped to free the slot for our Crawl
         std::uint64_t shield_on = 0;   // our invincibility put on
         std::uint64_t unseen_on = 0;   // our emitter key put in
         std::uint64_t puppets_unseen_on = 0;  // ... into a downed teammate's puppet's emitter
@@ -195,7 +233,15 @@ public:
 
     // Ask again at most this often while lying and not known to crawl.
     static constexpr std::uint64_t kAskEveryMs = 500;
-    static constexpr int kMaxAsks = 6;  // then left until our Link's next Walk/Wait
+    static constexpr int kMaxAsks = 6;  // then left until our Link's next Walk/Wait (see kRetryMs)
+    // A round that ended refused (or out of asks) on the spot starts again on
+    // the ground only this long after its last ask (moved by the world: at once).
+    static constexpr std::uint64_t kRetryMs = 5000;
+    // ... and at most this many rounds in a row with no move between (then
+    // only a move of our Link, an event or getting up starts another).
+    static constexpr int kSpotRounds = 3;
+    // The request's result when the slot already took one this frame.
+    static constexpr std::uint64_t kSlotBusy = CoopBossNative::addr::kActionSlotBusy;
 
 private:
     enum class Pending : std::uint8_t { none, malloc, crawl, stand, shield, unseen, puppet };
@@ -222,9 +268,26 @@ private:
     bool crawling_ = false;      // our Crawl was taken (until up, an event or a pass verb)
     // The caller's (calc thread).
     bool was_lying_ = false;
+    std::int32_t asked_verb_ = 0;  // the verb of the action ask in flight (the log)
     bool stand_due_ = false;     // up again after a crawl: ask Wait once
     int asks_ = 0;
     std::uint64_t next_ask_ms_ = 0;
+    std::uint64_t last_ask_ms_ = 0;
+    bool blocked_ = false;      // this round's crawl was really refused (not kSlotBusy)
+    bool airborne_ = false;     // a kPassVerbs verb let through, no Walk/Wait since
+    bool moved_ = false;        // the world moved our Link since this round started
+    bool ground_seen_ = false;  // a Walk/Wait of the game's while not crawling (Next may start a round)
+    bool cleared_noted_ = false;
+    int spot_rounds_ = 0;       // rounds since our Link last moved (kSpotRounds)
+    // The game's own request ran on our slot since the caller's last frame
+    // (Skip let it through): the slot is busy until the BSA's next update.
+    bool slot_taken_ = false;
+    bool held_back_ = false;    // ... as the caller read it at this frame's start
+    // A crawl round is on: the game's own requests are skipped to free the slot.
+    bool Trying() const noexcept {
+        return want_.lying && !want_.event && learnt_ && !crawling_ && !airborne_ && !blocked_ &&
+               asks_ < kMaxAsks;
+    }
     Hold shield_;
     Hold unseen_;
     std::map<std::uint8_t, Hold> puppets_;  // by player number: their puppet's emitter
