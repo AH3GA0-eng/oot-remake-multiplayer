@@ -169,6 +169,17 @@ if (-not $NoUpdate -and (Test-Path $updater)) {
 # and the first build when there is no game yet (the game files are asked for once and remembered). The long
 # builds (no game, a moved game, another pin) ask Y/n first; a module antivirus took is said, not built.
 if ($Hookshot) {
+    # OoT Character Select by Snail (hookshot\CHARACTER-SELECT.txt; owner, 0.11.8): asked once, downloaded from his
+    # own release onto this PC and put in the game's mods folder before the check below, so the game build that check
+    # asks for takes in his code patch (our patches 0034/0035) and the pack its characters. A first start has no game
+    # yet: the step runs after the first build, and the second pass builds the mod's code in (a few minutes).
+    $csDone = $false
+    for ($pass = 1; $pass -le 2; $pass++) {
+    if (-not $csDone -and $exe) {
+        $csDone = $true
+        try { [void](Invoke-KitCharacterSelectStep $kit (Split-Path -Parent $exe)) }
+        catch { Write-Host "Character Select was not installed: $($_.Exception.Message). The game starts without it." -ForegroundColor Yellow }
+    }
     $need = Get-KitHookshotNeed $kit
     if ($need -eq 'offline') {
         # (no internet and only the randomizer's download left: the module step is not run again on every start)
@@ -196,6 +207,8 @@ if ($Hookshot) {
         }
         $hsGame = Get-KitHookshotGame $kit
         $exe = Get-KitHookshotExe $hsGame
+    }
+    if ($csDone -or -not $exe) { break }
     }
     if (-not $exe) {
         Write-Host "The co-op game isn't set up yet: none in $hsGame. $(if ($hsOnly) { 'Start ""Start Squadala.bat"" again and let it finish (SETUP.md).' } else { 'Run Build-Hookshot-Coop.bat and let it finish (SETUP.md, ""Play on Hookshot"").' })"
