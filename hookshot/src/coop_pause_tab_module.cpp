@@ -402,6 +402,10 @@ constexpr std::uint64_t kSnailStaleMs = 300;
 std::mutex g_snail_mutex;
 CoopSnailCustom::Driver g_snail;
 bool g_snail_open = false, g_snail_fallback = false;
+// A look chosen on his screen since it opened (a preview waiting): worn and sent when the screen is left, also when
+// co-op stopped driving it meanwhile (the fallback, his panes gone). Row 198 (0.11.9): only a screen still driven at
+// its close applied the look, so a change made before co-op let go of it stayed a preview, never sent nor saved.
+bool g_snail_changed = false;
 std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_snail_gen = 0, g_snail_pad_last = 0;
 std::uint64_t g_snail_edge_ms = 0;   // when his screen's state was first seen open (0: not open), SnailEdgeFrom
 struct SnailLayout {
@@ -424,7 +428,9 @@ void SnailClose(const char* why) {
     g_snail_open = false, g_snail_wait = false;
     const bool driven = g_snail.Active();
     g_snail.Close();
-    if (driven) CoopLook::ApplyOnUnpause();   // (Link wears the look chosen, as when co-op's Customize closes)
+    // (Link wears the look chosen, as when co-op's Customize closes; also one chosen before co-op let go of it)
+    if (driven || std::exchange(g_snail_changed, false)) CoopLook::ApplyOnUnpause();
+    g_snail_changed = false;
     LOG_INFO(Core, "coop: characters: Character Select's Customize screen left ({})", why);
 }
 
@@ -536,7 +542,10 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
                        "customization in it");
     }
     if (g_snail_wait || !g_snail.Active()) return;
-    if (auto look = g_snail.TakeChange()) CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
+    if (auto look = g_snail.TakeChange()) {
+        CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
+        g_snail_changed = true;
+    }
     const auto t = g_snail.Shown();
     if (t == g_snail_shown) return;
     std::string failed;
