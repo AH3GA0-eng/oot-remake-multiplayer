@@ -770,6 +770,13 @@ void SettingMove(int count, int dy, int* page, int* row, int per_page = kSetting
 // Row 199: the strip's last update says the menu is up: open or opening (state 1, 2) and seen within kMenuUpMs.
 inline constexpr std::uint64_t kMenuUpMs = 200;
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
+// Character Select's Customize screen while its own state reads open (1, 2): whether co-op takes it as open. Lane 062917
+// (0.11.9): his layout reads open again for about a second while the - menu closes (the strip at 3, closing), and an
+// opening taken there kept his rows' keys from the field. So an opening is taken only with the menu up, and only once the
+// strip has updated since the edge (`edge_ms`, when his state was first seen open; a frame's strip update may come after
+// his screen's, with the strip's state of the frame before); an open screen closes when the menu is no longer up.
+enum class SnailEdge { kWait, kOpen, kClose };
+SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::uint64_t strip_seen_ms, std::uint64_t now_ms);
 // One update ahead of `now`, from its step since `prev`, and not past `limit` when it heads for it. The module reads
 // the fourth tab's place and fades before the strip's own update, so they are one update old: the Character tab takes
 // them one update ahead to move with the fourth, not a frame after it.

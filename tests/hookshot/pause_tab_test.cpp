@@ -2349,6 +2349,22 @@ TEST_CASE("pause tab (row 199): the menu is up while the tab strip is open or op
     CHECK_FALSE(MenuUpFrom(2, 2000, 1000));                 // (a clock that went back)
 }
 
+TEST_CASE("pause tab (0.11.9, lane 062917): Character Select's Customize screen is taken as open only in a menu that is up") {
+    // A real opening: his state reads open at 1000 with the strip's update of the frame before (990, open); taken once
+    // the strip has updated since (1006), and kept while it stays up.
+    CHECK(SnailEdgeFrom(false, 1000, 2, 990, 1000) == SnailEdge::kWait);
+    CHECK(SnailEdgeFrom(false, 1000, 2, 1006, 1008) == SnailEdge::kOpen);
+    CHECK(SnailEdgeFrom(true, 1000, 2, 1500, 1510) == SnailEdge::kOpen);
+    // The - menu closing (the lane's 'opened' that kept his rows' keys a second after the menu left): his state reads
+    // open again, the strip's last update still open (the frame before), then closing (3): never taken.
+    CHECK(SnailEdgeFrom(false, 2000, 2, 1990, 2000) == SnailEdge::kWait);
+    CHECK(SnailEdgeFrom(false, 2000, 3, 2006, 2008) == SnailEdge::kWait);
+    CHECK(SnailEdgeFrom(false, 2000, 0, 2400, 2900) == SnailEdge::kWait);   // (closed, then no strip update at all)
+    // Open while the menu closes: closed at once.
+    CHECK(SnailEdgeFrom(true, 1000, 3, 3006, 3008) == SnailEdge::kClose);
+    CHECK(SnailEdgeFrom(true, 1000, 2, 3000, 3000 + kMenuUpMs) == SnailEdge::kClose);   // (no strip update since)
+}
+
 TEST_CASE("pause tab: the fourth tab's place and fades taken one update ahead, not past where they head") {
     CHECK(Ahead(1023.83f, 1020.12f, 1000.0f) == doctest::Approx(1016.41f));   // (the strip's drop, a run's numbers)
     CHECK(Ahead(1000.48f, 1000.34f, 1000.0f) == doctest::Approx(1000.20f));

@@ -580,6 +580,12 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms) {
     return (strip_state == 1 || strip_state == 2) && seen_ms != 0 && now_ms >= seen_ms && now_ms - seen_ms < kMenuUpMs;
 }
 
+SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::uint64_t strip_seen_ms, std::uint64_t now_ms) {
+    const bool up = MenuUpFrom(strip_state, strip_seen_ms, now_ms);
+    if (open) return up ? SnailEdge::kOpen : SnailEdge::kClose;
+    return up && strip_seen_ms > edge_ms ? SnailEdge::kOpen : SnailEdge::kWait;
+}
+
 float Ahead(float prev, float now, float limit) {
     const float step = now - prev, next = now + step;
     if ((step > 0 && now <= limit && next > limit) || (step < 0 && now >= limit && next < limit)) {
