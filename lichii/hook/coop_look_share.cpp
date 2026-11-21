@@ -127,7 +127,9 @@ bool Share::OnEvent(const coop::net::Event& event) {
                     continue;
                 }
                 if (it->part == kCustomPart) {
-                    custom = it->colour & 0xFFFFFFu;
+                    // (0.11.9, one customizer: a 0.11.8 game still sends its Character Select options; they are taken
+                    // out of the parts and not kept, so no puppet is dressed by the mod's routine with them)
+                    custom = 0;
                 } else if ((it->colour & 0xFF0000u) == kCharacterMark && (it->colour & 0xFFFFu) <= kCharacterMax) {
                     character = static_cast<std::uint16_t>(it->colour & 0xFFFFu);
                 }

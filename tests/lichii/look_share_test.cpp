@@ -435,14 +435,16 @@ TEST_CASE("look share: a character's Customize options ride along as a part of t
     CoopLookShare::Share r;
     r.EnableSlots(true);
     CHECK(r.CustomOf(2) == 0);
+    // (0.11.9, one customizer: the options a 0.11.8 game sends are taken out and never kept, so no puppet is
+    // dressed by the mod's routine with them; the character itself still shows)
     CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654321}})));
-    CHECK(r.CustomOf(2) == 0x654321);
+    CHECK(r.CustomOf(2) == 0);
     CHECK(r.CharacterOf(2) == 9);
     CHECK(r.Of(2) == CoopLookShare::Parts{{11, 0xFF0000}});   // no painter sees either part
     CHECK_FALSE(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654321}})));
-    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654320}})));   // an option changed
-    CHECK(r.CustomOf(2) == 0x654320);
-    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCustomPart, 0x654320}})));         // Link: the options go with the character
+    CHECK_FALSE(r.OnEvent(Look(2, {{11, 0xFF0000}, nine, {CoopLookShare::kCustomPart, 0x654320}})));   // (ignored)
+    CHECK(r.CustomOf(2) == 0);
+    CHECK(r.OnEvent(Look(2, {{11, 0xFF0000}, {CoopLookShare::kCustomPart, 0x654320}})));         // Link
     CHECK(r.CustomOf(2) == 0);
     CHECK(r.OnEvent(Look(2, {nine, {CoopLookShare::kCustomPart, 0x000002}})));
     r.OnEvent(Kind(EventKind::player_left, 2));
