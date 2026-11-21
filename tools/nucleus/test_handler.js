@@ -541,8 +541,22 @@ for (var bi = 0; bi < bads.length; bi++) {
           logged.join("\n").indexOf("Nothing is started") >= 0 && !fso.FileExists(sessionTxt) && noHostLine(0) && noHostLine(1),
           "remote: '" + bads[bi] + "' tells the player, starts nothing, no host line in coop.ini, no stale session: " + logged.join(" | "));
 }
+// A bad code keeps the player's own lines (the name typed in the game, the look): only the host's lines go, and the
+// next start still has them.
+writeFile(joinTxt, "hello\r\n");
+newSession();
+writeFile(fso.BuildPath(instances[0], "coop.ini"),
+          "server = 203.0.113.5\r\nport = 27510\r\npassword = oldhost\r\nname = Kokiri Kid\r\nlook_boots = black\r\ncolor = 3\r\n");
+try { playAs(0); } catch (e3) { }
+var noHost = readFile(fso.BuildPath(instances[0], "coop.ini"));
+check(noHostLine(0) && noHost.indexOf("name = Kokiri Kid\r\n") >= 0 && noHost.indexOf("look_boots = black\r\n") >= 0 &&
+      noHost.indexOf("color = 3\r\n") >= 0, "remote: a bad code keeps the name and look in coop.ini: " + noHost);
 fso.DeleteFile(joinTxt);
 Context.Options = undefined;
+newSession();
+var afterBad = playAs(0);
+check(afterBad.indexOf("name = Kokiri Kid\r\n") >= 0 && afterBad.indexOf("look_boots = black\r\n") >= 0,
+      "the start after a bad code still has the name and look: " + afterBad);
 
 // What the player set in the game stays over a new start: the name typed in the game and the look in coop.ini, and the
 // settings the game saved beside it (coop-options.ini); the controller lines are the handler's again.
