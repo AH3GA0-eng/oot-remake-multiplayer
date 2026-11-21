@@ -101,6 +101,7 @@ Look LookFor(const CoopPauseMenu::View& v, int top, int buttons) {
         const int row = shown[static_cast<std::size_t>(l.top + b)];
         l.rows[static_cast<std::size_t>(b)] = row;
         l.texts[static_cast<std::size_t>(b)] = RowText(v.rows[static_cast<std::size_t>(row)]);
+        l.dim[static_cast<std::size_t>(b)] = v.rows[static_cast<std::size_t>(row)].fixed;
     }
     // (Back right under the page's last row, the buttons after it not shown; never under the third button: with two
     // shown, the game put its own word on the second, "Join" for our Back. A page of one row had Back three rows
@@ -113,9 +114,22 @@ Look LookFor(const CoopPauseMenu::View& v, int top, int buttons) {
     l.texts[static_cast<std::size_t>(l.back)] = "Back";
     l.rows[static_cast<std::size_t>(l.back)] = -1;
     l.focus = at >= 0 ? at - l.top : l.back;
-    l.hint = l.pages > 1 ? "Page " + std::to_string(l.page + 1) + " of " + std::to_string(l.pages) + " (ZL/ZR)"
-                         : Fit(v.help, kHintBytes);
+    // (more than one page: the page first, then what the row does)
+    const std::string paged =
+        l.pages > 1 ? "Page " + std::to_string(l.page + 1) + " of " + std::to_string(l.pages) + " (ZL/ZR)" : std::string();
+    l.hint = Fit(paged.empty() ? v.help : v.help.empty() ? paged : paged + "   " + v.help, kHintBytes);
     return l;
+}
+
+float ColumnRaise(float lowest, float highest, float raised, float scale) {
+    if (scale <= 0.0f) scale = 1.0f;
+    float want = raised;
+    if (lowest < kScreenFoot) want += (kScreenFoot - lowest) / scale;            // (the foot: up by what is under it)
+    else if (lowest > kScreenFoot + 1.0f) want -= (lowest - kScreenFoot) / scale;   // (room under it: back down)
+    // (the top kept on the screen: the column taller than the screen is never raised past its first row)
+    const float top_after = highest + (want - raised) * scale;
+    if (top_after > kScreenTop) want -= (top_after - kScreenTop) / scale;
+    return std::max(0.0f, want);
 }
 
 int PageJump(const CoopPauseMenu::View& v, const Look& l, int dir) {

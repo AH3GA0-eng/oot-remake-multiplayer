@@ -139,7 +139,7 @@ class MsbtTest(unittest.TestCase):
         self.assertEqual(tm.write_msbt(h, s, labels, texts), m)
         h, s, labels, texts = tm.read_msbt(tm.add_rows(m))
         self.assertEqual(labels["0100"], 3)
-        self.assertEqual([t[:-1].decode() for t in texts], ["New Game", "Continue", "Options", "Host", "Join",
+        self.assertEqual([t[:-1].decode() for t in texts], ["New Game", "Continue", "Options", "Host a game", "Join a game",
                                                             "Co-op Settings", "Start", "Multiplayer", "Options",
                                                             "Back"] + ["." * 64] * (len(tm.LIVE) - 1) + ["." * 160])   # (the live texts' placeholders)
         self.assertEqual(struct.unpack_from("<I", tm.add_rows(m), 0x12)[0], len(tm.add_rows(m)))
@@ -234,7 +234,7 @@ class LanguageTest(unittest.TestCase):
         self.assertEqual(cn["0100"], "创建房间")
         self.assertEqual(dict(tm.rows_for("Mals/TWzh.Product.110.sarc.zs"))["0104"], "連線")
         en = dict(tm.rows_for("Mals/USen.Product.110.sarc.zs"))
-        self.assertEqual(en["0100"], "Host")
+        self.assertEqual(en["0100"], "Host a game")
         for rows in (cn, en):
             for label, _ in tm.LIVE:
                 self.assertIn(label, rows)

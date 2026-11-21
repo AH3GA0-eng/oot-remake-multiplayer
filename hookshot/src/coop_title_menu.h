@@ -500,6 +500,8 @@ inline bool PlayersOwn(const TitleMenuRow* row) {
 }
 // The first row of `look` that does `action` (-1: none).
 int RowOf(const TitleMenuLook& look, TitleDo action);
+// The line under Multiplayer's rows for the focused one (the title's hint line, Coop_Live_Hint); nullptr: none.
+const char* MenuHint(TitleDo action);
 // The pack's labels: 0100 Host, 0101 Join, 0102 Co-op Settings (the older packs' rows too), 0103 Start,
 // 0104 Multiplayer, 0105 Options, 0106 Back. (Continue and New Game rows use the game's own 0001 and 0000.)
 inline constexpr std::array<std::pair<const char*, const char*>, 7> kMenuLabels{{{"0100", "Host"},

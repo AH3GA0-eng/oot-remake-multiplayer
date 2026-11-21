@@ -41,12 +41,22 @@ struct Look {
     int page = 0, pages = 1;                           // the page shown, of how many
     int per_page = kRowButtons;                        // rows a page (the buttons less Back)
     std::string hint;                                  // the line under the rows: the page, or what the row does
+    std::array<bool, kMaxButtons> dim{};               // a row that cannot be used now (a full game): shown dimmed
 };
 // The buttons for the menu's view: `buttons` of the title's (kButtons, or up to kMaxButtons with the pack's list),
 // the rows a page at a time (`buttons` - 1 of them) with Back right under the page's last, on the page that holds the
 // selected row (`top`: the last look's, kept while nothing is selected). Headings are left out; notes show (the menu
 // never selects them). The hint: "Page 2 of 3 (ZL/ZR)" with more than one page, else the selected row's help.
 Look LookFor(const CoopPauseMenu::View& v, int top, int buttons = kButtons);
+// The most buttons a page uses by default (the rows and Back): a rejoin row, eight games, Enter a code or address and
+// Back. With the hint line under them the column still fits the title's screen once raised (ColumnRaise).
+inline constexpr int kListButtons = 11;
+// How far (in the alignment pane's own units) to raise the title's column of buttons so the lowest shown (Back, or the
+// hint line under it) ends above the screen's foot: `lowest` its box's lower edge on the screen (the layout's units:
+// centre 0, y up, the foot at -1080), `raised` the raise now, `scale` screen units per pane unit. Never below 0 (the
+// game's own place) nor so high that `highest` (the first button's upper edge) leaves the screen's top.
+float ColumnRaise(float lowest, float highest, float raised, float scale);
+inline constexpr float kScreenFoot = -1030.0f, kScreenTop = 1030.0f;   // (a margin inside the 3840x2160 layout's +-1080)
 // ZL (-1) or ZR (+1) on a look: the view's row to select, the first of the page before or after; -1 when there is
 // none (one page, or at an end).
 int PageJump(const CoopPauseMenu::View& v, const Look& l, int dir);

@@ -993,7 +993,8 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
     TitleMenuLook l;
     if (multiplayer) {
         l.btn_num_frame = 4;
-        l.rows = {{{"0100", TitleDo::kHost}, {"0101", TitleDo::kJoin}, {"0102", TitleDo::kSettings},
+        // (Join first: most players join a friend's game; docs/hookshot.md "The title menu")
+        l.rows = {{{"0101", TitleDo::kJoin}, {"0100", TitleDo::kHost}, {"0102", TitleDo::kSettings},
                    {"0106", TitleDo::kBack}}};
         l.count = 4;
         l.focus = 0;
@@ -1021,6 +1022,17 @@ TitleMenuLook MenuFor(bool any_save, bool multiplayer, bool one_start) {
     }
     l.count = 3;
     return l;
+}
+
+const char* MenuHint(TitleDo action) {
+    switch (action) {
+    case TitleDo::kJoin: return "Play in a friend's game or a public game. You play on their save.";
+    case TitleDo::kHost: return "Start a game on this PC; your friends join it. They play on your save.";
+    case TitleDo::kSettings: return "Your name, voice, chat key, controller, map.";
+    case TitleDo::kBack: return "Back to the title.";
+    default: break;
+    }
+    return nullptr;
 }
 
 int RowOf(const TitleMenuLook& look, TitleDo action) {

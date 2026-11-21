@@ -150,8 +150,23 @@ TEST_CASE("title native: with the pack's list, every row on one page, Back right
     CHECK(l.rows[0] == 13);
     CHECK(l.focus == 7);
     CHECK(l.texts[13] == "Back");
-    CHECK(l.hint == "Page 2 of 3 (ZL/ZR)");
+    CHECK(l.hint == "Page 2 of 3 (ZL/ZR)   Joins this game.");   // (the page first, then what the row does)
     CHECK(PageJump(v, l, 1) == 26);
     CHECK(PageJump(v, l, -1) == 0);
     CHECK(LookFor(v, 0, 99).buttons == kMaxButtons);   // (never more than the pack has)
+}
+
+TEST_CASE("title native: the column is raised until its lowest box ends on the screen, never below its own place") {
+    // (the game's four: their foot above the screen's: no raise)
+    CHECK(ColumnRaise(-920.0f, -470.0f, 0.0f, 1.0f) == 0.0f);
+    // (eleven buttons and the hint: 600 units under the foot, 1.1 screen units a pane unit: raised 600 / 1.1)
+    const float r = ColumnRaise(kScreenFoot - 600.0f, -470.0f, 0.0f, 1.1f);
+    CHECK(r == doctest::Approx(600.0f / 1.1f));
+    // (drawn with that raise, the foot is on the screen's: it stays)
+    CHECK(ColumnRaise(kScreenFoot, -470.0f + 600.0f, r, 1.1f) == doctest::Approx(r));
+    // (back to fewer rows: the foot well above, the raise goes down to the game's place, never under it)
+    CHECK(ColumnRaise(-300.0f, 900.0f, r, 1.1f) == 0.0f);
+    // (a column taller than the screen: never raised past its first row's top)
+    const float tall = ColumnRaise(kScreenFoot - 900.0f, 500.0f, 0.0f, 1.0f);
+    CHECK(500.0f + tall <= kScreenTop + 0.01f);
 }

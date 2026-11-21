@@ -919,7 +919,10 @@ void Act(const Request& r) {
         break;
     }
     case Request::Kind::kRefreshFound:   // (the Find page's list asked again: the relay's rooms, or this network's games)
-        if (g_menu.find_online()) {
+        if (g_native && g_menu.title()) {   // (the title's list: both kinds)
+            CoopRoomList::AskNow();
+            CoopLanNet::Forget();
+        } else if (g_menu.find_online()) {
             CoopRoomList::AskNow();
         } else {
             CoopLanNet::Forget();
@@ -1076,12 +1079,32 @@ void RefreshFound(std::uint64_t now) {
         return;
     }
     g_finding = true;
+    // (the title's list: both kinds at once, this network's first; the overlay's: the one its List row says)
+    const bool both = g_native && g_menu.title();
     const bool online = g_menu.find_online();
-    CoopLanNet::Look(!online, now);
-    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, online, now, g_menu.options().relay);
+    CoopLanNet::Look(both || !online, now);
+    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, both || online, now, g_menu.options().relay);
     std::vector<CoopPauseMenu::Menu::Found> games;
     std::string state;
     const int mine = coop::protocol::kProtocolVersion;
+    if (both) {
+        for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
+            const bool full = h.game.max > 0 && h.game.players >= h.game.max;
+            games.push_back({h.game.name + "'s game", full ? std::string("Full") : CoopPauseTab::ListValue(h.game.players, h.game.max, h.game.protocol == mine),
+                             h.address, h.game.port, CoopLan::Joinable(h, mine), h.game.name, h.game.players,
+                             h.game.max, h.game.protocol == mine, false, false});
+        }
+        for (const CoopRoomList::Room& r : CoopRoomList::Now().rooms) {
+            const bool full = r.max > 0 && r.players >= r.max;
+            const std::string count = r.protocol != mine ? CoopI18n::Tr("Other version")
+                                      : full             ? CoopI18n::Tr("Full")
+                                      : std::to_string(r.players) + "/" + std::to_string(r.max);
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), count, r.room, 0, CoopRoomList::Joinable(r, mine),
+                             r.host, r.players, r.max, r.protocol == mine, r.is_public, true});
+        }
+        g_menu.SetFound(std::move(games), {});
+        return;
+    }
     if (online) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
@@ -1440,7 +1463,19 @@ void CloseNative() {
     std::lock_guard lock(g_mutex);
     if (!g_native) return;
     g_native = false;
+    g_menu.SetTitle(false);
     if (!g_shown) g_menu.Hide();
+}
+
+bool NativeBackLeaves() {
+    std::lock_guard lock(g_mutex);
+    return !g_native || g_menu.BackLeaves();
+}
+
+void NativeRefresh() {
+    std::lock_guard lock(g_mutex);
+    if (!g_native || g_menu.page() != CoopPauseMenu::Page::kFind) return;
+    g_menu.RefreshFound();
 }
 
 void OpenJoinRoom(const std::string& room) {
@@ -1459,6 +1494,7 @@ void Open(CoopPauseMenu::Page page) {
     g_menu.SetSaveSet(CoopSave::MultiplayerSaves());
     InputRows();
     MicRows();
+    g_menu.SetTitle(g_native);   // (the title's own buttons: its pages, docs/hookshot.md "The title menu")
     g_menu.Open(page);
     if (page == CoopPauseMenu::Page::kJoin) {
         const std::string coop = ReadText(CoopIni());

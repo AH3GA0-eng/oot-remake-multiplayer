@@ -34,7 +34,7 @@ BUTTON = "Pa_Button_%02d"
 FIRST_NEW = 4                 # Pa_Button_04: after the game's 00..03 (the older packs' first row)
 MARKER = "Pa_CoopMenu_00"     # the hidden part that says this pack has the menu (CoopTitleMenu::kMenuMarker)
 # The menu's texts (CoopTitleMenu::kMenuLabels): 0100..0102 are the older packs' rows too.
-ROWS = (("0100", "Host"), ("0101", "Join"), ("0102", "Co-op Settings"), ("0103", "Start"),
+ROWS = (("0100", "Host a game"), ("0101", "Join a game"), ("0102", "Co-op Settings"), ("0103", "Start"),
         ("0104", "Multiplayer"), ("0105", "Options"), ("0106", "Back"))
 # Co-op's pages on the title (Join's list of games, Host, Enter a code) show more rows than the game's four buttons:
 # ten more buttons, Pa_Button_04..13, copies of Pa_Button_03 continuing its column (ROW_STEP_Y apart, as the older
