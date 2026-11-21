@@ -298,6 +298,11 @@ void Delivered() {
 
 bool Busy();
 bool Join(const std::string& text);
+// A join the host turned away because the name is in use there (two PCs' Nucleus players both "Player1", a friend of
+// the same name): joined again as "<name> (2)", (3)... for this session only, the saved name kept. g_mutex.
+std::string g_name_suffix;
+int g_name_tries = 0;
+bool g_name_retry = false;   // (the Join now is that one: its suffix kept)
 
 // The code a host gives its friends: its room on the relay ("<room>@<relay>"), else the relay's join code
 // ("<CODE>@<relay>"), else the invite code; "" none yet. Join takes each of them.
@@ -398,12 +403,36 @@ void Follow(const HosCoopStatus& st) {
     f.player_acted = std::exchange(g_player_acted, false);
     {   // (a refusal counted since the last update: CoopLobby's count only grows, so none is missed)
         static std::uint32_t refusals_seen = 0;
+        static std::uint32_t names_taken_seen = 0;
         const auto seen = CoopLobby::Now();
         f.turned_away = seen.refusals != refusals_seen;
         refusals_seen = seen.refusals;
+        const bool name_taken = seen.names_taken != names_taken_seen;
+        names_taken_seen = seen.names_taken;
         // A join the host turned away (a wrong join password, a full game, a ban): co-op stops by itself and the Join
         // rows come back with why. Kept on, the title's Join page offered only Leave the game, a tester's "janky".
-        if (f.turned_away && g_doing == "joined" && !seen.connected && !g_coop_on) {
+        // The name in use there (another PC's player of the same name: two Nucleus PCs' "Player1"), after the
+        // client's own retries ran out: joined again as "<name> (2)", (3)... A game started by the launcher keeps its
+        // name (its server and name are the launcher's).
+        if (name_taken && g_doing == "joined" && !seen.connected && !g_coop_on && g_name_tries < 8 &&
+            !g_join_text.empty()) {
+            ++g_name_tries;
+            g_name_suffix = " (" + std::to_string(g_name_tries + 1) + ")";
+            LOG_INFO(Core, "coop: multiplayer tab: the name is in use in that game: joining again with \"{}\" after it "
+                           "(this session only)",
+                     g_name_suffix);
+            const std::string again = g_join_text;
+            CoopHookshot::HostMenu().Leave();   // (the refused client stopped; quietly: no "Co-op stopped" note)
+            g_doing.clear();
+            g_name_retry = true;
+            g_auto_join = true;   // (not the player's own join: auto-rejoin's plans stay)
+            const bool joined = Join(again);
+            g_auto_join = false;
+            if (joined) {
+                g_menu.SetNote({"Your name is in use in that game: joined with" + g_name_suffix + " after it."});
+            }
+            g_name_retry = false;
+        } else if (f.turned_away && g_doing == "joined" && !seen.connected && !g_coop_on) {
             const std::string why = CoopTitleMenu::RefusedLine(seen.refused);
             LOG_INFO(Core, "coop: multiplayer tab: the join was turned away ({}): co-op stopped, the Join rows again",
                      CoopTitleMenu::ShortReason(seen.refused));
@@ -524,9 +553,16 @@ bool Join(const std::string& text) {
     // Only what the player gave (the invite code, or the password after the address): never this game's own
     // server_password, which is its host secret and not the other server's.
     const std::string password = invite ? std::string() : std::get<CoopTitleMenu::JoinAddress>(target).password;
+    if (!std::exchange(g_name_retry, false)) g_name_suffix.clear(), g_name_tries = 0;   // (a join of the player's own)
+    std::string name = o.name;
+    if (!g_name_suffix.empty()) {   // (at most 16 bytes in all: the name cut before a UTF-8 letter's start)
+        std::size_t n = std::min(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
+        while (n > 0 && n < name.size() && (static_cast<unsigned char>(name[n]) & 0xc0) == 0x80) --n;
+        name = std::string(CoopTitleMenu::Trim(name.substr(0, n))) + g_name_suffix;
+    }
     HosCoopJoinOptions j{};
     j.size = sizeof j;
-    j.name = o.name.c_str();
+    j.name = name.c_str();
     j.target = where.c_str();
     j.password = password.empty() ? nullptr : password.c_str();
     g_doing = "joined";
@@ -899,6 +935,9 @@ void LanJoinStep(std::uint64_t now) {
                  pick->game.name, now - g_lan_join_since);
         g_lan_join.clear();
         CoopLanNet::Look(false, now);
+        // (the files' settings first, the player's name above all: the menu's own are its defaults until it opens,
+        // and a join as "Player" was refused, the host's own name, a test run 2026-11-20; as auto-rejoin does)
+        g_menu.Show(ReadOptions());
         const std::string line = pick->address + ":" + std::to_string(pick->game.port);
         if (!Join(line)) LOG_INFO(Core, "coop: multiplayer tab: join_lan: the join did not start");
         return;
