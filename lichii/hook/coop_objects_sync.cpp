@@ -3650,10 +3650,9 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                 } else if (o != nullptr && (o->quiet_gone || (o->dead_at == 0 && GoesWithoutDeath(o->address, now_us)))) {
                     o->dead_now = true;
                     o->place_seen.reset();
-                    // Report 200: a copy of their encounter, killed by its owner: deleted now, no death here. Not a
-                    // copy killed here either: an own one of ours that turns up later is not killed by our game
-                    // (that would run the same defeat event; the shared Destroy flag keeps our logic from making it).
-                    copy_killed_.erase(remove->id);
+                    // Report 200: a copy of their encounter, killed by its owner: deleted now, no death here. Its kill
+                    // stays remembered (copy_killed_, above): an own one our logic makes later, when our Link walks
+                    // into that encounter itself, is that enemy already dead and dies there in our game (report 99).
                 } else if (o != nullptr && o->reacts && o->dead_at == 0) {
                     // Our game kills it itself (life 0 through the game), so
                     // its own kill counts: a room's enemy counter and shutter,
