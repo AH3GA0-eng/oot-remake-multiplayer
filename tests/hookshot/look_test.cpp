@@ -392,6 +392,25 @@ TEST_CASE("look tunic: your Link's textures are found and drawn over, the game's
     CHECK(m.overrides() == 0);
 }
 
+TEST_CASE("look tunic (0.11.9 lane crash, a178e8bd): a Host with a part missing never throws out of the worker") {
+    // The puppets' tunics' Host was copied from one already moved from: no file, no log. The worker's first Step
+    // called the empty log (std::bad_function_call out of its thread: the game aborted, 0xc0000409, ~25 s in).
+    FakeTextures m(kBase, 0x10000);
+    PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
+    CoopLookTunic::Wardrobe::Host moved_from;   // (what a moved-from Host holds: no file, no log)
+    moved_from.textures = &m;
+    moved_from.base = "ptunics";
+    CoopLookTunic::Wardrobe w(moved_from);
+    w.Wear("ptunics|red=FF3030");   // (the lane's last line: "the puppets' tunics are ptunics|red=FF3030 now")
+    w.Kick();
+    CHECK_NOTHROW(w.Step(0));
+    CHECK_NOTHROW(w.Step(1000));
+    CHECK(Drawn(m, kBase + 0x1000 + kOffset, 1));   // (no file: nothing drawn, the game's own stays)
+    CoopLookTunic::Wardrobe none(CoopLookTunic::Wardrobe::Host{});   // (no textures at all)
+    none.Wear("red");
+    CHECK_NOTHROW(none.Step(0));
+}
+
 TEST_CASE("look tunic: the wardrobe keeps your Link in the colour worn") {
     FakeTextures m(kBase, 0x10000);
     PutFile(m, kBase + 0x1000, "Tile_A", TexelsOf(1));
@@ -761,11 +780,13 @@ TEST_CASE("look parts: every gear part has a texture, every texture once") {
         for (const auto& r : g.rules) {
             CHECK(r.part != Part::tunic);   // the tunic has the pack's colours (coop_look_tunic.h)
             CHECK(r.part != Part::cap_trim);   // the Cap trim is painted with the tunic (TunicPainted)
+            CHECK(r.part != Part::eyes);       // the eyes are the model's parameter (CoopCharColours), no texture
+            CHECK(r.part != Part::hair);       // the hair too
             CHECK(r.tones != 0);
             parts.insert(r.part);
         }
     }
-    CHECK(parts.size() == CoopLook::kParts - 2);
+    CHECK(parts.size() == CoopLook::kParts - 4);
 }
 
 TEST_CASE("look parts: the gear painted in a look, a painting's name says its colours") {
@@ -1745,14 +1766,17 @@ TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact
     blue.back().texels.push_back(0);   // (a texture of another size: kept as written)
     const std::vector<std::pair<std::string, CoopLookTunic::Texels>> copies = {{"red", red}, {"blue", blue}};
     CHECK(CoopLookParts::PuppetTunicsName({}) == "ptunics");
-    CHECK(CoopLookParts::PuppetTunicsName({{"red", 0xFF6820}, {"blue", 0x123456}}) == "ptunics|blue=123456|red=FF6820");
+    using Paint = CoopLookParts::TunicPaint;
+    CHECK(CoopLookParts::PuppetTunicsName({{"red", Paint{0xFF6820u, std::nullopt}}, {"blue", Paint{0x123456u, std::nullopt}}}) ==
+          "ptunics|blue=123456|red=FF6820");
+    CHECK(CoopLookParts::PuppetTunicsName({{"red", Paint{0xFF6820u, 0x2040FFu}}}) == "ptunics|red=FF6820+cap2040FF");   // (the trim too)
     // None painted: the base, every copy as written.
     auto base = CoopLookParts::PuppetTunicsTexels(copies, green, {});
     REQUIRE(base.size() == red.size() + blue.size());
     CHECK(CoopLookTunic::SameLayout(base, base));
     for (std::size_t i = 0; i < red.size(); ++i) CHECK(base[i].texels == red[i].texels);
     // Blue given to a player in #123456: its textures from green in that colour, red's as written.
-    const auto painted = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", 0x123456}});
+    const auto painted = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", Paint{0x123456u, std::nullopt}}});
     REQUIRE(painted.size() == base.size());
     CHECK(CoopLookTunic::SameLayout(painted, base));   // (the wardrobe draws a painting over the base, texture by texture)
     const auto want = CoopLookParts::TunicPainted(green, 0x123456u);
@@ -1773,7 +1797,7 @@ TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact
     red2[1].name = "Angin_Tile_R_Dark_Alb";
     red2[1].texels = red2[0].texels;   // (as long as the main tile)
     REQUIRE(red2[1].texels.size() != green2[1].texels.size());
-    const auto dark = CoopLookParts::PuppetTunicsTexels({{"red", red2}}, green2, {{"red", 0xC86432}});
+    const auto dark = CoopLookParts::PuppetTunicsTexels({{"red", red2}}, green2, {{"red", Paint{0xC86432u, std::nullopt}}});
     const auto darker = CoopLookParts::TunicPainted(green2, 0x804020u);   // (0xC8, 0x64, 0x32 times 0.64, rounded)
     CHECK(dark[1].texels == darker[0].texels);
     CHECK(dark[0].texels == CoopLookParts::TunicPainted(green2, 0xC86432u)[0].texels);

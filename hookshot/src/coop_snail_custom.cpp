@@ -39,11 +39,12 @@ std::uint64_t Driver::Pad(std::uint64_t down) {
         if (const int to = Neighbour(focus_, m.dir); to >= 0) focus_ = to;
     }
     const std::size_t row = static_cast<std::size_t>(focus_ + 1);   // (the page's rows: its heading, then the six)
-    if ((down & (kZL | kZR)) != 0) {
+    const bool has = row < page_.view().rows.size();   // (a page of fewer: his option past them does nothing)
+    if (has && (down & (kZL | kZR)) != 0) {
         page_.Select(row);
         page_.Press((down & kZR) != 0 ? CoopLookMenu::Input::kRight : CoopLookMenu::Input::kLeft);
     }
-    if ((down & kA) != 0) {
+    if (has && (down & kA) != 0) {
         page_.Select(row);
         page_.Press(CoopLookMenu::Input::kDecide);
     }

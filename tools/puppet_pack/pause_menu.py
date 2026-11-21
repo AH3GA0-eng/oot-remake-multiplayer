@@ -50,11 +50,10 @@ MALS_GLOB = "Mals/*.Product.*.sarc.zs"
 
 TAB = "Pa_Category_%02d"
 GAME_TABS = 4                 # Pa_Category_00..03
-NEW_TAB = TAB % GAME_TABS     # Pa_Category_04: the Character tab (0.11.9), after System
-# The - menu's tabs of ours (0.11.9: Multiplayer, Local co-op, Mods, right of Map; CoopPauseTab::kMinusTabNames):
-# Pa_Category_05..07, copies of the third tab (Pa_Category_02, the - menu's Map) one game step apart after it.
-MINUS_TABS = [TAB % (GAME_TABS + 1 + i) for i in range(3)]
-MINUS_SOURCE = TAB % 2
+# The - menu's tabs of ours (0.11.9: Multiplayer, Lobby, Mods, right of Map; CoopPauseTab::kMinusTabNames):
+# Pa_Category_04..06, copies of the fourth tab one game step apart after it.
+MINUS_TABS = [TAB % (GAME_TABS + i) for i in range(3)]
+MINUS_SOURCE = TAB % (GAME_TABS - 1)
 TAB_ROOT = "RootPane"
 L_LABEL, R_LABEL = "T_BtnL_00", "T_BtnR_00"
 SYSTEM_PAGE = "Pa_System_00"
@@ -80,9 +79,6 @@ def _new_id(name):
     return ui_pack.part_id(name)
 
 
-FIFTH_GAP = 50.0   # the fifth tab this much closer to System than the game's step (410 for 460), and R moved this far
-R_MOVE = 390.0     # right (990 -> 1380): R between the fifth tab's lit box and the rupee counter (seen in a run,
-                   # 2026-11-18: at 430 and 340 the lit box covered R)
 
 
 def _x(d, name):
@@ -94,35 +90,30 @@ def _x(d, name):
 
 
 def add_tab(d):
-    """MenuOverlay_00.buil with a fifth tab, Character (0.11.9; the owner: Character customization is a tab of the
-    Plus menu): a copy of the fourth (Pa_Category_03) a little less than the game's step to its right (the step from
-    tab 0 to tab 1, less FIFTH_GAP), under RootPane, stored hidden, and the R label moved R_MOVE to the right of it.
-    The game's four tabs and L stay: the strip's animation sets the tabs' places, so moving them in the layout does
-    nothing (the module spaces the five and shows ours; the way 0.11.6 had its Multiplayer tab, which ran)."""
+    """MenuOverlay_00.buil with the - menu's tabs of ours (0.11.9; the owner: Character Select's Characters, then
+    Multiplayer, Lobby and Mods right of Map): Pa_Category_04..06, copies of the fourth tab (Pa_Category_03, the - menu's
+    Map with Character Select's header) one game step apart after it, under RootPane, stored hidden. The strip counts
+    its Pa_Category_%02d parts up to the first missing, so ours follow the game's four; the game's tabs, L and R stay:
+    the strip's animation sets the tabs' places, so the module places and shows ours (the way 0.11.6's fifth tab
+    ran)."""
     panes, _ = ui_pack.read_layout(d)
     names = {p.name for p in panes}
     for i in range(GAME_TABS):
         if TAB % i not in names:
             raise PauseMenuError("the layout has no %s" % (TAB % i))
-    for name in [NEW_TAB] + MINUS_TABS:
+    for name in MINUS_TABS:
         if name in names:
             raise PauseMenuError("the layout has %s already" % name)
     for name in (L_LABEL, R_LABEL, TAB_ROOT):
         if name not in names:
             raise PauseMenuError("the layout has no %s" % name)
-    last = TAB % (GAME_TABS - 1)
     step = _x(d, TAB % 1) - _x(d, TAB % 0)
     if step <= 0 or any(abs(_x(d, TAB % (i + 1)) - _x(d, TAB % i) - step) > 0.5 for i in range(GAME_TABS - 1)):
         raise PauseMenuError("the game's tabs are not evenly spaced from left to right")
-    off = ui_pack.frame_offset(d, last, TAB_ROOT)
-    d = ui_pack.clone_parts(d, [ui_pack.Copy(last, NEW_TAB, (step - FIFTH_GAP + off[0], off[1]), parent=TAB_ROOT,
-                                             hidden=True)], new_id=_new_id)
-    # (the - menu's three after its Map, stored hidden: the module shows, places and fills them there)
     src_off = ui_pack.frame_offset(d, MINUS_SOURCE, TAB_ROOT)
-    d = ui_pack.clone_parts(d, [ui_pack.Copy(MINUS_SOURCE, name, ((i + 1) * step + src_off[0], src_off[1]),
-                                             parent=TAB_ROOT, hidden=True) for i, name in enumerate(MINUS_TABS)],
-                            new_id=_new_id)
-    return ui_pack.move_panes(d, {R_LABEL: (R_MOVE, 0.0)})
+    return ui_pack.clone_parts(d, [ui_pack.Copy(MINUS_SOURCE, name, ((i + 1) * step + src_off[0], src_off[1]),
+                                                parent=TAB_ROOT, hidden=True) for i, name in enumerate(MINUS_TABS)],
+                               new_id=_new_id)
 
 
 def add_page(d):
@@ -226,7 +217,7 @@ def build(romfs, out_romfs, dicts, table, write, recompress, log=print, strings=
     run.commit(files, growth)
     for rel, data in files.items():
         write(out_romfs, rel, data)
-    log("pause menu: the Character tab, System's Multiplayer and Longshot Settings and their pages (%s, %s, %s; "
+    log("pause menu: the - menu's tabs, System's Multiplayer and Longshot Settings and their pages (%s, %s, %s; "
         "%d languages)" % (OVERLAY_LAYOUT, PAGES_LAYOUT, SYSTEM_LAYOUT, len(files) - 1))
     return list(files)
 
@@ -240,7 +231,7 @@ def make(reader, dicts, recompress, strings=ui_pack.STRINGS):
     raw = reader.read(COMMON_ARCHIVE)
     plain = dicts.decompress(raw)
     entries = sarc.read_entries(plain)
-    # (the tab strip, MenuOverlay_00, gets the Character tab; our other pages open from System's buttons)
+    # (the tab strip, MenuOverlay_00, gets the - menu's tabs; our other pages open from System's buttons)
     for layout, edit in ((OVERLAY_LAYOUT, add_tab), (PAGES_LAYOUT, add_page), (SYSTEM_LAYOUT, _system_layout)):
         olds = [data for name, data in entries if name == layout]
         if not olds:

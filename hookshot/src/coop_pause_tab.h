@@ -66,7 +66,8 @@ inline constexpr int kPlusMode = 1;
 inline constexpr int kMapCategory = 2;   // the - menu's Map page's category (its last tab: Key Items, Threads, Map)
 // The - menu's tabs of ours (0.11.9, the owner: Multiplayer, Local co-op and Mods are tabs right of Map), in order.
 inline constexpr int kMinusTabs = 3;
-inline constexpr const char* kMinusTabNames[kMinusTabs] = {"Multiplayer", "Local co-op", "Mods"};
+// (the owner, 0.11.9: Character Select's Characters, then Multiplayer, Lobby (the online Find / Host / Join) and Mods)
+inline constexpr const char* kMinusTabNames[kMinusTabs] = {"Multiplayer", "Lobby", "Mods"};
 inline constexpr int kRows = 5;                        // the page's buttons (Pa_Button_00..04), System's too
 // The buttons of the pages made of System's layout with the pack's Longshot Settings button (Pa_Button_05: System's
 // last button, and Longshot Settings' sixth category row).
@@ -193,17 +194,12 @@ public:
         // the other way; 0 at once (now always: our pages open from System's buttons and leave in place).
         int slide = 0;
         bool set_texts = false;  // the pages: our rows' texts (once per screen object)
-        // The strip (0.11.9): the Character tab (Pa_Category_04) shown in the Plus menu, lit while the Character page
-        // shows, and System's tab lit while System (or a page of ours in its place) is the one shown; fill_tab once per
-        // opening of the strip (its word and Plus look, as the game fills its four).
-        bool set_tabs = false;
-        bool tab_shown = false, tab_lit = false, fill_tab = false;
         // The - menu's tabs of ours (kMinusTabNames, after Map): shown while the - menu's strip is open, which one
         // lit (-1 none: the game's Map, or its other pages), filled once per opening; slide +1 / -1 as R / L moved.
         bool set_minus = false;
         bool minus_shown = false, fill_minus = false;
         int minus_lit = -1, minus_slide = 0;
-        bool any() const { return set_page || set_texts || set_tabs || set_minus; }
+        bool any() const { return set_page || set_texts || set_minus; }
     };
     Do OnScreen(const Facts& f, std::uint64_t now_ms);
     // Player 1's pad before the game gets it: the buttons the game gets.
@@ -261,19 +257,9 @@ public:
     // the game does not start them, the module took the press. nullptr when none.
     const char* TakePagesSound();
     void Sound(const char* name) { pages_sound_ = name; }   // a menu sound for the module's own move (the cells)
-    // The tab sound the module starts at the strip's next update (R onto the Character tab, L off it: the game's own
+    // The tab sound the module starts at the strip's next update (R onto a - tab of ours, L off it: the game's own
     // mc_TabToRight / mc_TabToLeft, which its graph plays on MenuOverlay_00 for its own tabs). nullptr when none.
     const char* TakeStripSound() { return std::exchange(strip_sound_, nullptr); }
-
-    // The Character tab (0.11.9; the owner: "Character customization is a tab of the + menu"): the strip's fifth tab,
-    // after System. Usable once the module found the pack's Pa_Category_04 in the strip (SetTabUsable). R on System
-    // (the menu open and still, nothing over it) shows the Character page in System's place, sliding in from the right
-    // as the game's pages do, and lights the tab; L (or ZL) slides it out and gives System back. B closes the menu as
-    // on any tab (a view of the page takes B first). The page is the Multiplayer page on Settings and look's Customize
-    // view (TakeCustomizeOpen), as Customize Link's button opened it.
-    void SetTabUsable(bool usable) { tab_ok_ = usable; }
-    bool TabUsable() const { return tab_ok_; }
-    bool CharacterShown() const { return shown_ && character_; }
 
     // The - menu's tabs (0.11.9): usable once the module found the pack's three tabs in the strip
     // (SetMinusTabsUsable). R on Map (the - menu's last page, open and still) goes to the first of ours, R and L step
@@ -282,10 +268,8 @@ public:
     // tabs' pages is what the R1 probe answers (reports/ui-tabs-0119.md); until then the module keeps them off unless
     // COOP_TEST_MINUS_TABS=1.
     void SetMinusTabsUsable(bool usable) { minus_ok_ = usable; }
-    // Ours shown now: 0 Multiplayer, 1 Local co-op, 2 Mods; -1 none.
+    // Ours shown now: 0 Multiplayer, 1 Lobby, 2 Mods; -1 none.
     int MinusTab() const { return minus_tab_; }
-    // ZL (-1) or ZR (+1) on the Character page since the last call: its Customize page turns (0: none).
-    int TakePageTurn() { return std::exchange(page_turn_, 0); }
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
@@ -346,9 +330,6 @@ private:
     bool decide_ = false;
     bool refused_a_ = false;
     int slide_ = 0;   // the next set_page's Do::slide
-    bool tab_ok_ = false;      // the strip's Character tab found (SetTabUsable)
-    bool character_ = false;   // the page shown is the Character tab's (R from System), not a System button's
-    int page_turn_ = 0;        // TakePageTurn
     bool minus_ok_ = false;    // SetMinusTabsUsable
     int minus_tab_ = -1;       // MinusTab
     int minus_set_ = -2;       // the - tabs' state last set (Do::set_minus): -2 none, -1 shown none lit, else lit
@@ -357,8 +338,6 @@ private:
     bool CanMinus(std::uint64_t now_ms) const;
     std::uint64_t MinusPad(std::uint64_t buttons, std::uint64_t down);
     const char* strip_sound_ = nullptr;
-    std::uint64_t tabs_gen_ = 0;   // the strip opening whose Character tab was filled (Do::fill_tab once per opening)
-    int tabs_set_ = -1;            // the tab state last set: -1 none, else bit 0 shown, bit 1 lit, bit 2 System lit
     int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
     bool settings_ok_ = false;
     int system_button_ = -1;

@@ -69,9 +69,9 @@ std::uint32_t ToRgb(const Hsv& colour);
 // nothing below a scroll: Clothes, Shields, Swords. Each row is a part's full name over its colour.
 struct Group {
     const char* name;
-    std::array<CoopLook::Part, 6> parts;
+    std::vector<CoopLook::Part> parts;   // at most six
 };
-const std::array<Group, 3>& Groups();
+const std::vector<Group>& Groups();
 // A part's name on the Character page ("Kokiri Tunic", "Hylian Shield Frame", "Biggoron's Sword Hilt").
 std::string PagedName(CoopLook::Part part);
 // What a character other than Link shows (the owner: never a row that does nothing): only the gear pages, and only

@@ -64,38 +64,33 @@ def pane(d, name):
 
 
 class TabTest(unittest.TestCase):
-    def test_the_character_tab_after_system_the_game_tabs_left_alone(self):
+    def test_the_minus_menus_three_tabs_after_the_fourth_the_game_tabs_left_alone(self):
         d = overlay()
         n = pm.add_tab(d)
         panes, parts = ui_pack.read_layout(n)
-        self.assertEqual(len(panes), len(OVERLAY) + 4)   # the Character tab and the - menu's three
-        names = [p.name for p in panes]
-        self.assertEqual(names[len(OVERLAY):], ["Pa_Category_04"] + pm.MINUS_TABS)
-        # the - menu's three: copies of the third tab (its Map), one game step apart after it, under the root, hidden
+        self.assertEqual(len(panes), len(OVERLAY) + 3)   # the - menu's three (0.11.9: Multiplayer, Lobby, Mods)
+        self.assertEqual(pm.MINUS_TABS, ["Pa_Category_04", "Pa_Category_05", "Pa_Category_06"])   # (no gap: counted)
+        self.assertEqual([p.name for p in panes][len(OVERLAY):], pm.MINUS_TABS)
+        # copies of the fourth tab, one game step apart after it, under the root (the header's (600, -60) added)
         for i, name in enumerate(pm.MINUS_TABS):
             x, y, parent, _ = pane(n, name)
-            self.assertEqual((x, y, parent), (600.0 + (i + 1) * 100.0 + 600.0, -60.0 - 60.0, "RootPane"), name)
-        self.assertEqual([p.name for p in parts][-4:], ["Pa_Category_04"] + pm.MINUS_TABS)
-        # the game's four and L where they were (the strip's animation places them)
-        for name in ["Pa_Category_%02d" % i for i in range(4)] + ["T_BtnL_00"]:
+            self.assertEqual((x, y, parent), (700.0 + (i + 1) * 100.0 + 600.0, -70.0 - 60.0, "RootPane"), name)
+        self.assertEqual([p.name for p in parts][-3:], pm.MINUS_TABS)
+        # the game's four, L and R where they were (the strip's animation places them; the module places ours)
+        for name in ["Pa_Category_%02d" % i for i in range(4)] + ["T_BtnL_00", "T_BtnR_00"]:
             self.assertEqual(pane(n, name), pane(d, name), name)
-        # the fifth a step less FIFTH_GAP after the fourth, in the root's frame (the header's (600, -60) added)
-        x, y, parent, end = pane(n, "Pa_Category_04")
-        self.assertEqual((x, y, parent, end), (700.0 + 100.0 - pm.FIFTH_GAP + 600.0, -70.0 - 60.0, "RootPane", len(OVERLAY) + 1))
-        self.assertEqual(pane(n, "T_BtnR_00")[:2], (1000.0 + pm.R_MOVE, -100.0))
-        # the order holds: only the root reaches the copy, every other pane ends where it did
+        # the order holds: only the root reaches the copies, every other pane ends where it did
         old = [struct.unpack_from("<I", d, p.record + 0x34)[0] for p in ui_pack.read_layout(d)[0]]
         new = [struct.unpack_from("<I", n, p.record + 0x34)[0] for p in panes[:len(OVERLAY)]]
-        self.assertEqual(new, [len(OVERLAY) + 4] + old[1:])
-        # the copy is the fourth tab's part, with its own parameters
+        self.assertEqual(new, [len(OVERLAY) + 3] + old[1:])
         # each copy is a tab's part, with the game's id for its name (CityHash64), stored hidden: only the co-op
         # module shows it (bit 0 of the kind word; the source's has it)
         kind = lambda n, i: struct.unpack_from("<I", n, ui_pack.read_layout(n)[0][i].record + 0x38)[0]
-        for k, name in enumerate(["Pa_Category_04"] + pm.MINUS_TABS):
+        for k, name in enumerate(pm.MINUS_TABS):
             i = len(OVERLAY) + k
-            self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-4 + k].record)[0]), "PaMenuCategory_00")
+            self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-3 + k].record)[0]), "PaMenuCategory_00")
             self.assertEqual(panes[i].id, ui_pack.part_id(name))
-            self.assertEqual(kind(n, i), kind(d, 7 if k == 0 else 6) & ~1)
+            self.assertEqual(kind(n, i), kind(d, 7) & ~1)
         self.assertTrue(kind(d, 7) & 1)
 
 
@@ -273,7 +268,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(set(written), set(made))
         common = dict(sarc.read_entries(written[pm.COMMON_ARCHIVE]))
         self.assertIn("Pa_Category_04", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
-        self.assertNotIn("Pa_Category_08", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
+        self.assertNotIn("Pa_Category_07", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
         self.assertIn("Pa_Coop_00", [p.name for p in ui_pack.read_layout(common[pm.PAGES_LAYOUT])[0]])
         self.assertIn(pm.ROW % 6, [p.name for p in ui_pack.read_layout(common[pm.SYSTEM_LAYOUT])[0]])
         self.assertIn(pm.SETTINGS_BUTTON, [p.name for p in ui_pack.read_layout(common[pm.SYSTEM_LAYOUT])[0]])
@@ -282,7 +277,7 @@ class BuildTest(unittest.TestCase):
         ours = ui_pack.load_strings("USen")
         msgs = sarc.read(written["Mals/USen.Product.110.sarc.zs"])
         self.assertEqual(msbt.read(msgs[pm.OVERLAY_MSG]).text("SystemMenu"), ["System"])   # (as it was)
-        self.assertEqual(msbt.read(msgs[pm.OVERLAY_MSG]).text("Pa_Category_04-T_Text_00"), ["Character"])
+        self.assertEqual(msbt.read(msgs[pm.OVERLAY_MSG]).text("Pa_Category_04-T_Text_00"), ["Multiplayer"])
         page = msbt.read(msgs[pm.PAGES_MSG])
         for i in range(5):
             label = "Pa_Coop_00-Pa_Button_%02d-T_Btn_00" % i

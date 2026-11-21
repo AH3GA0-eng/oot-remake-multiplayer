@@ -42,6 +42,8 @@ std::uint32_t GameColour(Part part) {
     case Part::boots: return 0x634D38;
     case Part::gauntlets: return 0xAAAAAA;
     case Part::cap_trim: return 0x4C8C3C;   // (unset it is the tunic's: Shown)
+    case Part::eyes: return 0x3C6EC8;       // (Link's blue)
+    case Part::hair: return 0xD8A848;       // (Link's blond)
     }
     return 0x808080;
 }
@@ -68,7 +70,9 @@ const char* Note(Part part) {
     case Part::boots: return "The leather of every pair: the Kokiri, Hover and Iron Boots (young Link's belts too).";
     case Part::gauntlets: return "The metal of the Silver and the Golden Gauntlets.";
     case Part::cap_trim:
-        return "The cap's own trims: young Link's headband and knot, adult Link's hood trims (the cap's cloth is the tunic's). Your own Link only, for now.";
+        return "The cap's own trims: young Link's headband and knot, adult Link's hood trims (the cap's cloth is the tunic's). The other players see it on you too.";
+    case Part::eyes: return "The colour of the eyes, on your Link and seen by the other players.";
+    case Part::hair: return "The colour of the hair and the brows, on your Link and seen by the other players.";
     }
     return "";
 }
@@ -227,14 +231,16 @@ std::uint32_t ToRgb(const Hsv& c) {
     return (byte(r) << 16) | (byte(g) << 8) | byte(b);
 }
 
-const std::array<Group, 3>& Groups() {
-    static const std::array<Group, 3> kGroups = {{
-        {"Clothes", {Part::tunic, Part::cap_trim, Part::goron_tunic, Part::zora_tunic, Part::boots, Part::gauntlets}},
+const std::vector<Group>& Groups() {
+    // (0.11.9: Link's own colours first, his hair and eyes among them)
+    static const std::vector<Group> kGroups = {
+        {"Link", {Part::hair, Part::eyes, Part::tunic, Part::cap_trim, Part::goron_tunic, Part::zora_tunic}},
         {"Shields", {Part::hylian_frame, Part::hylian_face, Part::hylian_emblem, Part::mirror_rim, Part::mirror_face,
                      Part::deku_shield}},
         {"Swords", {Part::kokiri_blade, Part::kokiri_hilt, Part::master_blade, Part::master_hilt, Part::biggoron_blade,
                     Part::biggoron_hilt}},
-    }};
+        {"Boots and gauntlets", {Part::boots, Part::gauntlets}},
+    };
     return kGroups;
 }
 
@@ -247,6 +253,8 @@ std::string PagedName(Part part) {
     case Part::boots: return "Boots";
     case Part::gauntlets: return "Gauntlets";
     case Part::deku_shield: return "Deku Shield";
+    case Part::eyes: return "Eye Colour";
+    case Part::hair: return "Hair Colour";
     default: break;
     }
     const PartInfo& info = CoopLook::InfoOf(part);
@@ -364,7 +372,7 @@ void Page::SetCharacter(std::uint16_t character, bool gear_shows) {
 }
 
 std::vector<std::size_t> Page::Offered() const {
-    if (character_ == 0) return {0, 1, 2};   // Link: every part
+    if (character_ == 0) return {0, 1, 2, 3};   // Link: every part
     if (gear_shows_) return {1, 2};          // a character: its held gear only, once shown to work
     return {};
 }

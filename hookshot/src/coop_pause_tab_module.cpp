@@ -1287,6 +1287,9 @@ void PutModel(std::uint64_t actor, const float pos[3], const float rot[9]) {
 }
 
 void MenuModel(void* ctx, const Facts& f, bool want) {
+    // (row 207: with Character Select, never the menu's Link model forced here: its code patches that model's making
+    // for its own pages, and Customize is in its screen)
+    want = want && !CoopCharColours::ModPresent();
     const std::uint64_t base = CoopRuntime::MainBase();
     const std::uint64_t manager = Read<std::uint64_t>(base + kMenuManager);
     const std::uint64_t obj = manager != 0 ? Read<std::uint64_t>(manager + kPouchObject) : 0;
@@ -1540,9 +1543,8 @@ bool SystemOwn(std::uint64_t pane) {
 void SystemButtons(void* ctx) {
     const std::uint64_t now = NowMs();
     const int want = (g_page.Usable() && g_mp_button != 0 ? 1 : 0) | (g_page.SettingsUsable() && g_settings_button != 0 ? 2 : 0) |
-                     (g_page.Usable() && g_cl_button != 0 && !g_page.TabUsable() ? 4 : 0);   // (0.11.9: the Character tab
-                                                                                            // is its home; the button only
-                                                                                            // with a pack without the tab)
+                     (g_page.Usable() && g_cl_button != 0 && !CoopCharColours::ModPresent() ? 4 : 0);   // (row 207: with
+                                                                // Character Select, Customize is in its own screen)
     const bool over = g_page.Shown();
     if (want != g_settings_button_shown || over != g_sys_hidden) {
         if (over != g_sys_hidden) {
@@ -1689,194 +1691,77 @@ void PlaySound(void* ctx, std::uint64_t screen, const char* name) {
     if (at != 0) Call(ctx, kScreenSound, screen, at);
 }
 
-// --- The Character tab (0.11.9): the strip's fifth tab, after System ---
-// The pack's Pa_Category_04 (pause_menu.py add_tab, stored hidden) found once per opening of the strip, with the
-// game's four tabs and their words, to space the five evenly and keep ours with the fourth through the strip's
-// opening (the way 0.11.6's Multiplayer tab ran: commits e0efb323, 0cf723f3). g_mutex.
-std::uint64_t g_strip_gen = 0, g_tab_pane = 0;
-bool g_strip_looked = false, g_strip_ok = false;
-std::uint64_t g_fourth_pane = 0;   // the game's fourth tab (Pa_Category_03), which ours follows
+// --- The - menu's tabs of ours (0.11.9): Multiplayer, Lobby, Mods, right of Map ---
+// The pack's Pa_Category_04..06 (pause_menu.py add_tab, stored hidden; the strip counts its Pa_Category_%02d parts up
+// to the first missing, so ours follow the game's four) found once per opening of the strip, with the game's tabs to
+// place ours one game step apart after the - menu's last shown tab: slot 3 with Character Select's header (his code
+// shows four - tabs: Characters, Key Items, Threads of Time, Map), else slot 2 (the game hides slot 3 there). g_mutex.
+std::uint64_t g_strip_gen = 0;
+bool g_strip_looked = false;
 std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
-int g_tab_put_back = 0;
-std::array<std::uint64_t, 5> g_words{};
-std::string g_spacing_said;
-bool g_tabs_placed = false;
-std::uint64_t g_fourth_word = 0, g_tab_word = 0;
-float g_tab_rest_y = 0;
-bool g_tab_shown = false;
-bool g_follow_had = false;
-float g_follow_y = 0, g_follow_alpha = 0, g_follow_word = 0;
-float g_alpha_set = -1, g_word_set = -1;
-// The - menu's tabs of ours (Pa_Category_05..07, kMinusTabNames) and the game's third tab (Pa_Category_02: the - menu's
-// Map), which they follow; their words faded in as ours.
 std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
-std::uint64_t g_third_pane = 0;
 bool g_minus_ok = false, g_minus_shown = false;
 
 void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
     if (gen != g_strip_gen) {
-        g_strip_gen = gen, g_strip_looked = false, g_strip_ok = false, g_tab_pane = 0;
-        g_fourth_pane = 0, g_fourth_word = 0, g_tab_word = 0, g_tab_shown = false, g_follow_had = false;
-        g_alpha_set = g_word_set = -1;
-        g_game_tabs = {}, g_words = {}, g_tabs_placed = false;
-        g_minus_panes = {}, g_minus_words = {}, g_third_pane = 0, g_minus_ok = false, g_minus_shown = false;
+        g_strip_gen = gen, g_strip_looked = false;
+        g_game_tabs = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_ok = false, g_minus_shown = false;
     }
     if (g_strip_looked || !calls || f.layout == 0) return;
     g_strip_looked = true;
-    g_tab_pane = FindOwnPane(ctx, f.layout, "Pa_Category_04");
-    g_strip_ok = IsPart(g_tab_pane);
-    if (g_strip_ok) {
-        g_fourth_pane = FindOwnPane(ctx, f.layout, "Pa_Category_03");
-        g_tab_rest_y = Read<float>(g_tab_pane + kPaneOwnY);
-        std::uint64_t table = 0;
-        Call(ctx, kPaneTable, f.layout + 0x40, 0, 0, 0, 0, &table);
-        g_fourth_word = PaneIn(ctx, PartLayout(table, "Pa_Category_03"), "N_MenuChangeTextIn_00");
-        g_tab_word = PaneIn(ctx, PartLayout(table, "Pa_Category_04"), "N_MenuChangeTextIn_00");
-        g_tab_put_back = 0;
-        for (int i = 0; i < 5; ++i) {
-            char name[16];
-            std::snprintf(name, sizeof name, "Pa_Category_%02d", i);
-            if (i < 4) {
-                const std::uint64_t tab = FindOwnPane(ctx, f.layout, name);
-                if (IsPart(tab)) {
-                    g_game_tabs[static_cast<std::size_t>(i)] = tab;
-                    g_game_tabs_x[static_cast<std::size_t>(i)] = Read<float>(tab + 0x6c);
-                }
-            }
-            g_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "T_Text_00");
+    std::uint64_t table = 0;
+    Call(ctx, kPaneTable, f.layout + 0x40, 0, 0, 0, 0, &table);
+    for (int i = 0; i < 4; ++i) {
+        char name[16];
+        std::snprintf(name, sizeof name, "Pa_Category_%02d", i);
+        const std::uint64_t tab = FindOwnPane(ctx, f.layout, name);
+        if (IsPart(tab)) {
+            g_game_tabs[static_cast<std::size_t>(i)] = tab;
+            g_game_tabs_x[static_cast<std::size_t>(i)] = Read<float>(tab + 0x6c);
         }
-        g_spacing_said.clear();
     }
-    // (the - menu's three: all of them, or none used)
-    {
-        std::uint64_t table = 0;
-        Call(ctx, kPaneTable, f.layout + 0x40, 0, 0, 0, 0, &table);
-        g_third_pane = FindOwnPane(ctx, f.layout, "Pa_Category_02");
-        g_minus_ok = IsPart(g_third_pane);
-        for (int i = 0; i < kMinusTabs; ++i) {
-            char name[16];
-            std::snprintf(name, sizeof name, "Pa_Category_%02d", 5 + i);
-            g_minus_panes[static_cast<std::size_t>(i)] = FindOwnPane(ctx, f.layout, name);
-            g_minus_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "N_MenuChangeTextIn_00");
-            g_minus_ok = g_minus_ok && IsPart(g_minus_panes[static_cast<std::size_t>(i)]);
-        }
-        LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours (Pa_Category_05..07): {}",
-                 g_minus_ok ? "found" : "not in the pack (the - menu stays the game's)");
+    g_minus_ok = g_game_tabs[2] != 0;
+    for (int i = 0; i < kMinusTabs; ++i) {
+        char name[16];
+        std::snprintf(name, sizeof name, "Pa_Category_%02d", 4 + i);
+        g_minus_panes[static_cast<std::size_t>(i)] = FindOwnPane(ctx, f.layout, name);
+        g_minus_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "N_MenuChangeTextIn_00");
+        g_minus_ok = g_minus_ok && IsPart(g_minus_panes[static_cast<std::size_t>(i)]);
     }
-    LOG_INFO(Core, "coop: pause tab: the Character tab: Pa_Category_04 {:#x}{} (the game's tabs at x {:.0f}, {:.0f}, "
-                   "{:.0f}, {:.0f} in their parent)",
-             g_tab_pane, g_strip_ok ? "" : " (not in the pack: R on System stays the game's)", g_game_tabs_x[0],
-             g_game_tabs_x[1], g_game_tabs_x[2], g_game_tabs_x[3]);
+    LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours (Pa_Category_04..06): {}",
+             g_minus_ok ? "found" : "not in the pack (the - menu stays the game's)");
 }
 
-// The five tabs one even gap apart between their words (the game's four moved from their 460 apart, ours after the
-// fourth), in the Plus menu with ours shown; elsewhere the game's at their own places. A word's width is its text
-// pane's drawn width (T_Text_00 +0x13c). A width not read, or a gap under kMinWordGap (long words in another
-// language): the tabs where the pack and the game put them.
-constexpr float kFifthGap = 410.0f, kMinWordGap = 60.0f;
-constexpr std::uint64_t kTextDrawnWidth = 0x13c;
-bool TabsKnown() {
-    return std::all_of(g_game_tabs.begin(), g_game_tabs.end(), [](std::uint64_t t) { return t != 0; });
-}
-std::array<float, 5> TabOffsets() {
-    std::array<float, 5> off{}, w{};
-    for (std::size_t i = 0; i < 4; ++i) off[i] = g_game_tabs_x[i] - g_game_tabs_x[0];
-    off[4] = off[3] + kFifthGap;
-    bool words = true;
-    float total = 0;
-    for (std::size_t i = 0; i < w.size(); ++i) {
-        w[i] = g_words[i] != 0 ? Read<float>(g_words[i] + kTextDrawnWidth) : 0.0f;
-        if (!std::isfinite(w[i]) || w[i] < 10.0f || w[i] > 2000.0f) words = false;
-        total += w[i];
-    }
-    const float gap = (off[4] + w[0] / 2 + w[4] / 2 - total) / 4;
-    if (!words || gap < kMinWordGap) return off;
-    float left = -w[0] / 2;
-    for (std::size_t i = 0; i < off.size(); ++i) {
-        off[i] = left + w[i] / 2;
-        left += w[i] + gap;
-    }
-    return off;
-}
-float TabX(int i, bool on) {
-    const std::size_t k = static_cast<std::size_t>(i);
-    return on ? g_game_tabs_x[0] + TabOffsets()[k] : g_game_tabs_x[k];
-}
-void PlaceTabs(void* ctx, bool on) {
-    if (!TabsKnown()) return;
-    for (int i = 0; i < 4; ++i) PlacePane(ctx, g_game_tabs[static_cast<std::size_t>(i)], TabX(i, on));
-    if (on != g_tabs_placed) {
-        g_tabs_placed = on;
-        LOG_INFO(Core, "coop: pause tab: the game's tabs {}", on ? "evenly spaced with the Character tab"
-                                                                 : "back at their own places");
-    }
-}
-void FollowFourthX(void* ctx) {
-    if (g_fourth_pane == 0 || !TabsKnown()) return;
-    const float x = Read<float>(g_fourth_pane + kPaneScreenX);
-    if (!std::isfinite(x)) return;
-    const std::array<float, 5> off = TabOffsets();
-    PlacePane(ctx, g_tab_pane, x + off[4] - off[3]);
-}
-
-// The strip's Do: the Character tab shown in the Plus menu (filled as a Plus tab, our word), lit with its page, and
-// System's tab lit when System (or a page of ours in its place) is the one shown.
-void ApplyStrip(void* ctx, const Facts& f, const Page::Do& d) {
-    const std::uint64_t layout = f.layout;
-    const std::uint64_t tabs = Read<std::uint64_t>(f.screen + kStripTabArray);
-    if (layout == 0 || tabs == 0 || !g_strip_ok || !d.set_tabs) return;
-    SetVisible(ctx, g_tab_pane, d.tab_shown);
-    if (!d.tab_shown) g_follow_had = false, g_alpha_set = g_word_set = -1;
-    g_tab_shown = d.tab_shown;
-    PlaceTabs(ctx, d.tab_shown);   // (also when the tab goes, as in the Minus menu: the game's places back)
-    if (!d.tab_shown) return;
-    const std::uint64_t tab3 = Read<std::uint64_t>(tabs + 8 * 3), tab4 = Read<std::uint64_t>(tabs + 8 * 4);
-    if (tab3 == 0 || tab4 == 0) return;
-    if (d.fill_tab) {
-        Call(ctx, kTabFill, tab4, kSystemPage, 1);   // (a Plus tab's look, as the game fills its four)
-        const bool text = SetText(ctx, layout, "Pa_Category_04/T_Text_00", "LayoutMsg/MenuOverlay_00",
-                                  "Pa_Category_04-T_Text_00");
-        Call(ctx, kTabOpen, tab4, 0);   // (opened and shown, as the game's fill ends for each of its tabs)
-        // (its word faded in: the strip's own "text in" animation names only the game's four words)
-        std::uint64_t table = 0;
-        Call(ctx, kPaneTable, layout + 0x40, 0, 0, 0, 0, &table);
-        const std::uint64_t text_in = PaneIn(ctx, PartLayout(table, "Pa_Category_04"), "N_MenuChangeTextIn_00");
-        if (text_in != 0) CallAlpha(ctx, text_in, 1.0f);
-        LOG_INFO(Core, "coop: pause tab: the Character tab filled (its word {}, {})", text ? "set" : "not set",
-                 text_in != 0 ? "faded in" : "its text pane not found");
-    }
-    Call(ctx, kTabLight, tab3, f.lit == kSystemPage && !d.tab_lit ? 1 : 0, 0);
-    Call(ctx, kTabLight, tab4, d.tab_lit ? 1 : 0, 0);
-}
-
-// The - menu's tabs of ours (0.11.9): shown while its strip is open, after its Map, filled once per opening as - menu
-// tabs with our words, ours lit (the game's Map then not). WHAT R1 MUST CONFIRM: that the strip's tab objects 5..7 exist
-// in the - menu (the set-up counts Pa_Category_%02d parts: 8 with the pack's) and take kTabFill with a - category's
-// look, and where the page of each draws (the panel's screen or ours); until then COOP_TEST_MINUS_TABS=1 only.
+// The strip's Do for ours: shown while the - menu's strip is open, filled once per opening as - tabs with our words,
+// ours lit (the game's Map then not). WHAT THE LANE RUN MUST CONFIRM: the strip's tab objects 4..6 take kTabFill with a
+// - category's look, and which screen draws these tabs' pages (R1); until then COOP_TEST_MINUS_TABS=1 only.
 void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
     const std::uint64_t tabs = Read<std::uint64_t>(f.screen + kStripTabArray);
     if (f.layout == 0 || tabs == 0 || !g_minus_ok || !d.set_minus) return;
     g_minus_shown = d.minus_shown;
     for (int i = 0; i < kMinusTabs; ++i) SetVisible(ctx, g_minus_panes[static_cast<std::size_t>(i)], d.minus_shown);
     if (!d.minus_shown) return;
-    if (static_cast<int>(Read<std::uint32_t>(f.screen + kStripTabs)) < 5 + kMinusTabs) return;   // (an older strip)
-    const std::uint64_t map_tab = Read<std::uint64_t>(tabs + 8 * 2);
+    if (static_cast<int>(Read<std::uint32_t>(f.screen + kStripTabs)) < 4 + kMinusTabs) return;   // (an older strip)
     for (int i = 0; i < kMinusTabs; ++i) {
-        const std::uint64_t tab = Read<std::uint64_t>(tabs + 8 * static_cast<std::uint64_t>(5 + i));
+        const std::uint64_t tab = Read<std::uint64_t>(tabs + 8 * static_cast<std::uint64_t>(4 + i));
         if (tab == 0) continue;
         if (d.fill_minus) {
-            Call(ctx, kTabFill, tab, kMapCategory, 1);   // (a - tab's look, as the game fills its three)
+            Call(ctx, kTabFill, tab, kMapCategory, 1);   // (a - tab's look, as the game fills its own)
             char path[48], label[48];
-            std::snprintf(path, sizeof path, "Pa_Category_%02d/T_Text_00", 5 + i);
-            std::snprintf(label, sizeof label, "Pa_Category_%02d-T_Text_00", 5 + i);
+            std::snprintf(path, sizeof path, "Pa_Category_%02d/T_Text_00", 4 + i);
+            std::snprintf(label, sizeof label, "Pa_Category_%02d-T_Text_00", 4 + i);
             SetText(ctx, f.layout, path, "LayoutMsg/MenuOverlay_00", label);
             Call(ctx, kTabOpen, tab, 0);
             if (const std::uint64_t w = g_minus_words[static_cast<std::size_t>(i)]; w != 0) CallAlpha(ctx, w, 1.0f);
         }
         Call(ctx, kTabLight, tab, d.minus_lit == i ? 1 : 0, 0);
     }
-    if (map_tab != 0) Call(ctx, kTabLight, map_tab, d.minus_lit < 0 && f.lit == kMapCategory ? 1 : 0, 0);
+    // (the game's Map tab: unlit while one of ours is; its slot is the last of the game's shown)
+    for (int slot = 2; slot <= 3; ++slot) {
+        const std::uint64_t t = Read<std::uint64_t>(tabs + 8 * static_cast<std::uint64_t>(slot));
+        if (t != 0 && d.minus_lit >= 0) Call(ctx, kTabLight, t, 0, 0);
+    }
     if (d.fill_minus) LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours shown and filled");
     if (d.minus_slide != 0) {
         LOG_INFO(Core, "coop: pause tab: the - menu: {} ({})", d.minus_lit >= 0 ? kMinusTabNames[d.minus_lit] : "Map",
@@ -1884,11 +1769,14 @@ void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
     }
 }
 
-// Ours one game step apart after the - menu's Map, wherever the strip's animation puts it (as the Character tab after
-// System). g_mutex.
-void FollowThird(void* ctx) {
-    if (!g_minus_shown || !g_minus_ok || g_third_pane == 0 || !TabsKnown()) return;
-    const float x = Read<float>(g_third_pane + kPaneScreenX), y = Read<float>(g_third_pane + kPaneScreenY);
+// Ours one game step apart after the - menu's last shown tab, wherever the strip's animation puts it. g_mutex.
+void FollowMinus(void* ctx) {
+    if (!g_minus_shown || !g_minus_ok || g_game_tabs[0] == 0 || g_game_tabs[1] == 0) return;
+    // (the last shown: slot 3 when Character Select's header shows it, else slot 2)
+    const std::uint64_t last = g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0
+                                   ? g_game_tabs[3]
+                                   : g_game_tabs[2];
+    const float x = Read<float>(last + kPaneScreenX), y = Read<float>(last + kPaneScreenY);
     if (!std::isfinite(x) || !std::isfinite(y)) return;
     const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
     for (int i = 0; i < kMinusTabs; ++i) {
@@ -1897,65 +1785,6 @@ void FollowThird(void* ctx) {
         if (Read<float>(pane + kPaneOwnY) != y) {
             CoopRuntime::Write(pane + kPaneOwnY, &y, sizeof y);
             Call(ctx, kPaneMoved, pane);
-        }
-    }
-}
-
-void SaySpacing() {
-    std::string now = "words";
-    for (const std::uint64_t word : g_words) {
-        now += " " + std::to_string(word != 0 ? static_cast<int>(Read<float>(word + kTextDrawnWidth)) : -1);
-    }
-    now += ", centres";
-    for (const float o : TabOffsets()) now += " " + std::to_string(static_cast<int>(o));
-    if (now == g_spacing_said) return;
-    g_spacing_said = now;
-    LOG_INFO(Core, "coop: pause tab: the five tabs: {}", now);
-}
-
-void KeepTabPlaces(void* ctx) {
-    if (!TabsKnown()) return;
-    for (std::size_t i = 0; i < g_game_tabs.size(); ++i) {
-        const std::uint64_t tab = g_game_tabs[i];
-        const float want = TabX(static_cast<int>(i), true), now = Read<float>(tab + 0x6c);
-        if (now == want) continue;
-        if (++g_tab_put_back <= 8) {
-            LOG_INFO(Core, "coop: pause tab: the game's tab {} was at x {:.0f}, not {:.0f}: set again ({} so far)", i, now,
-                     want, g_tab_put_back);
-        }
-        PlacePane(ctx, tab, want);
-    }
-}
-
-// Ours through the strip's opening and closing, as the game's four (the strip's animation moves and fades their
-// parent; ours sits under RootPane): at each strip update it takes the fourth's height and alphas, one update ahead.
-void FollowFourth(void* ctx) {
-    if (!g_tab_shown || g_fourth_pane == 0 || !g_strip_ok) return;
-    const float y = Read<float>(g_fourth_pane + kPaneScreenY), alpha = Read<float>(g_fourth_pane + kPaneScreenAlpha);
-    const float word = g_fourth_word != 0 ? Read<float>(g_fourth_word + kTextAlpha) : 1.0f;
-    if (!std::isfinite(y) || !std::isfinite(alpha) || !std::isfinite(word) || std::fabs(y - g_tab_rest_y) > kFollowMost) {
-        return;
-    }
-    const bool had = std::exchange(g_follow_had, true);
-    const float want_y = had ? Ahead(g_follow_y, y, g_tab_rest_y) : y;
-    const float want_alpha = had ? Ahead(g_follow_alpha, alpha, alpha >= g_follow_alpha ? 1.0f : 0.0f) : alpha;
-    const float want_word = had ? Ahead(g_follow_word, word, word >= g_follow_word ? 1.0f : 0.0f) : word;
-    g_follow_y = y, g_follow_alpha = alpha, g_follow_word = word;
-    if (Read<float>(g_tab_pane + kPaneOwnY) != want_y) {
-        CoopRuntime::Write(g_tab_pane + kPaneOwnY, &want_y, sizeof want_y);
-        Call(ctx, kPaneMoved, g_tab_pane);
-    }
-    KeepTabPlaces(ctx);
-    FollowFourthX(ctx);
-    SaySpacing();
-    if (const float a = std::clamp(want_alpha, 0.0f, 1.0f); a != g_alpha_set) {
-        CallAlpha(ctx, g_tab_pane, a);
-        g_alpha_set = a;
-    }
-    if (g_fourth_word != 0 && g_tab_word != 0) {
-        if (const float w = std::clamp(want_word, 0.0f, 1.0f); w != g_word_set) {
-            CallAlpha(ctx, g_tab_word + kTextAlphaBlock, w);
-            g_word_set = w;
         }
     }
 }
@@ -2732,9 +2561,8 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
             // This opening's panes first, so the page is usable only with the panes of the screens updating now (an
             // undrawn page never takes System's A: MousePage -2).
             gen = g_page.Track(f);
-            if (f.kind == Kind::kStrip) {   // (the Character tab, 0.11.9: the pack's Pa_Category_04 in this opening)
+            if (f.kind == Kind::kStrip) {   // (the - menu's tabs of ours, 0.11.9: the pack's in this opening)
                 LookStrip(ctx, calls, f, gen);
-                g_page.SetTabUsable(g_strip_ok && CanCall());
                 static const bool minus_tabs = [] {   // (until R1 confirms their pages' screen: reports/ui-tabs-0119.md)
                     const char* v = std::getenv("COOP_TEST_MINUS_TABS");
                     return v != nullptr && v[0] == '1';
@@ -2768,11 +2596,9 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
                     ApplyPages(ctx, pages, page_only);   // (the pages' own update comes a frame later)
                 }
             }
-            if (f.kind == Kind::kStrip && calls) {   // (the Character tab: set, kept with the fourth, its sound)
-                if (d.set_tabs) ApplyStrip(ctx, f, d);
+            if (f.kind == Kind::kStrip && calls) {   // (the - menu's tabs of ours: set, kept after Map, their sound)
                 if (d.set_minus) ApplyMinus(ctx, f, d);
-                FollowFourth(ctx);
-                FollowThird(ctx);
+                FollowMinus(ctx);
                 if (const char* sound = g_page.TakeStripSound()) PlaySound(ctx, screen, sound);
             }
             if (f.kind == Kind::kPages && calls) StepSlide(ctx, NowMs());   // (each update while the pages slide)
@@ -3106,12 +2932,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 }
             }
             out = g_page.OnPad(in, NowMs());
-            if (const int turn = g_page.TakePageTurn(); turn != 0) {   // (ZL / ZR on the Character tab)
-                CoopPause::TurnCustomizePage(turn);
-                g_live_poke = true;
-            }
             if (g_page.TakeCustomizeOpen()) {   // (the Customize Link button: Settings and look's Customize page)
-                CoopPause::SetCustomizePaged(g_page.CharacterShown());   // (the Character tab: pages of six)
                 g_customize_direct = true;
                 g_menu_tab = 0, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
                 SetView(View::kMenu);

@@ -51,7 +51,7 @@ TEST_CASE("look menu: every part on the list, by item, under its heading") {
         headings += r.kind == 3;
     }
     CHECK(parts == static_cast<int>(CoopLook::kParts));
-    CHECK(headings == 9);    // Tunic, 3 shields, 3 swords, Boots, Gauntlets
+    CHECK(headings == 11);   // Tunic, 3 shields, 3 swords, Boots, Gauntlets, Eyes, Hair (0.11.9)
     CHECK(v.rows[static_cast<std::size_t>(v.selected)].kind == 1);   // a part, not a heading
     CHECK(v.rows[static_cast<std::size_t>(RowOf(page, "Hylian Shield", "Frame"))].value == "Game's own");
     CHECK(v.back == "Back");
@@ -235,25 +235,33 @@ TEST_CASE("look menu (0.11.9): the Character page: three pages of six, ZL and ZR
     auto v = page.view();
     REQUIRE(v.rows.size() == 7);                    // the heading and six parts: one screen
     CHECK(v.rows[0].kind == 3);
-    CHECK(v.rows[0].name == "Clothes (page 1 of 3)");
-    CHECK(v.rows[1].name == "Kokiri Tunic");
-    CHECK(v.rows[2].name == "Cap Trim");
-    CHECK(v.rows[5].name == "Boots");
-    CHECK(v.rows[6].name == "Gauntlets");
+    CHECK(v.rows[0].name == "Link (page 1 of 4)");
+    CHECK(v.rows[1].name == "Hair Colour");
+    CHECK(v.rows[2].name == "Eye Colour");
+    CHECK(v.rows[3].name == "Kokiri Tunic");
+    CHECK(v.rows[4].name == "Cap Trim");
+    CHECK(v.rows[6].name == "Zora Tunic");
     CHECK(v.selected == 1);
     page.Press(Input::kPageNext);
     v = page.view();
-    CHECK(v.rows[0].name == "Shields (page 2 of 3)");
+    CHECK(v.rows[0].name == "Shields (page 2 of 4)");
     CHECK(v.rows[1].name == "Hylian Shield Frame");
     CHECK(v.rows[6].name == "Deku Shield");
     page.Press(Input::kPageNext);
     v = page.view();
-    CHECK(v.rows[0].name == "Swords (page 3 of 3)");
+    CHECK(v.rows[0].name == "Swords (page 3 of 4)");
     CHECK(v.rows[4].name == "Master Sword Hilt");
     CHECK(v.rows[4].value == "red");
     CHECK(v.rows[6].name == "Biggoron's Sword Hilt");
+    page.Press(Input::kPageNext);
+    v = page.view();
+    CHECK(v.rows[0].name == "Boots and gauntlets (page 4 of 4)");
+    REQUIRE(v.rows.size() == 3);
+    CHECK(v.rows[1].name == "Boots");
+    CHECK(v.rows[2].name == "Gauntlets");
     page.Press(Input::kPageNext);                   // round to the first
-    CHECK(page.view().rows[0].name == "Clothes (page 1 of 3)");
+    CHECK(page.view().rows[0].name == "Link (page 1 of 4)");
+    page.Press(Input::kPagePrev);
     page.Press(Input::kPagePrev);
     CHECK(page.GroupShown() == 2u);
     // Every part is on exactly one page.
@@ -289,9 +297,9 @@ TEST_CASE("look menu (0.11.9): a character other than Link: its gear pages once 
     CHECK_FALSE(page.TakeChange());
     page.SetCharacter(9, true);
     v = page.view();
-    CHECK(v.rows[0].name == "Shields (page 1 of 2)");
+    CHECK(v.rows[0].name == "Shields (page 1 of 2)");   // (a character: its held gear only)
     page.Press(Input::kPageNext);
     CHECK(page.view().rows[0].name == "Swords (page 2 of 2)");
     page.SetCharacter(0, true);                     // Link again: every page
-    CHECK(page.view().rows[0].name == "Clothes (page 1 of 3)");
+    CHECK(page.view().rows[0].name == "Link (page 1 of 4)");
 }
