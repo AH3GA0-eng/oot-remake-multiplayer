@@ -364,6 +364,15 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
                                                            : std::string());
     return;
   }
+  // Another co-op release than the host's: refused, so an older and a newer kit never play together (what the
+  // releases share may differ though the protocol did not change). A build that names no release is let in.
+  if (const std::string theirs = coop_release(hello.build_id); player_count() != 0 && !theirs.empty() &&
+                                                                 !session_release_.empty() && theirs != session_release_) {
+    refuse(id, c, RefuseReason::wrong_coop_version, now_us,
+           "the game runs co-op " + theirs + ", the host " + session_release_ +
+               ": the older kit runs Update.bat");
+    return;
+  }
   if (blank_name(hello.nickname) || hidden_characters(hello.nickname)) {
     refuse(id, c, RefuseReason::bad_name, now_us);
     return;
@@ -467,7 +476,10 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
   c.voice_budget = 2.0 * config_.voice_per_second;
   c.byte_budget = 2.0 * config_.bytes_per_second;
   c.budget_time = now_us;
-  if (player_count() == 1) session_game_build_ = hello.game_build_id;
+  if (player_count() == 1) {
+    session_game_build_ = hello.game_build_id;
+    session_release_ = coop_release(hello.build_id);
+  }
 
   send(id, kChannelSession, welcome);
   c.rejoin_claim.reset();
@@ -3024,6 +3036,7 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
       (!why.empty() ? " (" + why + ")" : reason == LeaveReason::timed_out ? " (timed out)" : ""));
   if (player_count() == 0) {
     session_game_build_.clear();
+    session_release_.clear();
     host_.reset();
     pvp_ = config_.pvp;
     pvp_set_by_ = 0;

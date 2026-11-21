@@ -27,7 +27,8 @@ std::string RowText(const CoopPauseMenu::Row& r) {
         t += ": " + std::string(r.left ? "< " : "") + r.value + (r.right ? " >" : "");
         break;
     default:
-        if (!r.value.empty()) t += t.empty() ? r.value : ": " + r.value;
+        // (a value that only says the row's own word again, "Join: Join", is left off)
+        if (!r.value.empty() && (t.empty() || t.rfind(r.value, 0) != 0)) t += t.empty() ? r.value : ": " + r.value;
         break;
     }
     return Fit(t, kTextBytes);
@@ -86,11 +87,18 @@ Look LookFor(const CoopPauseMenu::View& v, int top) {
         l.rows[static_cast<std::size_t>(b)] = row;
         l.texts[static_cast<std::size_t>(b)] = RowText(v.rows[static_cast<std::size_t>(row)]);
     }
-    for (int b = 0; b < kRowButtons; ++b) {
+    // (fewer rows than buttons: Back right under the last, the buttons after it not shown; a page of one row had Back
+    // three rows down, a tester's "super janky")
+    // (never under three buttons: with two shown, the game put its own word on the second, "Join" for our Back)
+    const int shown_rows = std::max(1, std::min(kRowButtons, n - top));
+    l.back = std::max(kRowButtons - 1, shown_rows < kRowButtons ? shown_rows : kButtons - 1);
+    l.buttons = l.back + 1;
+    for (int b = 0; b < kButtons; ++b) {
         if (l.texts[static_cast<std::size_t>(b)].empty()) l.texts[static_cast<std::size_t>(b)] = " ";
     }
-    l.texts[kButtons - 1] = "Back";
-    l.focus = at >= 0 ? at - top : kButtons - 1;
+    l.texts[static_cast<std::size_t>(l.back)] = "Back";
+    l.rows[static_cast<std::size_t>(l.back)] = -1;
+    l.focus = at >= 0 ? at - top : l.back;
     return l;
 }
 

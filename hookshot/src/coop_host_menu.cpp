@@ -288,7 +288,7 @@ void Menu::RunHost(HostJob job) {
                     CopyText(status_.password, sizeof status_.password, *new_password);
                     status_.problem = HOS_COOP_PROBLEM_NONE;
                     CopyText(status_.message, sizeof status_.message,
-                             "join password changed: players who join from now on need the new one");
+                             "new join password is set");   // (one line of the list)
                 } else {
                     status_.problem = HOS_COOP_PROBLEM_BAD_PASSWORD;
                     CopyText(status_.message, sizeof status_.message, "join password not changed: " + why);

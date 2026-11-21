@@ -306,27 +306,27 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         CHECK(p.OnPad(kPadR, now) == kPadR);   // (the game's: Items to System)
         CHECK_FALSE(p.Shown());
         p.OnPad(0, now + 1);
-        CHECK(Open(p, now + 2) == kPadA);   // (the game's A: no button of ours there)
+        CHECK(Open(p, now + 2) == 0);   // (on our button, the page not shown: kept from the game)
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("mid-step to System") {
         Page p = UsablePage();
         p.OnScreen(Pages(0xa000, 4, kSystemPage), now);
         p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("the Minus menu") {
         Page p = UsablePage();
         p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage), now);
         p.OnScreen(Strip(0x9000, 5, 2, 0), now);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("three tabs: fewer than the game's four") {
         Page p = UsablePage();
         OnSystem(p, now, 3);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
         // (the game's own four are enough: no tab of ours is needed)
         p.OnPad(0, now + 1);
@@ -338,7 +338,7 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         Page p = UsablePage();
         p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now);
         p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now);
-        CHECK(Open(p, now) == kPadA);
+        CHECK(Open(p, now) == 0);
         CHECK_FALSE(p.Shown());
     }
     SUBCASE("a window over the System page (Save, Options, a question)") {
@@ -360,7 +360,7 @@ TEST_CASE("pause tab: the page does not show off System, mid-step, in the Minus 
         // (the pad is polled every frame while the game runs; with no call at all it would be a stall of the whole
         // game, which keeps the screens fresh: AfterStall)
         for (std::uint64_t t = now + 16; t < now + 1000; t += 16) p.OnPad(0, t);
-        CHECK(Open(p, now + 1000) == kPadA);
+        CHECK(Open(p, now + 1000) == 0);
         CHECK_FALSE(p.Shown());
     }
 }
@@ -453,7 +453,8 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
         // (not in a session, the Players row is the games on this network, and Let in is auto-rejoin's switch; in one
         // with nobody else known, nothing: below)
         CHECK(ActionFor(kRowPlayers, s) == (s.in_one ? RowAction::kNone : RowAction::kViewLan));
-        CHECK(ActionFor(kRowLeave, s) == (s.in_one ? RowAction::kConfirmLeave : RowAction::kNone));
+        // (in no session, nothing to leave: Settings and look there)
+        CHECK(ActionFor(kRowLeave, s) == (s.in_one ? RowAction::kConfirmLeave : RowAction::kViewMenu));
         CHECK(ActionFor(-1, s) == RowAction::kNone);              // (no row under the cursor)
         CHECK(ActionFor(kRows, s) == RowAction::kNone);
     }
@@ -469,14 +470,16 @@ TEST_CASE("pause tab: each row leads to co-op's own part, by what co-op is doing
     CHECK(ActionFor(kRowJoinCode, hosting_no_code) == RowAction::kViewSession);
     CHECK(ActionFor(kRowJoinCode, joined) == RowAction::kViewSession);
     CHECK(ActionFor(kRowJoinCode, idle) == RowAction::kViewJoin);
-    // Let in: the host's Let in view; a guest Resync from host when its game can take the host's save; else nothing.
-    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kViewLetIn);
-    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kViewLetIn);
-    CHECK(ActionFor(kRowLetIn, joined) == RowAction::kNone);
+    // Let in: the host's Let in view when somebody asks (or an invite code's answer codes); else, and a guest's,
+    // Settings and look (Resync from host is on the guest's Session view).
+    CHECK(ActionFor(kRowLetIn, hosting) == RowAction::kViewMenu);   // (a room, nobody asks)
+    CHECK(ActionFor(kRowLetIn, hosting_no_code) == RowAction::kViewMenu);   // (nobody asks, no answer codes)
+    CHECK(ActionFor(kRowLetIn, joined) == RowAction::kViewMenu);
     CHECK(ActionFor(kRowLetIn, idle) == RowAction::kAutoRejoin);
     Session resync = joined;
     resync.can_resync = true;
-    CHECK(ActionFor(kRowLetIn, resync) == RowAction::kResync);
+    CHECK(ActionFor(kRowLetIn, resync) == RowAction::kViewMenu);
+    CHECK(ActionFor(View::kSession, 3, resync) == RowAction::kResync);
     idle.can_resync = true;   // (not in a session: nothing to resync from; the row is auto-rejoin's)
     CHECK(ActionFor(kRowLetIn, idle) == RowAction::kAutoRejoin);
     idle.can_resync = false;
@@ -494,13 +497,16 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     Session host;
     host.hosting = host.in_one = host.code = host.invite = true;
     CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
-    CHECK(ActionFor(View::kLetIn, 3, host) == RowAction::kPasteAnswer);
+    CHECK(ActionFor(View::kLetIn, 0, host) == RowAction::kPasteAnswer);   // (nobody asks: first, no gap)
+    CHECK(ActionFor(View::kLetIn, 3, host) == RowAction::kNone);
     CHECK(ActionFor(kRowJoinCode, host) == RowAction::kCopyCode);
     host.asking = true;
     CHECK(ActionFor(kRowLetIn, host) == RowAction::kViewLetIn);
     // A relay room has no answer codes: Let in is its view (Let in or Refuse who asks).
     Session relay;
     relay.hosting = relay.in_one = relay.code = true;
+    CHECK(ActionFor(kRowLetIn, relay) == RowAction::kViewMenu);   // (nobody asks yet: Settings and look)
+    relay.asking = true;
     CHECK(ActionFor(kRowLetIn, relay) == RowAction::kViewLetIn);
     // A guest the host could not reach: Join code copies this game's answer code (co-op's menu's Copy answer).
     Session waiting;
@@ -516,8 +522,8 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     v.s.hosting = v.s.in_one = v.s.code = v.s.invite = true;
     v.players = 1;
     CHECK(RowTexts(v) ==
-          std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Let in: nobody asks", "Stop hosting"});
-    CHECK(RowTexts(View::kLetIn, v)[3] == "Paste answer code");
+          std::vector<std::string>{"Hosting", "Copy invite code", "Players: just you", "Let in: answer code", "Stop hosting"});
+    CHECK(RowTexts(View::kLetIn, v) == std::vector<std::string>{"Paste answer code", "", "Settings and look", "", "Back"});
     v.asking = {"Saria"};
     v.s.asking = true;
     CHECK(RowTexts(v)[kRowLetIn] == "Let in Saria");
@@ -526,13 +532,18 @@ TEST_CASE("pause tab: the invite code's two rows: the host's Paste answer, a wai
     w.connecting = true;
     CHECK(RowTexts(w)[kRowSession] == "Connecting...");
     CHECK(RowTexts(w)[kRowJoinCode] == "Copy answer code");
+    SessionView starting;   // (the page's own Host, still starting: a host's rows, not a guest's)
+    starting.s.in_one = starting.s.hosting = true;
+    starting.connecting = true;
+    CHECK(RowTexts(starting)[kRowSession] == "Starting to host...");
+    CHECK(RowTexts(starting)[kRowLeave] == "Stop hosting");
 }
 
 TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width") {
     SessionView idle;
-    // (in no session the Leave row is not shown: nothing to leave)
-    CHECK(RowTexts(idle) == std::vector<std::string>{"Host a game", "Join a game", "Find a game",
-                                                     "Auto-rejoin: Off", ""});
+    // (in no session nothing to leave: Settings and look on the last row)
+    CHECK(RowTexts(idle) == std::vector<std::string>{"Host a game", "Join by room or IP", "Browse games",
+                                                     "Auto-rejoin: Off", "Settings and look"});
     idle.s.auto_rejoin = true;
     CHECK(RowTexts(idle)[kRowLetIn] == "Auto-rejoin: On");
     idle.s.rejoining = true;
@@ -543,7 +554,7 @@ TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width
     host.s.hosting = host.s.in_one = true;
     host.players = 1;
     CHECK(RowTexts(host) ==
-          std::vector<std::string>{"Hosting", "Room: coming...", "Players: just you", "Let in: nobody asks", "Stop hosting"});
+          std::vector<std::string>{"Hosting", "Room: coming...", "Players: just you", "Settings and look", "Stop hosting"});
     host.room = "forest-gang";
     host.players = 3;
     host.asking = {"Saria"};
@@ -557,14 +568,16 @@ TEST_CASE("pause tab: the rows say what co-op is doing, in at most a row's width
     guest.s.in_one = true;
     guest.players = 2;
     CHECK(RowTexts(guest) ==
-          std::vector<std::string>{"In a session", "Session details", "Players: 2", "Let in: the host does", "Leave"});
+          std::vector<std::string>{"In a session", "Session details", "Players: 2", "Settings and look", "Leave"});
     guest.s.can_resync = true;
-    CHECK(RowTexts(guest)[kRowLetIn] == "Resync from host");
+    CHECK(RowTexts(View::kSession, guest)[3] == "Resync from host");
     guest.s.can_resync = false;
     guest.confirm_leave = true;
     CHECK(RowTexts(guest)[kRowLeave] == "A again: leave");
     host.confirm_leave = true;
     CHECK(RowTexts(host)[kRowLeave] == "A again: stop hosting");
+    host.confirm_click = true;   // (the first a click: the second one too)
+    CHECK(RowTexts(host)[kRowLeave] == "Click again to stop");
     host.confirm_leave = false;
     SessionView joining;
     joining.connecting = true;
@@ -589,7 +602,7 @@ TEST_CASE("pause tab: a page whose panes or game calls are missing never shows, 
     Page p;   // (not usable until the module says so)
     CHECK(p.MousePage() == -2);
     OnSystem(p, now);
-    CHECK(Open(p, now) == kPadA);   // (the game's A: nothing of ours)
+    CHECK(Open(p, now) == 0);   // (kept from the game: it does not know our button)
     CHECK_FALSE(p.Shown());
     CHECK_FALSE(p.TakeOpened());
     p.OnPad(0, now + 1);
@@ -726,8 +739,8 @@ TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same 
     SessionView jv;
     jv.s = again;
     jv.rejoin_host = "Saria";
-    CHECK(RowTexts(View::kJoin, jv) == std::vector<std::string>{"Paste code and join", "Room: A to type its name",
-                                                               "Password: A to type it", "Join Saria again", "Back"});
+    CHECK(RowTexts(View::kJoin, jv) == std::vector<std::string>{"Paste code and join", "Room or IP: A to type",
+                                                               "Password: A to type", "Join Saria again", "Back"});
     // The main view is the five rows; out of range is nothing.
     CHECK(ActionFor(View::kMain, kRowPlayers, idle) == ActionFor(kRowPlayers, idle));
     CHECK(RowTexts(View::kMain, none) == RowTexts(none));
@@ -827,11 +840,11 @@ TEST_CASE("pause tab: the Session view: the host's lines to copy, a guest's host
     hv.note.clear();
     hv.players = 1;
     CHECK(RowTexts(View::kSession, hv)[0] == "Hosting: just you");
-    // Its join password: the first row opens the Join password view (show it on the details list, or change it on
-    // the keyboard); the other rows keep their copies.
+    // Its join password: the first row shows it on the details list or hides it (a new one is typed from the list's
+    // Join password line); the other rows keep their copies.
     hv.s.has_password = host.has_password = true;
-    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kViewPassword);
-    CHECK(RowTexts(View::kSession, hv)[0] == "Join password");
+    CHECK(ActionFor(View::kSession, 0, host) == RowAction::kShowPassword);
+    CHECK(RowTexts(View::kSession, hv)[0] == "Show join password");
     CHECK(ActionFor(View::kSession, 2, host) == RowAction::kCopyLan);
     CHECK(ActionFor(View::kSession, kRows - 1, host) == RowAction::kBack);
     CHECK(RowTexts(View::kPassword, hv) ==
@@ -908,11 +921,19 @@ TEST_CASE("pause tab: the details list on the right: the session, why co-op fail
     REQUIRE(d.size() == static_cast<std::size_t>(kListRows));
     CHECK(d[0].name == "Not in a session");
     CHECK(d[0].value.empty());   // (the header: no value box)
-    CHECK(d[1].name == "Auto-rejoin");
-    CHECK(d[1].value == "On");
-    CHECK(d[2].name == "Release");
-    CHECK(d[2].value == "v0.11.6");
-    CHECK(d[3].name.empty());
+    CHECK(d[1].name == "Room name");
+    CHECK(d[1].value == "None");
+    CHECK(d[2].name == "List my room");
+    CHECK(d[2].value == "Off");
+    CHECK(d[3].name == "Auto-rejoin");
+    CHECK(d[3].value == "On");
+    CHECK(d[4].name == "Release");
+    CHECK(d[4].value == "v0.11.6");
+    CHECK(d[5].name.empty());
+    idle.room_name = "kokiri";
+    idle.s.list_room = true;
+    CHECK(DetailLines(View::kMain, idle)[1].value == "kokiri");
+    CHECK(DetailLines(View::kMain, idle)[2].value == "On");
     CHECK(DetailLines(View::kSession, idle)[0].name == "Not in a session");   // (the same on the Session view)
     for (View w : {View::kPlayers, View::kJoin, View::kLetIn, View::kLan}) {
         for (const ListLine& l : DetailLines(w, idle)) CHECK(l.name.empty());   // (none on the other views)
@@ -995,21 +1016,28 @@ TEST_CASE("pause tab: the details list: who can reach a host, the router in word
     // The router kept its port shut: a line of ours for it and one hint line, the release still on the last.
     hv.problem = HOS_COOP_PROBLEM_UPNP_REFUSED;
     hv.why = "the router did not open the port (UPnP, PCP and NAT-PMP are off on it, or it said no)";
+    hv.port = 27510;
     d = DetailLines(View::kMain, hv);
     CHECK(d[1].name == "Room");
     CHECK(d[1].value == "Invite code");
-    CHECK(d[4].name == "Router");
-    CHECK(d[4].value == "Port shut");
-    CHECK(d[5].name == "Online friends: invite code");
+    CHECK(d[1].act == RowAction::kCopyCode);          // (an A copies it)
+    CHECK(d[2].name == "Players in");
+    CHECK(d[2].act == RowAction::kNone);              // (just us: no list)
+    CHECK(d[3].act == RowAction::kChangePassword);    // (a new one on the keyboard)
+    CHECK(d[4].name == "Port");
+    CHECK(d[4].value == "27510 shut");
+    CHECK(d[4].act == RowAction::kChangePort);        // (another port, hosting again on it)
+    CHECK(d[5].name == "Forward UDP 27510 to this PC");   // (what to forward by hand)
     CHECK(d[5].value.empty());
+    CHECK(d[5].act == RowAction::kNone);
     CHECK(d[6].name == "Release");
     for (const ListLine& l : d) {
         CHECK(l.name.find("UPnP") == std::string::npos);
         CHECK(l.name.size() <= kListNameChars);
         CHECK(l.value.size() <= kListValueChars);
     }
-    hv.room = "forest-gang";
-    CHECK(DetailLines(View::kMain, hv)[5].name == "Online friends: room name");
+    hv.s.listed = 2;
+    CHECK(DetailLines(View::kMain, hv)[2].act == RowAction::kViewPlayers);
     // No invite code and no room: this network only.
     SessionView lan;
     lan.s.hosting = lan.s.in_one = true;
@@ -1024,19 +1052,22 @@ TEST_CASE("pause tab: the details list: who can reach a host, the router in word
     open.port_open = true;
     d = DetailLines(View::kMain, open);
     CHECK(d[0].value == "Online");
-    CHECK(d[4].name == "Router");
-    CHECK(d[4].value == "Port open");
+    CHECK(d[4].name == "Port");
+    CHECK(d[4].value == "open");   // (no port known here)
     // Another hint keeps its words, with a capital letter.
     open.why = "voice chat is off";
     CHECK(DetailLines(View::kMain, open)[5].name == "Voice chat is off");
-    // Not in a session: the Auto-rejoin line is the switch's (an A on it), the others nothing.
+    // Not in a session: the Room name line types it, List my room and Auto-rejoin are switches (an A on them), the
+    // others nothing.
     SessionView idle;
     idle.version = "Squadala! v0.11.7";
     d = DetailLines(View::kMain, idle);
-    CHECK(d[1].name == "Auto-rejoin");
-    CHECK(d[1].act == RowAction::kAutoRejoin);
+    CHECK(d[1].act == RowAction::kTypeRoomName);
+    CHECK(d[2].act == RowAction::kListRoom);
+    CHECK(d[3].name == "Auto-rejoin");
+    CHECK(d[3].act == RowAction::kAutoRejoin);
     CHECK(d[0].act == RowAction::kNone);
-    CHECK(d[2].act == RowAction::kNone);
+    CHECK(d[4].act == RowAction::kNone);
 }
 
 TEST_CASE("pause tab: the game's cursor on a hidden button goes on the way it came, past the rows back up") {
@@ -1278,59 +1309,60 @@ TEST_CASE("pause tab: typing with the pad: the list's rows are the keys, every b
     CHECK(p.Typing() == 0);
     CHECK(p.TypingKey() == static_cast<int>(TypeKey::kLetter));
     CHECK(p.TypingLetter() == 'a');
-    CHECK(p.OnPad(kPadA, 1032) == 0);           // (A on Letter: its letter in, a room name's a)
+    CHECK(p.OnPad(kPadA, 1032) == 0);           // (the A that opened it, coming again: a click taps A just after)
+    CHECK(p.Field(0).text().empty());
+    p.OnPad(0, 1048);
+    CHECK(p.OnPad(kPadA, 1432) == 0);           // (A on Letter: its letter in, a room name's a)
     CHECK(p.Field(0).text() == "a");
-    CHECK(p.OnPad(0, 1048) == 0);
-    CHECK(p.OnPad(kPadRight, 1064) == 0);       // (Right on Letter: the next letter; none reaches System)
+    CHECK(p.OnPad(0, 1448) == 0);
+    CHECK(p.OnPad(kPadRight, 1464) == 0);       // (Right on Letter: the next letter; none reaches System)
     CHECK(p.TypingLetter() == 'b');
-    CHECK(p.OnPad(kPadRight | kPadA, 1080) == 0);
+    CHECK(p.OnPad(kPadRight | kPadA, 1480) == 0);
     CHECK(p.Field(0).text() == "ab");
-    p.OnPad(0, 1085);
-    p.OnPad(kPadLeft, 1086);                    // (Left: back, round the letters)
-    p.OnPad(0, 1087);
-    p.OnPad(kPadLeft, 1088);
+    p.OnPad(0, 1485);
+    p.OnPad(kPadLeft, 1486);                    // (Left: back, round the letters)
+    p.OnPad(0, 1487);
+    p.OnPad(kPadLeft, 1488);
     CHECK(p.TypingLetter() == '_');             // (before the first: the last, a room name's _)
     // Held: again and again after a moment (the screens updating meanwhile, as in a game).
-    p.OnPad(0, 1090);
-    OnSystem(p, 1100);
-    p.OnPad(kPadDown, 1100);
+    p.OnPad(0, 1490);
+    OnSystem(p, 1500);
+    p.OnPad(kPadDown, 1500);
     CHECK(p.TypingKey() == static_cast<int>(TypeKey::kDelete));
-    OnSystem(p, 1250);
-    p.OnPad(kPadDown, 1250);
-    OnSystem(p, 1400);
-    p.OnPad(kPadDown, 1400);
-    OnSystem(p, 1550);
-    p.OnPad(kPadDown, 1550);   // (held over 400 ms: a step)
+    OnSystem(p, 1650);
+    p.OnPad(kPadDown, 1650);
+    OnSystem(p, 1800);
+    p.OnPad(kPadDown, 1800);
+    OnSystem(p, 1950);
+    p.OnPad(kPadDown, 1950);   // (held over 400 ms: a step)
     CHECK(p.TypingKey() == static_cast<int>(TypeKey::kOk));
-    CHECK(p.OnPad(0, 1660) == 0);
-    p.OnPad(kPadUp, 1662);                      // (up: Delete; A deletes the letter before the cursor)
-    p.OnPad(0, 1664);
-    p.OnPad(kPadA, 1666);
+    CHECK(p.OnPad(0, 2060) == 0);
+    CHECK(p.OnPad(kPadY, 2070) == 0);            // (Y: a letter off)
     CHECK(p.Field(0).text() == "a");
-    p.OnPad(0, 1667);
-    p.OnPad(kPadA, 1668);
+    p.OnPad(0, 2071);
+    p.OnPad(kPadUp, 2072);                       // (up: Delete; A deletes the letter before the cursor)
+    p.OnPad(0, 2073);
+    p.OnPad(kPadA, 2074);
     CHECK(p.Field(0).text().empty());
-    p.OnPad(0, 1669);
+    p.OnPad(0, 2075);
     p.PressKey(static_cast<int>(TypeKey::kLetter));   // (the mouse's click on Letter)
     p.PressKey(static_cast<int>(TypeKey::kLetter));
     CHECK(p.Field(0).text() == "__");
-    CHECK(p.OnPad(kPadB, 1670) == 0);            // (B: a letter off)
-    CHECK(p.Field(0).text() == "_");
     CHECK(p.Typing() == 0);
-    p.OnPad(0, 1680);
-    p.OnPad(kPadPlus, 1690);                     // (+: OK)
+    p.OnPad(0, 2080);
+    p.OnPad(kPadPlus, 2090);                     // (+: OK)
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == 0);
     CHECK(p.TakeTyped() == -1);                  // (once)
     CHECK(p.Shown());
     CHECK_FALSE(p.TakeBack());
-    p.OnPad(0, 1700);
-    // B with nothing typed is Cancel: the field as it was.
+    p.OnPad(0, 2100);
+    // B is Cancel: the field as it was.
     p.StartTyping(2);
-    p.OnPad(kPadB, 1710);
+    p.OnPad(kPadB, 2110);
     CHECK(p.Typing() == -1);
     CHECK(p.TakeTyped() == -1);
-    p.OnPad(0, 1720);
+    p.OnPad(0, 2120);
     // The keys Cancel and OK, and up from Letter round to Cancel.
     p.StartTyping(2);
     CHECK(p.TypingLetter() == 'A');              // (a password's letters: a host's own come first)
@@ -1339,9 +1371,9 @@ TEST_CASE("pause tab: typing with the pad: the list's rows are the keys, every b
     CHECK(p.Typing() == -1);
     CHECK(p.Field(2).text().empty());            // (Cancel: as it was)
     p.StartTyping(2);
-    p.OnPad(kPadUp, 1730);
+    p.OnPad(kPadUp, 2130);
     CHECK(p.TypingKey() == static_cast<int>(TypeKey::kCancel));
-    p.OnPad(0, 1740);
+    p.OnPad(0, 2140);
     p.PressKey(static_cast<int>(TypeKey::kLetter));
     p.PressKey(static_cast<int>(TypeKey::kOk));
     CHECK(p.Typing() == -1);
@@ -1409,17 +1441,19 @@ TEST_CASE("pause tab: typing ends when the page goes, and the Join view's rows s
     CHECK(ActionFor(View::kJoin, 1, s) == RowAction::kNone);         // (nobody joins from inside a session)
     SessionView v;
     auto rows = RowTexts(View::kJoin, v);
-    CHECK(rows[1] == "Room: A to type its name");
-    CHECK(rows[2] == "Password: A to type it");
+    CHECK(rows[1] == "Room or IP: A to type");
+    CHECK(rows[2] == "Password: A to type");
     CHECK(rows[3].empty());
     v.room_field = "fore[s]t";
     v.typing = 0;
     v.room_ready = true;
     rows = RowTexts(View::kJoin, v);
-    CHECK(rows[1] == "Room: fore[s]t");
+    CHECK(rows[1] == "Room or IP: fore[s]t");
     CHECK(rows[3] == "Join room: no relay set");
     v.relay_set = true;
-    CHECK(RowTexts(View::kJoin, v)[3] == "Join this room");
+    CHECK(RowTexts(View::kJoin, v)[3] == "Join this room");    v.typing = -1;
+    v.room_field = "127.0.0.1:27510";
+    CHECK(RowTexts(View::kJoin, v)[1] == "To: 127.0.0.1:27510");   // (typed: a short label, the address whole)
 }
 
 TEST_CASE("pause tab: the focused row is the System button's number under it, by its name") {
@@ -1436,8 +1470,8 @@ TEST_CASE("pause tab: the focused row is the System button's number under it, by
 TEST_CASE("pause tab: the kit's release shows on the page's details, solo and in a session (0.11.6)") {
     SessionView solo;
     solo.version = "Squadala! v0.11.6";
-    CHECK(RowTexts(solo)[kRowLeave].empty());   // co-op idle: the Leave row has nothing to do, not shown
-    CHECK(ActionFor(kRowLeave, solo.s) == RowAction::kNone);
+    CHECK(RowTexts(solo)[kRowLeave] == "Settings and look");   // co-op idle: the Leave row has nothing to do, not shown
+    CHECK(ActionFor(kRowLeave, solo.s) == RowAction::kViewMenu);
     const auto last = [](const std::vector<ListLine>& d) {
         for (auto it = d.rbegin(); it != d.rend(); ++it) {
             if (!it->name.empty()) return *it;
@@ -1455,35 +1489,32 @@ TEST_CASE("pause tab: the kit's release shows on the page's details, solo and in
     for (const ListLine& l : DetailLines(View::kMain, dev)) CHECK(l.name != "Release");
 }
 
-TEST_CASE("pause tab: the game browser: the rows choose the list and its page, the cells hold its games") {
+TEST_CASE("pause tab: the game browser: the rows choose the list, search, filter and order, the cells hold its games") {
     Session s;
-    CHECK(ActionFor(View::kLan, 0, s) == RowAction::kBrowseLan);
-    CHECK(ActionFor(View::kLan, 1, s) == RowAction::kBrowseOnline);
-    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowseRefresh);   // (one page)
-    CHECK(ActionFor(View::kLan, 3, s) == RowAction::kListRoom);
+    CHECK(ActionFor(View::kLan, 0, s) == RowAction::kBrowseList);
+    CHECK(ActionFor(View::kLan, 1, s) == RowAction::kTypeSearch);
+    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowseFilter);
+    CHECK(ActionFor(View::kLan, 3, s) == RowAction::kBrowseSort);
     CHECK(ActionFor(View::kLan, kRows - 1, s) == RowAction::kBack);
-    s.lan_listed = 9;   // (more than a page of cells)
-    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowsePage);
-    s.online = true;    // (the other list: its own count)
-    CHECK(ActionFor(View::kLan, 2, s) == RowAction::kBrowseRefresh);
     s.in_one = true;    // (nobody joins from inside a session)
     CHECK(ActionFor(View::kLan, 0, s) == RowAction::kNone);
-    for (RowAction a : {RowAction::kBrowseLan, RowAction::kBrowseOnline, RowAction::kBrowsePage, RowAction::kBrowseRefresh,
-                        RowAction::kListRoom}) {
+    for (RowAction a : {RowAction::kBrowseList, RowAction::kBrowseFilter, RowAction::kBrowseSort, RowAction::kBrowseRefresh,
+                        RowAction::kTypeSearch, RowAction::kTypeRoomName}) {
         CHECK(std::string(ActionWords(a)).size() > 3);
     }
 
     SessionView v;
     auto rows = RowTexts(View::kLan, v);
-    CHECK(rows[0] == "Local games (0)");   // (the list the cells show: the module dims the other's row)
-    CHECK(rows[1] == "Online games");      // (not asked yet)
-    CHECK(rows[2] == "Refresh list");      // (one page: no empty row)
-    CHECK(rows[3] == "List my room: Off");
+    CHECK(rows[0] == "This network (0)");
+    CHECK(rows[1] == "Search: A to type");
+    CHECK(rows[2] == "Show: All games");
+    CHECK(rows[3] == "Sort: Most players");
     CHECK(rows[kRows - 1] == "Back");
     auto lines = ListLines(v);
     REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
-    CHECK(lines[0].name == "Game");      // (the header: the columns' names)
-    CHECK(lines[0].value == "Players");
+    CHECK(lines[0].name == "This network");      // (one page: no page marks)
+    CHECK(lines[0].value == "Refresh");          // (its box asks the list again)
+    CHECK(lines[0].act == RowAction::kBrowseRefresh);
     CHECK(lines[1].name == "Looking for games...");
     CHECK(lines[1].value.empty());
     CHECK(lines[2].name.empty());
@@ -1496,27 +1527,41 @@ TEST_CASE("pause tab: the game browser: the rows choose the list and its page, t
     CHECK(lines[2].name == "Saria's game: kokiri");
     CHECK(lines[2].value == "Full");
     CHECK(lines[3].name.empty());
+    CHECK(RowTexts(View::kLan, v)[0] == "This network (2)");
     v.s.online = true;   // (the relay's list: why there are none, in the first game row)
     v.online_state = "No relay set";
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[0] == "Local games (2)");
-    CHECK(rows[1] == "Online games (0)");
-    CHECK(ListLines(v)[0].name == "Game");
+    CHECK(rows[0] == "Online (0)");
+    CHECK(ListLines(v)[0].name == "Online games");
+    CHECK(ListLines(v)[1].name == "No relay set: A to type one");   // (typed on the keyboard, saved)
+    CHECK(ListLines(v)[1].act == RowAction::kTypeRelay);
+    v.relay_set = true;   // (a relay that lists nothing: why, as it says)
     CHECK(ListLines(v)[1].name == "No relay set");
+    CHECK(ListLines(v)[1].act == RowAction::kNone);
+    v.browse_all_out = true;   // (rooms heard, none kept by the search or the filter)
+    CHECK(ListLines(v)[1].name == "None match the search or Show");
+    v.browse_all_out = false;
+    v.search = "kok";
+    v.s.browse_filter = 1, v.s.browse_sort = 2;
+    rows = RowTexts(View::kLan, v);
+    CHECK(rows[1] == "Search: kok");
+    CHECK(rows[2] == "Show: Open games");
+    CHECK(rows[3] == "Sort: Name");
+    v.search.clear();
+    v.relay_set = false;
     v.online_state.clear();
     v.online_rows.assign(10, "kokiri (1/4)");
     v.online_list.assign(10, ListLine{"kokiri (Saria)", "1/4"});
     v.online_list[7] = ListLine{"a room with a very long name indeed (Saria)", "Other version"};
     v.s.online_listed = 10;
-    v.s.list_room = true;
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[1] == "Online games (10)");
-    CHECK(rows[2] == "Next page (1/2)");
-    CHECK(rows[3] == "List my room: On");
+    CHECK(rows[0] == "Online (10)");
     lines = ListLines(v);
+    CHECK(lines[0].name == "Online games  < 1 of 2 >");   // (more than a page: the heading pages it)
     CHECK(lines[2].name == "kokiri (Saria)");
     v.s.cell_page = 1;   // (the second page: the 7th to 10th rooms)
     lines = ListLines(v);
+    CHECK(lines[0].name == "Online games  < 2 of 2 >");
     CHECK(lines[1].name == "kokiri (Saria)");
     CHECK(lines[2].name == "a room with a very long nam...");   // (cut to kListNameChars)
     CHECK(lines[2].name.size() <= kListNameChars);
@@ -1958,7 +2003,7 @@ TEST_CASE("pause tab: without Longshot Settings (an older pack, or no settings f
     p.OnScreen(Strip(0x9000, 5, kSystemPage), now);
     p.OnPad(0, now);
     p.SetSystemButton(1);
-    CHECK(p.OnPad(kPadA, now + 16) == kPadA);
+    CHECK(p.OnPad(kPadA, now + 16) == 0);
     CHECK_FALSE(p.Shown());
     CHECK_FALSE(p.TakeOpened());
     p.SetSystemButton(-1);
@@ -2042,13 +2087,14 @@ TEST_CASE("pause tab: the Settings page's list: a category's settings, its pages
     CHECK(SettingPages(10) == 2);
     CHECK(SettingPages(13) == 3);
     auto lines = SettingLines(graphics, 0, "Graphics");
-    REQUIRE(lines.size() == static_cast<std::size_t>(kListRows));
-    CHECK(lines[0].name == "Graphics (page 1 of 2)");   // (the header: the category, and its page when it has more)
+    REQUIRE(lines.size() == static_cast<std::size_t>(kSettingListRows));
+    CHECK(lines[kSettingListRows - 1].name.empty());   // (six a page: the eighth row unused)
+    CHECK(lines[0].name == "Graphics  < 1 of 2 >");   // (the header: the category, and its page when it has more)
     CHECK(lines[0].value.empty());                     // (no value: the module hides its box)
     CHECK(lines[1].name == "Graphics 0");
     CHECK(lines[1].value == "On");
     lines = SettingLines(graphics, 1, "Graphics");
-    CHECK(lines[0].name == "Graphics (page 2 of 2)");
+    CHECK(lines[0].name == "Graphics  < 2 of 2 >");
     CHECK(lines[1].name == "Graphics 6");
     CHECK(lines[4].name == "Aspect ratio *");   // (a restart one)
     CHECK(lines[5].name.empty());
@@ -2081,4 +2127,149 @@ TEST_CASE("pause tab: the Settings page's list: a category's settings, its pages
     page = 0, row = 0;
     SettingMove(10, -1, &page, &row);
     CHECK((page == 0 && row == 0));
+
+    // Seven a page with a pack whose page has its eighth list row (Pa_List_07).
+    CHECK(SettingPages(7, 7) == 1);
+    CHECK(SettingPages(10, 7) == 2);
+    lines = SettingLines(graphics, 0, "Graphics", 7);
+    REQUIRE(lines.size() == static_cast<std::size_t>(kSettingListRows));
+    CHECK(lines[7].name == "Graphics 6");   // (the seventh setting, on the eighth row)
+    lines = SettingLines(graphics, 1, "Graphics", 7);
+    CHECK(lines[1].name == "Graphics 7");
+    page = 0, row = 6;
+    SettingMove(10, 1, &page, &row, 7);
+    CHECK((page == 1 && row == 0));
+}
+
+TEST_CASE("pause tab: the port and relay fields take what each can hold") {
+    TextField port(TextField::Kind::kPort);
+    for (char c : std::string("27a5.10")) port.Type(static_cast<unsigned char>(c));
+    CHECK(port.text() == "27510");   // (digits only)
+    CHECK(port.PortValue() == 27510);
+    port.Type('9');                  // (five digits at most)
+    CHECK(port.text() == "27510");
+    port.Set("70000");
+    CHECK(port.PortValue() == 0);    // (past 65535: no port)
+    port.Set("");
+    CHECK(port.PortValue() == 0);
+    TextField relay(TextField::Kind::kAddress);
+    for (char c : std::string("Relay.Example.org:27530 x")) relay.Type(static_cast<unsigned char>(c));
+    CHECK(relay.text() == "relay.example.org:27530x");   // (lower case, no spaces)
+    CHECK(relay.Shown(false, 40) == "relay.example.org:27530x");   // (shown as it is, not as a password)
+}
+
+TEST_CASE("pause tab: the online list's search keeps the rooms with its letters in their name or their host's") {
+    CHECK(RoomMatches("kokiri", "Saria", ""));
+    CHECK(RoomMatches("kokiri", "Saria", "kok"));
+    CHECK(RoomMatches("Kokiri", "Saria", "kok"));      // (any case)
+    CHECK(RoomMatches("forest", "Saria", "sar"));      // (the host's name too)
+    CHECK_FALSE(RoomMatches("forest", "Saria", "fire"));
+}
+
+TEST_CASE("pause tab: Settings and look shows co-op's own menu's pages on the list") {
+    using CoopPauseMenu::Row;
+    using CoopPauseMenu::RowKind;
+    // The view: four of co-op's menu's pages and Back; each row's A shows its page on the list.
+    SessionView v;
+    CHECK(RowTexts(View::kMenu, v) ==
+          std::vector<std::string>{"Customize Link", "Co-op settings", "Commands", "Local co-op", "Back"});
+    for (int r = 0; r < kMenuTabs; ++r) CHECK(ActionFor(View::kMenu, r, v.s) == RowAction::kMenuTab);
+    CHECK(ActionFor(View::kMenu, kRows - 1, v.s) == RowAction::kBack);
+    CHECK(BackOf(View::kMenu) == View::kMain);
+    CHECK(MenuTabPage(0) == CoopPauseMenu::Page::kCustomize);
+    CHECK(MenuTabPage(1) == CoopPauseMenu::Page::kSettings);
+    CHECK(MenuTabPage(2) == CoopPauseMenu::Page::kCommands);
+    CHECK(MenuTabPage(3) == CoopPauseMenu::Page::kLocal);
+    CHECK(std::string(ActionWords(RowAction::kViewMenu)).size() > 3);
+    CHECK(std::string(ActionWords(RowAction::kMenuTab)).size() > 3);
+
+    // A row's value box: a choice between its arrows (only the ways it can go), a switch, an action's value.
+    Row choice{"Kokiri Tunic", "Red", RowKind::kChoice};
+    choice.left = choice.right = true;
+    CHECK(MenuValue(choice, false) == "< Red >");
+    choice.left = false;
+    CHECK(MenuValue(choice, false) == "Red >");
+    Row toggle{"Voice", "", RowKind::kToggle};
+    toggle.on = true;
+    CHECK(MenuValue(toggle, false) == "On");
+    toggle.on = false;
+    CHECK(MenuValue(toggle, false) == "Off");
+    CHECK(MenuValue(Row{"Your name", "Link", RowKind::kAction}, false) == "Link");
+    CHECK(MenuValue(Row{"Your name", "Lin", RowKind::kAction}, true) == "Lin_");   // (typed into)
+    CHECK(MenuValue(Row{"Tunic", "", RowKind::kHeading}, false).empty());
+
+    // The list: the header (the page, and which part of its rows with more than the list holds), then its rows.
+    CoopPauseMenu::View m;
+    m.rows.push_back(Row{"Tunic", "", RowKind::kHeading});
+    for (int i = 0; i < 12; ++i) {
+        Row r{"Part " + std::to_string(i), "Game's own", RowKind::kChoice};
+        r.right = true;
+        m.rows.push_back(r);
+    }
+    m.selected = 1;
+    MenuList ml = MenuLines(m, 0, 0, false);
+    REQUIRE(ml.lines.size() == static_cast<std::size_t>(kMenuMost) + 1);   // (the eighth line empty: six a page)
+    CHECK(ml.lines[kMenuMost].name.empty());
+    CHECK(ml.lines[0].name == "Customize Link  < 1 of 3 >");
+    CHECK(ml.lines[1].name == "Tunic");
+    CHECK(ml.rows[0] == -1);
+    CHECK(ml.rows[1] == 0);
+    CHECK_FALSE(ml.selectable[1]);   // (a heading)
+    CHECK(ml.lines[2].name == "Part 0");
+    CHECK(ml.lines[2].value == "Game's own >");
+    CHECK(ml.selectable[2]);
+    CHECK(ml.picked == -1);   // (the rows have the pad: nothing picked)
+    // The list has the pad: the selected row is picked, and the list scrolls to keep it in view.
+    ml = MenuLines(m, 0, 0, true);
+    CHECK(ml.picked == 1);   // (the second line: the heading first)
+    m.selected = 10;
+    ml = MenuLines(m, 0, 0, true);
+    CHECK(ml.top == 10 - kCells + 1);
+    CHECK(ml.rows[static_cast<std::size_t>(ml.picked) + 1] == 10);
+    CHECK(ml.lines[0].name == "Customize Link  < 2 of 3 >");
+    m.selected = 12;   // (the last: the last page)
+    ml = MenuLines(m, 0, 0, true);
+    CHECK(ml.lines[0].name == "Customize Link  < 3 of 3 >");
+    CHECK(ml.rows[static_cast<std::size_t>(ml.picked) + 1] == 12);
+    // The rows have the pad: `top` as the mouse's header click left it, kept within the rows.
+    ml = MenuLines(m, 1, 100, false);
+    CHECK(ml.top == 13 - kCells);
+    CHECK(ml.lines[0].name.rfind("Co-op settings", 0) == 0);
+    // A short page: no "of", every row, the lines past it empty.
+    CoopPauseMenu::View small;
+    small.rows = {Row{"Open the chat", "T", RowKind::kAction}, Row{"/teleport name", "", RowKind::kNote}};
+    small.selected = 0;
+    ml = MenuLines(small, 2, 0, true);
+    CHECK(ml.lines[0].name == "Commands");
+    CHECK(ml.lines[2].name == "/teleport name");
+    CHECK(ml.lines[2].value.empty());
+    CHECK_FALSE(ml.selectable[2]);   // (a note)
+    CHECK(ml.lines[3].name.empty());
+    CHECK(ml.rows[3] == -1);
+
+    // Seven a page (the pack's eighth list row): the eighth line holds a row, the header counts pages of seven.
+    m.selected = 1;
+    ml = MenuLines(m, 0, 0, true, kMenuMost);
+    CHECK(ml.lines[0].name == "Customize Link  < 1 of 2 >");
+    CHECK(ml.rows[kMenuMost] == kMenuMost - 1);
+    CHECK_FALSE(ml.lines[kMenuMost].name.empty());
+    m.selected = 12;
+    ml = MenuLines(m, 0, 0, true, kMenuMost);
+    CHECK(ml.top == 13 - kMenuMost);
+    CHECK(ml.lines[0].name == "Customize Link  < 2 of 2 >");
+
+    // A choice cut with its arrows shows its value alone ("< By player n..." was cut on the page).
+    Row look{"Link's look", "By player number", RowKind::kChoice};
+    look.left = look.right = true;
+    CHECK(MenuValue(look, false) == "By player number");
+
+    // The heading a row is under (Link turns his back for a shield's part).
+    CHECK(MenuHeadingOf(m, 5) == "Tunic");
+    CoopPauseMenu::View parts;
+    parts.rows = {Row{"Tunic", "", RowKind::kHeading}, Row{"Kokiri Tunic", "", RowKind::kChoice},
+                  Row{"Hylian Shield", "", RowKind::kHeading}, Row{"Frame", "", RowKind::kChoice}};
+    CHECK(MenuHeadingOf(parts, 1) == "Tunic");
+    CHECK(MenuHeadingOf(parts, 3) == "Hylian Shield");
+    CHECK(MenuHeadingOf(parts, -1).empty());
+    CHECK(MenuHeadingOf(CoopPauseMenu::View{}, 0).empty());
 }
