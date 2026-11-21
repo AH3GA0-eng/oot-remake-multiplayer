@@ -578,3 +578,49 @@ TEST_CASE("coop i18n: every key is still a line of the module") {
         CHECK_MESSAGE(found, en);
     }
 }
+
+TEST_CASE("coop i18n: 0.11.8's screens (PR #308): the Multiplayer page, co-op's menu, the Original game switch") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    // the page's rows, whole and built around a value
+    CHECK(CoopI18n::Tr(hans, "Browse games") == "浏览房间");
+    CHECK(CoopI18n::Tr(hant, "Browse games") == "瀏覽房間");
+    CHECK(CoopI18n::Tr(hans, "Settings and look") == "设置与外观");
+    CHECK(CoopI18n::Tr(hans, "Hosting: just you") == "房间中：只有你");
+    CHECK(CoopI18n::Tr(hans, "Hosting: 3 players") == "房间中：3 人");
+    CHECK(CoopI18n::Tr(hans, "Search: A to type") == "搜索：按A输入");
+    CHECK(CoopI18n::Tr(hans, "Search: kokiri") == "搜索：kokiri");
+    CHECK(CoopI18n::Tr(hans, "Show: Open games") == "显示：可加入的房间");
+    CHECK(CoopI18n::Tr(hant, "Sort: Most players") == "排序：人多的在前");
+    CHECK(CoopI18n::Tr(hans, "Room or IP: 192.168.1.5") == "房间或IP：192.168.1.5");
+    CHECK(CoopI18n::Tr(hans, "Again: kick Saria") == "再点：踢出 Saria");
+    CHECK(CoopI18n::Tr(hans, "Join (port 27510)") == "加入（端口 27510）");
+    CHECK(CoopI18n::Tr(hans, "Forward UDP 27510 to this PC") == "把 UDP 27510 转发到这台电脑");
+    CHECK(CoopI18n::Tr(hans, "Public games (4)") == "公开游戏（4）");
+    CHECK(CoopI18n::Tr(hant, "This network (2)") == "本網路（2）");
+    CHECK(CoopI18n::Tr(hans, "Letter: < Space >") == "字母：< 空格 >");
+    // co-op's menu and its notes
+    CHECK(CoopI18n::Tr(hans, "Turns Saria away, as /deny in the chat does. They can ask again.") ==
+          "拒绝 Saria，和聊天里的 /deny 一样。对方可以再申请。");
+    CHECK(CoopI18n::Tr(hans, "Letting Saria in.") == "正在放行 Saria。");
+    CHECK(CoopI18n::Tr(hans, "Saria was turned away.") == "已拒绝 Saria。");
+    CHECK(CoopI18n::Tr(hans, "Copied the VPN line") == "已复制 VPN 那一行");
+    CHECK(CoopI18n::Tr(hans, "No network line yet") == "还没有 同一网络那一行");
+    CHECK(CoopI18n::Tr(hans, "NG+ 2") == "NG+ 2");
+    CHECK(CoopI18n::Tr(hans, "Joining kokiri-1...") == "正在加入 kokiri-1…");
+    CHECK(CoopI18n::Tr(hans, "Pasted: 12 characters.") == "已粘贴：12 个字符。");
+    const std::string pc = CoopI18n::Tr(hans, "No PC called LIVINGROOM was found. To join a room by its name, set a relay "
+                                              "first: Co-op Settings, Relay. Or type the host's IP address.");
+    CHECK(pc.rfind("没有找到叫 LIVINGROOM 的电脑", 0) == 0);
+    // the Original game switch
+    CHECK(CoopI18n::Tr(hans, "Original game") == "原版游戏");
+    CHECK(CoopI18n::Tr(hant, "Start the game again to finish: it comes back as the original game.") ==
+          "重新啟動遊戲即可完成：它會以原版遊戲回來。");
+    CHECK(CoopI18n::Tr(hans, "Start the game again to finish: co-op and its extras come back.") ==
+          "重启游戏即可完成：联机和附加功能会回来。");
+    // one word for the relay in each table
+    CHECK(CoopI18n::Tr(hans, "Relay") == "中转");
+    CHECK(CoopI18n::Tr(hant, "Relay") == "中轉");
+    CHECK(CoopI18n::Tr(hans, "The game list's server in Co-op Settings (Relay) is not right. Clear it to use the kit's own.")
+              .find("中继") == std::string::npos);
+}
