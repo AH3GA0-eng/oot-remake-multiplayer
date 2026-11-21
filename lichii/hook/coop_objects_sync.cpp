@@ -3153,6 +3153,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         if (std::find(unready_.begin(), unready_.end(), o.name) != unready_.end()) {
             flags |= proto::object_presence::unready;
         }
+        if (takes_turns_ && IsBossOrPart(o.name)) {
+            flags |= proto::object_presence::takes_turns;  // boss turns: this build reads attacks
+        }
         present.push_back({o.id, flags});
     }
     // churn-b: an away object stays listed as it was last listed.

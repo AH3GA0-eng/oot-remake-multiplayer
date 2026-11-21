@@ -555,7 +555,9 @@ one turn rule; it now also waits for the boss's own attack edge, read in the own
   owner's sample where the bit fell, after the 20 s and with every calm rule above, and never in a stun animation
   (`anim::IsStun`: Stun, Down, Fall, Faint). An edge missed for a hit waits for the next attack's end. An edge is read
   only within one owner's epoch: the old owner's last "attacking" is never the new owner's end. An owner whose samples
-  never say `attack_read` (an older build) keeps its boss, so a boss is never handed over blind. A phase with no
+  never say `attack_read` (an older build) keeps its boss, so a boss is never handed over blind. Nor is a turn given TO
+  an older build: a game takes turns only when its presence lists the boss with `object_presence::takes_turns`
+  (boss-turns-older-0119), else it would keep the boss for the rest of the fight; the next game by number gets it. A phase with no
   attack (Phantom Ganon in his paintings, Gohma on the ceiling, Volvagia burrowed) never gives a turn.
 - *The new owner goes on (`CoopBossNative::PlanMadeOurs`).* Handed over between moves, the copy's own brain asked the
   move its body runs: nothing is asked again, its AI goes on from that phase and move. Mid-move (a forced hand-over:
