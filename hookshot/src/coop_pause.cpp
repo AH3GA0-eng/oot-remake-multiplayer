@@ -1102,6 +1102,18 @@ void RefreshFound(std::uint64_t now) {
             games.push_back({CoopPauseTab::ListName(r.host, r.room), count, r.room, 0, CoopRoomList::Joinable(r, mine),
                              r.host, r.players, r.max, r.protocol == mine, r.is_public, true});
         }
+        // (a run's screenshots, LICHII_COOP_TEST_TITLE_GAMES=1: three made-up rooms after the real ones, a public one,
+        // one that asks a password and a full one, never joinable for real: their rooms are not on any relay)
+        static const bool test_games = [] {
+            const char* e = std::getenv("LICHII_COOP_TEST_TITLE_GAMES");
+            return e != nullptr && std::string(e) == "1";
+        }();
+        if (test_games) {
+            games.push_back({"forest-4821 (dauro)", "2/4", "test-forest-4821", 0, true, "dauro", 2, 4, true, true, true});
+            games.push_back({"kokiri (Mido)", "3/4", "test-kokiri", 0, true, "Mido", 3, 4, true, false, true});
+            games.push_back({"lost-woods (Link2)", CoopI18n::Tr("Full"), "test-lost-woods", 0, false, "Link2", 4, 4, true,
+                             true, true});
+        }
         g_menu.SetFound(std::move(games), {});
         return;
     }
