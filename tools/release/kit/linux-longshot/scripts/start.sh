@@ -191,6 +191,7 @@ if [[ -n $release && ${#release} -le 32 && $release =~ ^[A-Za-z0-9.+_-]+$ ]]; th
 fi
 export HOS_WINDOW_TITLE=$title HOS_WM_CLASS=squadala
 [[ -f $DATA/squadala-icon.png ]] && cp -f -- "$DATA/squadala-icon.png" "$GAME/longshot.png" 2>/dev/null || true
+kit_steam_input_hint   # (player report 202: a Steam Controller outside Steam; a warning only)
 cd "$GAME"
 if kit_tty; then
     exec ./longshot

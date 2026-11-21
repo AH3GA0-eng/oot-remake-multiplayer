@@ -94,6 +94,7 @@ The start window says what is wrong and what to do. What it checks:
 - **Not enough space:** the build warns below about 60 GB free. Free some space, or move the kit to a bigger drive.
 - **Note: another co-op kit is on this PC.** An older kit folder: you can delete it once this one works. The new kit takes your game file from it, so it does not ask again.
 - **The game closes at the start or the screen goes black:** check that your card has mesh shaders (above) and that its driver is up to date. Longshot's own open problems are on [Longshot's page](https://git.magicbean.dev/MagicBeanDev/Longshot/issues). To try the game without co-op, set `HOS_COOP=0` before starting `longshot.exe`; if it crashes without co-op too, it is Longshot's problem, not co-op's.
+- **A Steam Controller (or another pad Steam Input runs) does nothing in play, or the camera only swings around:** started outside Steam while Steam is open, Steam turns the pad into a mouse and keyboard (its Desktop layout), so the menus seem to work and play does not. Add `Start Squadala.bat` to Steam (**Games > Add a Non-Steam Game to My Library**), start it from Steam, and set its controller layout (the game's page in Steam > **Controller**) to a gamepad layout. If you picked a pad in the Multiplayer tab's **Settings > Controller**, set it back to **Auto**.
 - **Host or Join says a router blocks the way in**, or friends cannot reach you: the Host screen says what to do (the answer code, UPnP, **Same network**, **VPN**); [play-online.md](play-online.md) has more.
 
 ## Built Longshot yourself?

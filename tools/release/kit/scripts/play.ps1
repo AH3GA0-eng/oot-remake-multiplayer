@@ -286,6 +286,7 @@ if ($Mode -eq 'title') {
         $(if ($hsOnly) { '  It is made from your game file (the one hookshot\game-files.txt names): put that file back, then start again.' } else { '  Run Build-Hookshot-Coop.bat -Game <your .nup> again (SETUP.md, "Play on Hookshot").' })) -Painted)
     foreach ($l in @(Invoke-KitSizeTableMerge $kit $emu)) { Write-Host $l }   # (#48: a seed from OOTRR's website)
     foreach ($l in @(Invoke-KitDiscordStatus $kit $emu)) { Write-Host $l }   # ('Playing Squadala!' on Discord)
+    foreach ($l in @(Get-KitSteamInputHint)) { Write-Host $l -ForegroundColor Yellow }   # (player report 202: a Steam Controller outside Steam)
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
     if ($testKit -and $game) { [System.IO.File]::WriteAllText($testKit, "$($game.Id)`n") }
     Write-Host 'Game started. Host or Join in the game''s menu, first tab Multiplayer (controller: Minus and Plus together, or Home;'
@@ -541,6 +542,7 @@ if ($Hookshot) {
     $optionsFile = Join-Path $kit 'coop-options.ini'
     if ((Test-Path $optionsFile) -and @(Get-Content $optionsFile -ErrorAction SilentlyContinue |
             Where-Object { $_ -match '^\s*original_game\s*=\s*(on|1|yes|true)\s*$' }).Count -gt 0) {
+        foreach ($l in @(Get-KitSteamInputHint)) { Write-Host $l -ForegroundColor Yellow }   # (player report 202: a Steam Controller outside Steam)
         Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) | Out-Null
         Write-Host 'Original game is on (Co-op settings): the game started as it came, with no co-op and no mods.'
         Write-Host '  To have them back: the F1 menu''s "Original game" tab, then start the game again.'
@@ -556,6 +558,7 @@ if ($Hookshot) {
     foreach ($l in @(Invoke-KitSizeTableMerge $kit $emu)) { Write-Host $l }   # (#48: a seed from OOTRR's website)
     foreach ($l in @(Invoke-KitDiscordStatus $kit $emu)) { Write-Host $l }   # ('Playing Squadala!' on Discord)
     $started = Get-Date
+    foreach ($l in @(Get-KitSteamInputHint)) { Write-Host $l -ForegroundColor Yellow }   # (player report 202: a Steam Controller outside Steam)
     $game = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
     Write-Host "Game started. Its log (longshot_log.txt in the game's logs folder) says 'coop: module loaded', then 'coop: connected'."
     exit 0
@@ -588,6 +591,7 @@ if (Test-KitPuppetPackStale $packJson (Join-Path $kit 'tools\puppet_pack')) {
     '  Make it once with make-puppet-pack.cmd (SETUP.md, "The puppet pack").'))
 
 $started = Get-Date
+foreach ($l in @(Get-KitSteamInputHint)) { Write-Host $l -ForegroundColor Yellow }   # (player report 202: a Steam Controller outside Steam)
 $game = Start-Process -FilePath $exe -WorkingDirectory $emu -PassThru
 Write-Host 'Emulator started. Load the game; the co-op panel is in the top-left corner of the game.'
 
