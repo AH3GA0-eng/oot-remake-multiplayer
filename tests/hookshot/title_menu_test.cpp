@@ -214,7 +214,20 @@ TEST_CASE("title menu: Host and Join in plain words, nothing about ports or pass
     j.answer = "QWERT-YUPAS";
     s = PlainStatus(j);
     CHECK(s[0] == "Your friend's router blocks the way in.");
+    CHECK(s[1] == "Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:");
     CHECK(s[2] == "QWERT-YUPAS");
+    // Row 209: still no way in after the helper's wait. That can be a host who has not pasted yet, so the answer code
+    // and where to paste it stay on the page; the VPN is for when a paste did not help (review-ui-tabs-0119).
+    j.problem = HOS_COOP_PROBLEM_NO_WAY;
+    s = PlainStatus(j);
+    REQUIRE(s.size() == 4);
+    CHECK(s[0] == "Your friend's router blocks the way in.");
+    CHECK(s[1] == "Send your friend this answer code; they press \"Paste friend's answer\" on their Host page:");
+    CHECK(s[2] == "QWERT-YUPAS");
+    CHECK(s[3].rfind("If they pasted it and nothing happens", 0) == 0);
+    CHECK(s[3].find("Radmin VPN or Tailscale") != std::string::npos);
+    CHECK(s[3].find("\"VPN\" on their Host page") != std::string::npos);
+    j.problem = HOS_COOP_PROBLEM_NONE;
     for (const auto& st : {HOS_COOP_STARTING, HOS_COOP_HOSTING, HOS_COOP_JOINING, HOS_COOP_WAIT_HOST, HOS_COOP_CONNECTED,
                            HOS_COOP_FAILED}) {
         for (const bool host : {true, false}) {
