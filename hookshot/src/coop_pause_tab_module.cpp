@@ -1702,11 +1702,16 @@ std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
 std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
 bool g_minus_ok = false, g_minus_shown = false;
+// The strip's L and R labels (T_BtnL_00, T_BtnR_00) and their own places; whether the row is laid out as ours now.
+std::array<std::uint64_t, 2> g_strip_btns{};
+std::array<float, 2> g_strip_btns_x{};
+bool g_strip_moved = false;
 
 void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
     if (gen != g_strip_gen) {
         g_strip_gen = gen, g_strip_looked = false;
         g_game_tabs = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_ok = false, g_minus_shown = false;
+        g_strip_btns = {}, g_strip_moved = false;
     }
     if (g_strip_looked || !calls || f.layout == 0) return;
     g_strip_looked = true;
@@ -1722,6 +1727,11 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         }
     }
     g_minus_ok = g_game_tabs[2] != 0;
+    for (int i = 0; i < 2; ++i) {
+        const std::uint64_t b = FindOwnPane(ctx, f.layout, i == 0 ? "T_BtnL_00" : "T_BtnR_00");
+        g_strip_btns[static_cast<std::size_t>(i)] = b;
+        if (b != 0) g_strip_btns_x[static_cast<std::size_t>(i)] = Read<float>(b + 0x6c);
+    }
     for (int i = 0; i < kMinusTabs; ++i) {
         char name[16];
         std::snprintf(name, sizeof name, "Pa_Category_%02d", 4 + i);
@@ -1769,24 +1779,47 @@ void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
     }
 }
 
-// Ours one game step apart after the - menu's last shown tab, wherever the strip's animation puts it. g_mutex.
+// The - strip as one row (R1, 2026-11-21: ours placed after Map ran past the strip's right end, Mods not seen, and the
+// game's R label stayed on Multiplayer): the game's shown tabs and ours centred where the game's were, one game step
+// apart, the L and R labels as far from the row's ends as the game has them. Everything back at the game's own places
+// whenever ours are not shown (the + menu uses the same strip). Own X (+0x6c) only, as the game's own place setter.
+// g_mutex.
 void FollowMinus(void* ctx) {
-    if (!g_minus_shown || !g_minus_ok || g_game_tabs[0] == 0 || g_game_tabs[1] == 0) return;
-    // (the last shown: slot 3 when Character Select's header shows it, else slot 2)
-    const std::uint64_t last = g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0
-                                   ? g_game_tabs[3]
-                                   : g_game_tabs[2];
-    const float x = Read<float>(last + kPaneScreenX), y = Read<float>(last + kPaneScreenY);
-    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    const auto put_back = [&] {
+        if (!g_strip_moved) return;
+        g_strip_moved = false;
+        for (std::size_t i = 0; i < g_game_tabs.size(); ++i) {
+            if (g_game_tabs[i] != 0) PlacePane(ctx, g_game_tabs[i], g_game_tabs_x[i]);
+        }
+        for (std::size_t i = 0; i < g_strip_btns.size(); ++i) {
+            if (g_strip_btns[i] != 0) PlacePane(ctx, g_strip_btns[i], g_strip_btns_x[i]);
+        }
+    };
+    if (!g_minus_shown || !g_minus_ok || g_game_tabs[0] == 0 || g_game_tabs[1] == 0) {
+        put_back();
+        return;
+    }
+    // (the game's shown: slots 0..3 when Character Select's header shows slot 3, else 0..2)
+    const int game = g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0 ? 4 : 3;
     const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
+    if (!std::isfinite(step) || step == 0.0f) return;
+    const float first = g_game_tabs_x[0], last = g_game_tabs_x[static_cast<std::size_t>(game - 1)];
+    const float centre = (first + last) / 2.0f;
+    const int n = game + kMinusTabs;
+    const auto x_of = [&](int k) { return centre + step * (static_cast<float>(k) - static_cast<float>(n - 1) / 2.0f); };
+    for (int k = 0; k < game; ++k) PlacePane(ctx, g_game_tabs[static_cast<std::size_t>(k)], x_of(k));
+    const float y = Read<float>(g_game_tabs[0] + kPaneOwnY);
     for (int i = 0; i < kMinusTabs; ++i) {
         const std::uint64_t pane = g_minus_panes[static_cast<std::size_t>(i)];
-        PlacePane(ctx, pane, x + step * static_cast<float>(i + 1));
-        if (Read<float>(pane + kPaneOwnY) != y) {
+        PlacePane(ctx, pane, x_of(game + i));
+        if (std::isfinite(y) && Read<float>(pane + kPaneOwnY) != y) {
             CoopRuntime::Write(pane + kPaneOwnY, &y, sizeof y);
             Call(ctx, kPaneMoved, pane);
         }
     }
+    if (g_strip_btns[0] != 0) PlacePane(ctx, g_strip_btns[0], x_of(0) - (first - g_strip_btns_x[0]));
+    if (g_strip_btns[1] != 0) PlacePane(ctx, g_strip_btns[1], x_of(n - 1) + (g_strip_btns_x[1] - last));
+    g_strip_moved = true;
 }
 
 
