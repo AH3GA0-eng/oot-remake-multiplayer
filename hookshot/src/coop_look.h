@@ -13,9 +13,10 @@
 // Co-op need not be running: alone, your Link changes and the look is saved.
 //
 // A look is one colour per part (docs/puppet.md, "The Link customizer"): the
-// tunic, the Goron and Zora tunics' cloth, and the parts of the shields,
-// swords, boots and gauntlets that their textures keep apart. Each part has
-// a number that never changes (the settings and the network use it).
+// tunic, the Goron and Zora tunics' cloth, the cap's trims, and the parts of
+// the shields, swords, boots and gauntlets that their textures keep apart.
+// Each part has a number that never changes (the settings and the network use
+// it); a new part takes the next number, whatever its place on the menu.
 #pragma once
 
 #include <array>
@@ -31,7 +32,7 @@
 namespace CoopLook {
 
 enum class Part : std::uint8_t {
-    tunic = 0,            // the Kokiri tunic and cap (one texture on the adult: the cap is not apart)
+    tunic = 0,            // the Kokiri tunic and cap (the cap's cloth is the tunic's weave texture)
     goron_tunic = 1,      // the Goron Tunic's red cloth
     zora_tunic = 2,       // the Zora Tunic's blue cloth
     hylian_frame = 3,     // the Hylian Shield's metal rim and the cross on its back
@@ -48,8 +49,10 @@ enum class Part : std::uint8_t {
     biggoron_hilt = 14,
     boots = 15,           // the leather of every pair of boots
     gauntlets = 16,       // the metal of the Silver and the Golden Gauntlets
+    cap_trim = 17,        // the cap's own trims: the child's headband and knot, the adult's hood trims
+                          // (your own Link only; unset: as the tunic)
 };
-inline constexpr std::size_t kParts = 17;
+inline constexpr std::size_t kParts = 18;
 
 // A part as the menu and the settings name it.
 struct PartInfo {
@@ -58,7 +61,7 @@ struct PartInfo {
     const char* item;   // the menu's heading: "Hylian Shield"
     const char* name;   // the row: "Frame"
 };
-// Every part, in the menu's order (by item).
+// Every part, in the menu's order (by item; not by number).
 const std::array<PartInfo, kParts>& Parts();
 const PartInfo& InfoOf(Part part);
 // A part by its number; nothing for a number this build does not know.
