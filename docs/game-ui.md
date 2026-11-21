@@ -527,6 +527,9 @@ keyboard of its own. These layouts of `Common` can frame one (pane names, kind 1
   (0.08, -0.2, 0.02): x right, z toward the camera, which sits near his head's height. (run)
 - The scene has a floor at his feet that hides what goes below it: lowered by 0.13 his soles went, and standing further
   back hides more of him (z -1.7: his boots; z -2.2: his legs to the knee). (run)
+- Child Link stands higher on Equipment (y about 0.30, adult about -0.2) and the menu's camera is closer to him: the
+  adult's place below is outside the picture. Settings and look tells them apart by that y (above 0.05: child) and
+  stands child Link at (1.25, as he was, -0.35), set with a tester. (run)
 - Settings and look (`coop_pause_tab_module.cpp`, `MenuModel`) asks for 0 while Customize Link shows, stands him at
   (2.30, as he was, -1.3), and puts his place, turn and System's type 4 back when it goes. Other ideas from these
   names, not followed: `ExecuteMenuActorRotate` (the Equipment page's own turn), `QueryGetMenuActorDisplayType`,
