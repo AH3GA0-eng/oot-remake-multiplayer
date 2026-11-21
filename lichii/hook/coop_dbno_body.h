@@ -180,7 +180,7 @@ public:
     struct Wanted {
         bool lying = false;          // downed (or spectating): crawl, shielded, unseen
         bool event = false;          // our Link in an event: the event drives it
-        bool adult = false;          // our Link is Player_Adult (no crawl animations: HugeHit, see DownVerb)
+        bool adult = false;          // our Link is Player_Adult (asked the same Crawl as a child, see DownVerb)
         std::uint64_t bsa = 0;       // our Link's BSA component (0: none)
         std::uint64_t life = 0;      // our Link's Life component (0: none)
         std::uint64_t emitter = 0;   // our Link's PerceptionEmitter component (0: none)
