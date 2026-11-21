@@ -1489,14 +1489,19 @@ TEST_CASE("flag watcher: a drop at each room load is put back in each room (row 
   CHECK(w.stats().one_way_left == 0);
 }
 
-TEST_CASE("flag watcher: a map, compass, boss key or floors the game keeps lowering in one room stop flickering (row 183)") {
+TEST_CASE("flag watcher: a map, compass or floors the game keeps lowering in one room stop flickering (row 183)") {
   // proyectskye: after the map was picked up it flickered "like equipping and unequipping". The game lowered the
   // map a few frames after each put-back, later than the old 2-pass window, so it was put back and the HUD redrawn
   // forever. Now every drop after a put-back counts until the next load: put back kMaxQuickUndos times, one HUD
   // refresh for the value, then the game's own until the next room, where it is owed back once.
+  // (The boss key is not one-way: the game takes it at the boss door, so it is never put back; not a case here.)
   constexpr FlagKey kDekuBossKey{0xf6995ceeu, 0};  // DungeonInfo.InsideTheDekuTree.IsGetBossKey
   constexpr FlagKey kDekuFloors{0x5c6c21c1u, 0};   // DungeonInfo.InsideTheDekuTree.EnteredFloorBit
-  for (const FlagKey key : {kDekuMap, kDekuCompass, kDekuBossKey, kDekuFloors}) {
+  {
+    FakeStore game_store = dungeon_game();
+    CHECK_FALSE(ItemFlagStore(game_store).is_one_way(kDekuBossKey));
+  }
+  for (const FlagKey key : {kDekuMap, kDekuCompass, kDekuFloors}) {
     CAPTURE(key.hash);
     const bool bits = key.hash == kDekuFloors.hash;
     const std::uint32_t got = bits ? 0b0110u : 1u, lowered = bits ? 0b0100u : 0u;
