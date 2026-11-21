@@ -50,7 +50,7 @@ enum class Part : std::uint8_t {
     boots = 15,           // the leather of every pair of boots
     gauntlets = 16,       // the metal of the Silver and the Golden Gauntlets
     cap_trim = 17,        // the cap's own trims: the child's headband and knot, the adult's hood trims
-                          // (your own Link only; unset: as the tunic)
+                          // (unset: as the tunic; on the puppets too since 0.11.9, with their tunic copy)
     eyes = 18,            // 0.11.9: the eyes' colour (the iris: Mt_Eye_Inner's ns_param_color2, set by the game's own
                           // model calls on your Link and the puppets, CoopCharColours); a kit before it passes it over
     hair = 19,            // 0.11.9: the hair's colour (the hair materials' ns_param_color0 / 1 and the brows', as the

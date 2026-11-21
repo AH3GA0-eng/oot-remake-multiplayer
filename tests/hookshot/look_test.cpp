@@ -1747,14 +1747,17 @@ TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact
     blue.back().texels.push_back(0);   // (a texture of another size: kept as written)
     const std::vector<std::pair<std::string, CoopLookTunic::Texels>> copies = {{"red", red}, {"blue", blue}};
     CHECK(CoopLookParts::PuppetTunicsName({}) == "ptunics");
-    CHECK(CoopLookParts::PuppetTunicsName({{"red", 0xFF6820}, {"blue", 0x123456}}) == "ptunics|blue=123456|red=FF6820");
+    using Paint = CoopLookParts::TunicPaint;
+    CHECK(CoopLookParts::PuppetTunicsName({{"red", Paint{0xFF6820u, std::nullopt}}, {"blue", Paint{0x123456u, std::nullopt}}}) ==
+          "ptunics|blue=123456|red=FF6820");
+    CHECK(CoopLookParts::PuppetTunicsName({{"red", Paint{0xFF6820u, 0x2040FFu}}}) == "ptunics|red=FF6820+cap2040FF");   // (the trim too)
     // None painted: the base, every copy as written.
     auto base = CoopLookParts::PuppetTunicsTexels(copies, green, {});
     REQUIRE(base.size() == red.size() + blue.size());
     CHECK(CoopLookTunic::SameLayout(base, base));
     for (std::size_t i = 0; i < red.size(); ++i) CHECK(base[i].texels == red[i].texels);
     // Blue given to a player in #123456: its textures from green in that colour, red's as written.
-    const auto painted = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", 0x123456}});
+    const auto painted = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", Paint{0x123456u, std::nullopt}}});
     REQUIRE(painted.size() == base.size());
     CHECK(CoopLookTunic::SameLayout(painted, base));   // (the wardrobe draws a painting over the base, texture by texture)
     const auto want = CoopLookParts::TunicPainted(green, 0x123456u);
@@ -1775,7 +1778,7 @@ TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact
     red2[1].name = "Angin_Tile_R_Dark_Alb";
     red2[1].texels = red2[0].texels;   // (as long as the main tile)
     REQUIRE(red2[1].texels.size() != green2[1].texels.size());
-    const auto dark = CoopLookParts::PuppetTunicsTexels({{"red", red2}}, green2, {{"red", 0xC86432}});
+    const auto dark = CoopLookParts::PuppetTunicsTexels({{"red", red2}}, green2, {{"red", Paint{0xC86432u, std::nullopt}}});
     const auto darker = CoopLookParts::TunicPainted(green2, 0x804020u);   // (0xC8, 0x64, 0x32 times 0.64, rounded)
     CHECK(dark[1].texels == darker[0].texels);
     CHECK(dark[0].texels == CoopLookParts::TunicPainted(green2, 0xC86432u)[0].texels);

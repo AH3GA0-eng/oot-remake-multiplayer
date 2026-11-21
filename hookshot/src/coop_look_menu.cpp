@@ -70,7 +70,7 @@ const char* Note(Part part) {
     case Part::boots: return "The leather of every pair: the Kokiri, Hover and Iron Boots (young Link's belts too).";
     case Part::gauntlets: return "The metal of the Silver and the Golden Gauntlets.";
     case Part::cap_trim:
-        return "The cap's own trims: young Link's headband and knot, adult Link's hood trims (the cap's cloth is the tunic's). Your own Link only, for now.";
+        return "The cap's own trims: young Link's headband and knot, adult Link's hood trims (the cap's cloth is the tunic's). The other players see it on you too.";
     case Part::eyes: return "The colour of the eyes, on your Link and seen by the other players.";
     case Part::hair: return "The colour of the hair and the brows, on your Link and seen by the other players.";
     }

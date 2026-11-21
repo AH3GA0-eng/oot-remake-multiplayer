@@ -385,7 +385,12 @@ std::optional<std::vector<std::uint8_t>> PuppetTunicsFile(const std::string& nam
         if (it == g_ptunics_named.end()) return std::nullopt;
         paints = it->second;
     }
-    return CoopLookTunic::Pack(CoopLookParts::PuppetTunicsTexels(g_ptunics_copies, *green, paints));
+    std::shared_ptr<const CoopLookParts::Cap> cap;
+    {
+        std::lock_guard tl(g_tunic_mutex);
+        cap = g_tunic_cap;   // (cap.bin: the Cap trim's blocks; none in an older pack)
+    }
+    return CoopLookTunic::Pack(CoopLookParts::PuppetTunicsTexels(g_ptunics_copies, *green, paints, cap.get()));
 }
 
 // The worker's round: who gets which tunic copy, and its painting (the boots follow the same copies).
@@ -408,7 +413,15 @@ std::map<std::uint8_t, CoopColors::TunicCopy> FollowTunics() {
         std::string colour = copy.suffix;
         for (char& c : colour) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         const auto it = std::find_if(players.begin(), players.end(), [n = number](const auto& p) { return p.first == n; });
-        if (it != players.end()) paints[colour] = it->second;
+        if (it == players.end()) continue;
+        CoopLookParts::TunicPaint paint;
+        paint.tunic = it->second;
+        if (const auto parts = CoopLookShare::Of(number)) {   // (0.11.9: their Cap trim too, part 17)
+            for (const auto& p : *parts) {
+                if (p.part == static_cast<std::uint8_t>(Part::cap_trim)) paint.cap = p.colour & 0xFFFFFFu;
+            }
+        }
+        paints[colour] = paint;
     }
     CoopPuppet::SetTunicCopies(std::move(given));
     const std::string name = CoopLookParts::PuppetTunicsName(paints);
