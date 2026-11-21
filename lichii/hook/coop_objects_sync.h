@@ -1182,7 +1182,8 @@ public:
     // Report 200: the copy at `address` (a director's copy of another player's late encounter) is to die now, and
     // it is one that never dies by its own death here (CopyGoesWithoutDeath): it goes so from now on (deleted
     // with the dead ones, never given its killing life, left out of the boss sync; its kill stays remembered for an
-    // own one of ours, report 99). True for one that goes so.
+    // own one of ours, report 99). True for one that goes so. Row 219: also a placed copy of a seed's one-time
+    // flying pot (CoopPickups::IsOneTimeHolder): its death here would drop its item a second time.
     bool GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us);
     bool GoneWithoutDeath(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;

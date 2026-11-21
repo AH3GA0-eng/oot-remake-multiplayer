@@ -6,6 +6,7 @@
 #include "coop_dungeon.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
+#include "coop_pickups.h"
 #include "coop_world.h"
 
 #include <algorithm>
@@ -1303,13 +1304,16 @@ bool Sync::GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us) {
     if (o.quiet_gone) {
         return true;
     }
-    if (!bound_.contains(address) || !IsLateEncounter(o.name)) {
+    // Row 219: a seed's one-time flying pot (CoopPickups::IsOneTimeHolder, by its placement) gives its item once, in
+    // the game where it died; its own death here would drop the item a second time.
+    const bool holder = o.id.kind == proto::ObjectKind::placed && CoopPickups::IsOneTimeHolder(o.id.value);
+    if (!holder && (!bound_.contains(address) || !IsLateEncounter(o.name))) {
         return false;  // only a director's copy of another game's encounter (our own game made the others)
     }
     if (const auto own = owners_.find(o.id); own != owners_.end() && own->second.player == self_) {
         return false;  // handed to us: ours to fight and to die here
     }
-    if (!CopyGoesWithoutDeath(o.name, CoopDungeon::IsDungeonScene(scene_))) {
+    if (!holder && !CopyGoesWithoutDeath(o.name, CoopDungeon::IsDungeonScene(scene_))) {
         return false;
     }
     // Its look follows its owner's own death until the owner's OBJECT_REMOVE dead deletes it (dead_now there);
@@ -1321,8 +1325,10 @@ bool Sync::GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us) {
     o.hit_sum = 0;
     o.hit_place.reset();
     o.hit_record.reset();
-    notes_.emplace_back("report 200: its owner killed it: our copy of their encounter goes without a death here (its "
-                        "death would run our game's own defeat event with our Link): " + o.name);
+    notes_.emplace_back(holder ? "row 219: its owner killed it: a one-time holder, ours goes without a death here (its "
+                                 "death would drop its item again): " + o.name
+                               : "report 200: its owner killed it: our copy of their encounter goes without a death here "
+                                 "(its death would run our game's own defeat event with our Link): " + o.name);
     return true;
 }
 
@@ -1840,7 +1846,10 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     }
     for (const Seen& s : seen) {
         if (s.hash != 0 && s.hash != kNoHash) {
-            if (const auto t = taken_.find(s.hash); t != taken_.end() && RemovedWhenTaken(s.name)) {
+            // Row 219: a listed one-time placement goes by its key whatever its actor now is (a seed's
+            // swapped pickup, its one-time pot): CoopPickups::IsOneTime.
+            if (const auto t = taken_.find(s.hash);
+                t != taken_.end() && (RemovedWhenTaken(s.name) || CoopPickups::IsOneTime(s.hash))) {
                 // A chest has no near rule (issue 87): it is bound beside our
                 // Link too, and shown open (below, issue 195).
                 const bool chest = s.name.starts_with("Obj_TBox_");
