@@ -749,7 +749,8 @@ TEST_CASE("objects: every actor whose AI goes with the local Link is each game's
     // the dogs follow the player, the horses come to the Link that calls them.
     for (const char* own : {"Npc_Hylia_Zelda_Adult", "Npc_Hylia_Zelda_Adult_Scalable", "Animal_Dog_Brown",
                             "Animal_Dog_White", "Animal_Dog_Richard_01", "Animal_Dog_Richard_03", "Animal_Dog_Base",
-                            "Animal_Epona_Adult", "Animal_Epona_Child", "Animal_Horse", "Animal_Horse_For_Ingo"}) {
+                            "Animal_Epona_Adult", "Animal_Epona_Child", "Animal_Horse", "Animal_Horse_For_Ingo",
+                            "Npc_Hylia_Dampe_002"}) {
         CHECK_MESSAGE(CoopObjects::IsOwnFollower(own), own);
         CHECK_FALSE_MESSAGE(CoopObjects::IsShared(own), own);
     }
@@ -757,7 +758,8 @@ TEST_CASE("objects: every actor whose AI goes with the local Link is each game's
     // cuccos with their carry claim, Pierre and the shop clerks who only turn to the Link).
     for (const char* shared : {"Npc_Hylia_Zelda_Child", "Npc_Hylia_Sheik_Adult", "Animal_Horse_Wagon",
                                "Animal_Horse_Archery", "Animal_Cucco", "Npc_Pierre_CallOcarina",
-                               "Npc_Goron_011_Shop_Child", "Npc_Hylia_051"}) {
+                               "Npc_Goron_011_Shop_Child", "Npc_Hylia_051", "Npc_Kaepora",
+                               "Npc_Kaepora_LakeHylia", "Npc_Kaepora_DeathMountainTrail", "Npc_Hylia_Dampe_001"}) {
         CHECK_FALSE_MESSAGE(CoopObjects::IsOwnFollower(shared), shared);
         CHECK_MESSAGE(CoopObjects::IsShared(shared), shared);
     }

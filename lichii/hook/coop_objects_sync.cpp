@@ -329,9 +329,16 @@ bool IsOwnFollower(std::string_view name) {
     //   HorseMoveToPlayer / QueryQuadrupedCalcFollowTargetPos (the horse comes to the Link that called it).
     //   Shared, one game's Epona was a copy, frozen or pulled back under its rider, or the other game drew two
     //   horses (its copy and the ride's stand-in); the ride sync (coop_ride.h) shows the other's horse.
+    // - Npc_Hylia_Dampe_002 (Dampe's ghost, the Graveyard race): its own AI, outside any event, runs the race
+    //   rail ahead of the player and paces by it (GetDampeRaceParam, DistWithPlayer, DistanceFromRailRatePos,
+    //   HasPassFirstRailPoint). The race's prize flag stays shared.
     // Not followers: the wagon and archery horses (no follow in their AI), Navi (never shared, Npc_Navi), the
-    // shop clerks and Pierre (ToPlayerDistance only turns them to the Link that talks or calls).
+    // shop clerks and Pierre (ToPlayerDistance only turns them to the Link that talks or calls), Kaepora (only
+    // the event nodes every NPC has, Event*AISchedule*: his flights are events, which the event claim gives to
+    // the player in them) and the living Dampe, Npc_Hylia_Dampe_001 (his digging tour's follow is event nodes
+    // too, EventFollowToTargetActor; his rounds stay shared, issue 200).
     return name.starts_with("Npc_Hylia_Zelda_Adult") || name.starts_with("Npc_Zora_Ruto_Child") ||
+           name == "Npc_Hylia_Dampe_002" ||
            name.starts_with("Animal_Dog_") || name.starts_with("Animal_Epona_") || name == "Animal_Horse" ||
            name.starts_with("Animal_Horse_For_Ingo");
 }

@@ -505,9 +505,10 @@ The root cause is the same for every actor whose own AI goes with the local Link
 | `Npc_Hylia_Zelda_Adult`, `_Scalable` | `AISchedulePatrolMove`: waits for the player at rail points | CrumblingGanonCastle (the escape), FinalBattleField, GanonStage; `_Scalable` made by events |
 | `Npc_Zora_Ruto_Child_001`, `_002` (player report #64) | carried by one Link (`Act_LiftRest`) | InsideJabuJabuBelly, ZoraDomain |
 | `Animal_Dog_*` (Brown, White, Richard_01/_03, Base) | `Animal_Dog.brain.FollowPlayer` | Market (child), Kakariko (adult) |
+| `Npc_Hylia_Dampe_002` (Dampe's ghost) | outside any event: runs the race rail ahead of the player, paced by it (`GetDampeRaceParam`, `DistWithPlayer`, `DistanceFromRailRatePos`) | Graveyard (adult) |
 | `Animal_Epona_Adult` (was its own rule, epona-ride), `Animal_Epona_Child`, `Animal_Horse`, `Animal_Horse_For_Ingo` | `HorseMoveToPlayer`, `QueryQuadrupedCalcFollowTargetPos`: comes to the Link that calls it | HyruleField (Lon Lon Ranch) |
 
-Not followers, still shared: the wagon and archery horses (no follow in their AI), the cuccos (their `AISchedulePatrolMove` has the same rail-wait inputs as Zelda's, but no cucco escorts in the game; a carried one has the carry claim above), `Npc_Pierre_CallOcarina` and the Goron and Zora shop clerks (`ToPlayerDistance` only turns them to the Link that calls or talks), child Zelda and Sheik. Navi is never shared (`Npc_Navi`).
+Not followers, still shared: the wagon and archery horses (no follow in their AI), the cuccos (their `AISchedulePatrolMove` has the same rail-wait inputs as Zelda's, but no cucco escorts in the game; a carried one has the carry claim above), `Npc_Pierre_CallOcarina` and the Goron and Zora shop clerks (`ToPlayerDistance` only turns them to the Link that calls or talks), child Zelda and Sheik. Also Kaepora (`Npc_Kaepora*`) and the living Dampe (`Npc_Hylia_Dampe_001`, his rounds are issue 200's): their AI goes with the player only in event nodes (`Event*AISchedule*` rail steps every NPC has, Dampe's tour `EventFollowToTargetActor`), so the event claim already gives them to the player in that event while it runs. Navi is never shared (`Npc_Navi`).
 
 Mixed kits: an older kit still shares Zelda; its `OBJECT_OWNER` and wishes for her id bind to nothing in a game that does not list her, so ours runs on.
 
