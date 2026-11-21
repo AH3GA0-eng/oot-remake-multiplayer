@@ -582,6 +582,9 @@ public:
             for (const auto& k : CoopDungeon::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
+            for (const auto& k : CoopDungeon::WorldKeys()) {  // row 220: overworld obstacles that stay done
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
         }
         // On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches): another
         // player's gimmick event plays here too when our Link comes near it.
