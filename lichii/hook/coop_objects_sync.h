@@ -1131,6 +1131,8 @@ public:
     bool InOurScene(std::uint8_t player, std::uint64_t now_us) const;
     // The lowest player number in our scene by fresh samples, `self` included (DeciderOf).
     std::uint8_t SceneDecider(std::uint8_t self, std::uint64_t now_us) const { return DeciderOf(self, now_us); }
+    // Row 160: the other players in our scene by fresh samples (InOurScene for each), `self` left out.
+    std::vector<std::uint8_t> PlayersInOurScene(std::uint8_t self, std::uint64_t now_us) const;
     // The owner of the copy at `address` said it died: its life 0 in the owner's samples, or its
     // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
     bool OwnerSaysDead(std::uint64_t address) const;

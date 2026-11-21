@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -173,6 +174,62 @@ inline constexpr std::uint64_t kCrossingGapUs = 2'000'000;
 bool CrossingKillLands(std::string_view scene, std::uint64_t keeper, std::uint64_t kept_for_us, std::uint8_t self,
                        std::optional<std::uint8_t> keeper_owner, const std::function<bool(std::uint64_t)>& ours_died,
                        bool owner_here = true, bool we_decide = false);
+
+// Row 160 (dungeon-sweep-0118-8, run 20261120-132403): a kept kill's owner whose Link is downed, spectating or out
+// (DBNO), dead or in a load (a void-out's respawn, a Try Again: PLAYER_STATUS dead / loading) cannot play the event
+// either, though its samples still say our scene. Before, such an owner counted as 'here', so the other games kept its
+// kill and waited for an event nobody could play. `in_our_scene`: Sync::InOurScene; `link_up`: the player's DBNO state
+// is up (always so with DBNO off); `status`: the player's PLAYER_STATUS flags. A cutscene (the room event itself) or a
+// pause keeps the owner able: it plays the event once it is back.
+bool AbleToPlay(bool in_our_scene, bool link_up, std::uint8_t status);
+// The one game that decides for our scene among those that can play an event (pure): the lowest player number in
+// `in_scene` (`self` included) that `able` says can play; 0 when none can (nobody lands a kept kill then: the first
+// game whose Link is up again does).
+std::uint8_t DeciderAmongAble(std::uint8_t self, std::span<const std::uint8_t> in_scene,
+                              const std::function<bool(std::uint8_t)>& able);
+
+// Row 160 (run 20261120-132403: our Link revived by a reload, which re-made the room): the kill actors of a room event
+// to kill again once re-made in the same scene visit (pure). For each kill event in `scene` our game has not played,
+// if every one of its kill actors is in `dead` (seen dead here in this visit) or `kept` (another game's kill kept
+// here) and at least one is in `kept`, all of them: the group killed the whole room, so the re-made room is clear too
+// and our game plays its event. An event with any kill actor never killed is left as the game made it (a native
+// refight of the room), and so is one that only our own game killed (no kept kill): a solo game or a host alone in
+// the room (co-op idle) that reloads before its event played fights the room again, as the game does.
+std::set<std::uint64_t> KillsToRedo(std::string_view scene, const std::set<std::uint64_t>& dead,
+                                    const std::set<std::uint64_t>& kept,
+                                    const std::function<bool(const std::string&)>& played);
+// The room event whose kill actor in `scene` is `hash` (pure); none: no kill line names it.
+std::optional<std::string_view> KillEventOf(std::string_view scene, std::uint64_t hash);
+
+// Row 160 (b) (run 20261120-132403): a kept kill's copy (another game killed it, the kill waits here for the event)
+// played its owner's death and then stood at full life, and our Link could hit it again. While its kill is kept its
+// Life holds our key in the game's own no-reaction invincibility (main+0x8d75e0, as our downed Link's: nothing is
+// taken, no reaction), and the key comes out before the kill lands. Which calls to make (pure): `want` the Life
+// components of the kept kills' actors now, `live` every Life component in our walk (a key is only taken out of a
+// component that is still there; one that went took our key with it).
+inline constexpr std::uint32_t kKeptShieldKey = 0xC0DB0D03u;  // ours (dbno ...01, PvP copies ...02)
+inline constexpr unsigned kKeptShieldTries = 3;               // calls per component and way before it is given up
+inline constexpr std::uint64_t kKeptShieldWaitUs = 1'000'000; // a landing kill waits this long for the key's removal
+class KeptShield {
+public:
+    struct Step {
+        std::uint64_t life = 0;
+        bool on = false;  // add our key (true) or take it out
+        bool operator==(const Step&) const = default;
+    };
+    std::optional<Step> Next(const std::set<std::uint64_t>& want, const std::set<std::uint64_t>& live);
+    void Called(const Step& s, bool ok);
+    bool On(std::uint64_t life) const { return on_.contains(life); }
+    bool GivenUp(const Step& s) const;
+    void Reset() {
+        on_.clear();
+        tries_.clear();
+    }
+
+private:
+    std::set<std::uint64_t> on_;
+    std::map<std::pair<std::uint64_t, bool>, unsigned> tries_;
+};
 
 // The follow triggers' keepers in `scene` (pure): for each event our game has not played, its follow actors of group
 // 0 and the largest of each linked group. coop_world (WorldSync::SetTriggerKeepers) keeps another game's move, rest

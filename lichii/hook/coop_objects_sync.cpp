@@ -1103,6 +1103,17 @@ bool Sync::InOurScene(std::uint8_t player, std::uint64_t now_us) const {
     return fresh && seen.first == scene_;
 }
 
+std::vector<std::uint8_t> Sync::PlayersInOurScene(std::uint8_t self, std::uint64_t now_us) const {
+    std::vector<std::uint8_t> out;
+    std::lock_guard lock(inbox_mutex_);
+    for (const auto& [player, seen] : scenes_) {
+        const bool fresh = seen.second <= now_us ? now_us - seen.second < kSceneStaleUs
+                                                 : seen.second - now_us < kSceneStaleUs;
+        if (player != self && player != 0 && fresh && seen.first == scene_) out.push_back(player);
+    }
+    return out;
+}
+
 std::uint8_t Sync::DeciderOf(std::uint8_t self, std::uint64_t now_us) const {
     std::uint8_t decider = self;
     std::lock_guard lock(inbox_mutex_);
