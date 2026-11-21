@@ -4,6 +4,7 @@
 // in any colour (coop_look_tunic.h, coop_look_parts.h),
 // both drawn through Longshot's texture overrides (patch 0020), and the
 // other players' puppets' own copies of the gear (coop_look_share.h) the same way.
+#include <cstdio>
 #include <algorithm>
 #include <cctype>
 #include <atomic>
@@ -552,6 +553,40 @@ void Wear(const std::string& name, const CoopLook::Look& look) {
     g_wake.notify_one();
 }
 
+// Row 198 (gear-colour-0119): your own wardrobes and the puppets' must never draw over one texture (your colours on
+// another player's puppet). Said when it changes, at most 20 times. The worker's (every wardrobe Steps there).
+std::string Hex(std::uint64_t v) {
+    char buf[24];
+    std::snprintf(buf, sizeof buf, "0x%llx", static_cast<unsigned long long>(v));
+    return buf;
+}
+
+void CrossGuard() {
+    static std::string said;
+    static int count = 0;
+    if (count >= 20) return;
+    const std::pair<const char*, const CoopLookTunic::Wardrobe*> own[] = {{"tunic", g_wardrobe.get()}, {"gear", g_gear.get()}};
+    const std::pair<const char*, const CoopLookTunic::Wardrobe*> theirs[] = {
+        {"puppets' gear", g_puppets.get()}, {"puppets' boots", g_boots.get()}, {"puppets' tunics", g_ptunics.get()}};
+    std::string line;
+    for (const auto& [a_name, a] : own) {
+        for (const auto& [b_name, b] : theirs) {
+            if (a == nullptr || b == nullptr) continue;
+            for (const auto& [i, j] : CoopLookTunic::Overlaps(a->places(), b->places())) {
+                line += std::string(" ") + a_name + " #" + std::to_string(a->places()[i].texture) + " on " + b_name +
+                        " #" + std::to_string(b->places()[j].texture) + " @" + Hex(a->places()[i].address);
+            }
+        }
+    }
+    if (line != said) {
+        said = line;
+        if (!line.empty()) {
+            ++count;
+            LOG_WARNING(Core, "coop: look: row 198 cross guard: your colours and a puppet's lie on one texture:{}", line);
+        }
+    }
+}
+
 void Work() {
     const auto start = std::chrono::steady_clock::now();
     auto round = start + kRound;   // the next round of the rest (who wears what)
@@ -576,6 +611,7 @@ void Work() {
         g_puppets->Step(static_cast<std::uint64_t>(ms.count()));
         g_boots->Step(static_cast<std::uint64_t>(ms.count()));
         if (g_ptunics) g_ptunics->Step(static_cast<std::uint64_t>(ms.count()));
+        CrossGuard();
         lock.lock();
     }
 }
