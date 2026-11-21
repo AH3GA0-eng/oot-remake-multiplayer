@@ -209,3 +209,24 @@ TEST_CASE("command line: --public is a listed public game on the relay, with no 
   REQUIRE(priv.has_value());
   CHECK_FALSE(priv->public_game);
 }
+
+TEST_CASE("command line: --dedicated is the always-on public game (needs --public, no --invite), --bans-file") {
+  std::string error;
+  auto ded = parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public", "--dedicated",
+                                 "--bans-file", "/var/lib/coop/bans.txt"},
+                                error);
+  REQUIRE(ded.has_value());
+  CHECK(ded->dedicated);
+  CHECK(ded->bans_file == "/var/lib/coop/bans.txt");
+  CHECK(!parse_command_line({"--dedicated"}, error).has_value());
+  CHECK(error.find("--public") != std::string::npos);
+  CHECK(!parse_command_line({"--relay-via", "127.0.0.1:27530", "--relay-room", "squadala", "--public", "--dedicated",
+                             "--invite"},
+                            error)
+             .has_value());
+  CHECK(!parse_command_line({"--bans-file"}, error).has_value());
+  auto plain = parse_command_line({}, error);
+  REQUIRE(plain.has_value());
+  CHECK_FALSE(plain->dedicated);
+  CHECK(plain->bans_file.empty());
+}

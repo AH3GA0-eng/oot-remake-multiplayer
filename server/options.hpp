@@ -52,6 +52,13 @@ struct CommandLine {
   // --relay-via and --relay-room; no --upnp. A --password given is replaced by
   // the room's (protocol::public_join_password), as the game's Host page does.
   bool public_game = false;
+  // --dedicated: an always-on server with no hosting game (docs/official-game.md):
+  // it reads moderation commands typed into its console (lines starting '/':
+  // Session::admin). Needs --public.
+  bool dedicated = false;
+  // --bans-file PATH: the bans by player key kept across runs (one key id a
+  // line, read_ban_file); rewritten when a ban is made or lifted.
+  std::string bans_file;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;

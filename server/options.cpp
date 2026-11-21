@@ -195,6 +195,14 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       ++i;
     } else if (arg == "--public") {
       line.public_game = true;
+    } else if (arg == "--dedicated") {
+      line.dedicated = true;
+    } else if (arg == "--bans-file") {
+      if (!has_value || args[i + 1].empty()) {
+        error = "--bans-file needs the path of the file that keeps the bans";
+        return std::nullopt;
+      }
+      line.bans_file = args[++i];
     } else if (arg == "--relay-list") {
       // The name shown in the list is optional (the room name without one); the next option is never taken as it.
       list_room = true;
@@ -218,6 +226,14 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
   }
   if (!line.relay_room.empty() && line.relay_via.empty()) {
     error = "--relay-room is a name on a relay: it needs --relay-via";
+    return std::nullopt;
+  }
+  if (line.dedicated && !line.public_game) {
+    error = "--dedicated is the always-on public game: it needs --public";
+    return std::nullopt;
+  }
+  if (line.dedicated && line.invite) {
+    error = "--dedicated reads commands from its console: leave out --invite";
     return std::nullopt;
   }
   if (line.public_game) {
@@ -297,6 +313,10 @@ const char* usage() {
          "  --public         a public game: with --relay-via and --relay-room,\n"
          "                   anyone with the room name joins without a password\n"
          "                   (still encrypted), through the relay only, listed\n"
+         "  --dedicated      with --public: always on, no hosting game; type\n"
+         "                   /players, /kick N, /ban N, /unban KEYID,\n"
+         "                   /mute N voice|chat, /unmute N voice|chat\n"
+         "  --bans-file PATH  keep bans by player key in this file across runs\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
          "                   (UDP port 27530 unless --port), not a game server\n"
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"

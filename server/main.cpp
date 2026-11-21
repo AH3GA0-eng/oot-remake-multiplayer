@@ -330,6 +330,8 @@ int main(int argc, char** argv) {
     config.relay_room = line->relay_room;
     config.relay_list = line->relay_list;
     config.public_game = line->public_game;
+    std::vector<std::string> bans = read_ban_file(line->bans_file);
+    config.session.kept_bans = bans;
     config.log = say;
     HostService host(config);
     std::string why;
@@ -341,7 +343,8 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "coop_server: cannot listen on port %u\n", static_cast<unsigned>(line->port));
       exit_code = 1;
     } else {
-      if (line->invite) TypedLines::get().start();
+      if (line->invite || line->dedicated) TypedLines::get().start();
+      if (line->dedicated) say("dedicated: type /players, /kick N, /ban N, /unban KEYID, /mute N voice|chat");
       auto started = std::chrono::steady_clock::now();
       while (!g_stop) {
         host.service(5);
@@ -349,6 +352,20 @@ int main(int argc, char** argv) {
           for (const std::string& typed : TypedLines::get().take()) {
             if (typed.find_first_not_of(" \t\r") == std::string::npos) continue;
             host.add_answer(typed);
+          }
+        }
+        if (line->dedicated) {
+          for (const std::string& typed : TypedLines::get().take()) {
+            const auto at = typed.find_first_not_of(" \t\r");
+            if (at == std::string::npos || typed[at] != '/') continue;
+            say(host.admin(typed.substr(at)));
+          }
+        }
+        if (!line->bans_file.empty() && host.session() != nullptr) {   // (a ban made or lifted: kept for next time)
+          std::vector<std::string> now = host.session()->key_bans();
+          if (now != bans) {
+            write_ban_file(line->bans_file, now);
+            bans = std::move(now);
           }
         }
         if (line->run_for_ms &&
