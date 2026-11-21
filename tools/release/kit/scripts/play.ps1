@@ -492,6 +492,17 @@ if (-not $Hookshot -and -not $env:LICHII_COOP_HOST_SAVE) {
 # (kit-paths.ps1). Before the pack step, which puts that tunic over the game's.
 [void](Set-KitDefaultColor $Mode $Server)
 if ($Hookshot) {
+    # Original game (Co-op settings, coop-options.ini original_game = on; hookshot/src/coop_original.h): the game as it
+    # came. The module stays off and Longshot loads no mod (the game's mods list says so), so nothing of the pack, the
+    # size tables or Discord is touched here either.
+    $optionsFile = Join-Path $kit 'coop-options.ini'
+    if ((Test-Path $optionsFile) -and @(Get-Content $optionsFile -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match '^\s*original_game\s*=\s*(on|1|yes|true)\s*$' }).Count -gt 0) {
+        Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) | Out-Null
+        Write-Host 'Original game is on (Co-op settings): the game started as it came, with no co-op and no mods.'
+        Write-Host '  To have them back: the F1 menu''s "Original game" tab, then start the game again.'
+        exit 0
+    }
     # As the emulator below (kit-paths.ps1 Use-KitPuppetPack): the pack hints, your own tunic (#202), the
     # puppets off without a pack. The pack is in mods\contents (Build-Hookshot-Coop.bat installs it), and
     # Hookshot indexes its mod files once at start: this runs before Start-Process.

@@ -276,6 +276,7 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
     o.approve_joins = On(IniGet(options_ini, "approve_joins"));
     o.same_network_password = On(IniGet(options_ini, "same_network_password"));
     o.auto_rejoin = On(IniGet(options_ini, "auto_rejoin"));
+    o.original_game = On(IniGet(options_ini, "original_game"));
     o.list_room = On(IniGet(options_ini, "list_room"));
     o.upnp = !Off(IniGet(options_ini, "upnp"));
     if (const auto v = IniGet(options_ini, "server_password"); v && PasswordOk(*v)) {
@@ -305,6 +306,11 @@ Options Options::Read(std::string_view coop_ini, std::string_view options_ini) {
         }
     }
     o.map_players = !Off(IniGet(options_ini, "LICHII_COOP_MAP"));
+    {
+        std::string size(Trim(IniGet(options_ini, "LICHII_COOP_HUD_SIZE").value_or("auto")));
+        for (char& c : size) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        o.hud_size = size == "full" || size == "compact" || size == "off" ? size : "auto";
+    }
     o.map_names = !Off(IniGet(options_ini, "LICHII_COOP_MAP_NAMES"));
     // The relay lines Host.bat reads too (coop-options.ini, "Advanced: relay"): the Multiplayer tab's Host uses them
     // the same way. Read only: the menu writes none of them.
@@ -355,6 +361,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     o = show_players ? IniSet(o, "LICHII_COOP_SHOW_PLAYERS", "1", false) : IniUnset(o, "LICHII_COOP_SHOW_PLAYERS");
     o = IniSet(o, "pvp", pvp ? "on" : "off", true);
     o = auto_rejoin ? IniSet(o, "auto_rejoin", "on", true) : IniUnset(o, "auto_rejoin");
+    o = original_game ? IniSet(o, "original_game", "on", true) : IniUnset(o, "original_game");
     o = same_network_password ? IniSet(o, "same_network_password", "on", true) : IniUnset(o, "same_network_password");
     o = list_room ? IniSet(o, "list_room", "on", true) : IniUnset(o, "list_room");
     // (the relay: the kit's default needs no line; a room name, or none)
@@ -372,6 +379,7 @@ void Options::Write(std::string& coop_ini, std::string& options_ini) const {
     const std::uint16_t port = host_port != 0 ? host_port : kDefaultPort;
     o = port == kDefaultPort ? IniUnset(o, "server_port") : IniSet(o, "server_port", std::to_string(port), true);
     o = map_players ? IniUnset(o, "LICHII_COOP_MAP") : IniSet(o, "LICHII_COOP_MAP", "0", false);
+    o = hud_size == "auto" ? IniUnset(o, "LICHII_COOP_HUD_SIZE") : IniSet(o, "LICHII_COOP_HUD_SIZE", hud_size, false);
     o = map_names ? IniUnset(o, "LICHII_COOP_MAP_NAMES") : IniSet(o, "LICHII_COOP_MAP_NAMES", "0", false);
     options_ini = std::move(o);
 }
@@ -389,6 +397,7 @@ std::vector<std::pair<std::string, std::string>> Options::Environment() const {
         {"LICHII_COOP_VOICE_MIC", voice_mic},
         {"LICHII_COOP_MAP", map_players ? "" : "0"},
         {"LICHII_COOP_MAP_NAMES", map_names ? "" : "0"},
+        {"LICHII_COOP_HUD_SIZE", hud_size == "auto" ? "" : hud_size},
     };
 }
 
