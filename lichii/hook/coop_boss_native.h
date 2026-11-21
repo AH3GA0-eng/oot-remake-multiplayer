@@ -83,8 +83,15 @@ inline constexpr std::uint64_t kSetBrainVerb = 0x6733b0;       // main+
 inline constexpr std::uint64_t kRequestActionVerb = 0xc08f0;   // main+
 inline constexpr std::uint64_t kMalloc = 0x14c6c90;            // main+, as coop_puppet.h
 // What kRequestActionVerb returns for a request it took (its main path,
-// main+0xc10f4; 2 and 3 are refusals). A skipped request answers the same.
+// main+0xc10f4). A skipped request answers the same. Its two other answers
+// (row 190, the lifted function): the BSA keeps one record per slot
+// ([bsa + 0x1c0 + 8 * slot], slots 0-4); 2 = the slot has no record
+// (main+0xc0edc); 3 = the record already took a request since the BSA's last
+// update (bit 1 of its byte +0x7c, set by the accept path, cleared by
+// main+0xcb9c0), whatever the verb: one request per slot a frame.
 inline constexpr std::uint64_t kActionTaken = 0;
+inline constexpr std::uint64_t kActionNoSlot = 2;
+inline constexpr std::uint64_t kActionSlotBusy = 3;
 
 // The action request (0x60 bytes, built on the asker's stack).
 inline constexpr std::size_t kRequestSize = 0x60;
@@ -240,6 +247,11 @@ struct Counts {
     std::uint64_t owner_restarted = 0; // row 178: a copy made ours mid-move: that move started over as ours
     std::uint64_t owner_fell = 0;      // row 178: our boss fell far below its fight start (the fall guard)
     std::uint64_t moves_kept = 0;     // a resync's action the copy already runs (put in, none of its own since): not asked
+    // Row 190: of our action requests (action_applied, copy_own_late, owner_restarted), the ones the game answered
+    // with kActionSlotBusy (the slot had taken a request that frame) or another refusal. Counted and said, not
+    // asked again: the owner's game sends every request it makes, also one its own game answered so.
+    std::uint64_t action_slot_busy = 0;
+    std::uint64_t action_refused = 0;
 };
 
 class Table {
@@ -610,6 +622,8 @@ private:
     std::uint64_t main_base_ = 0;  // the game the block belongs to
     bool allocating_ = false;
     enum class Pending : std::uint8_t { none, malloc, brain, action, late, rechoose, restart } pending_ = Pending::none;
+    // Row 190: the game's answer to an action request of ours (counted; the first few said).
+    void NoteAnswer(const char* what, std::uint64_t result, bool is_action);
     std::uint64_t pending_bsa_ = 0;  // the copy whose change pending_ is (brain, action, late)
     void Made(bool made);            // pending_bsa_'s asked change: out of its queue (made) or asked again
 };
