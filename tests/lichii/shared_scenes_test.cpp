@@ -446,7 +446,8 @@ TEST_CASE("a story cutscene asked by its event setting is sent and joined by tha
         CHECK_MESSAGE(!Askable(n), std::string(n));
     }
     CHECK(Askable(kEntry));
-    CHECK(Askable("Dm_Kokiri_0150"));  // a movie only (no flowchart to read): shared, story order gated
+    // A movie only (no flowchart to read), and a part of Saria's gift scene: never joined (rows 195/204).
+    CHECK_FALSE(Askable("Dm_Kokiri_0150"));
     for (const auto& r : CoopSharedScenes::StorySettings()) {
         CHECK_MESSAGE(CoopSharedScenes::IsShared(r.flow), std::string(r.flow));
         CHECK(Askable(r.request));
@@ -544,6 +545,8 @@ TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game
                                  // reader's misread case reached an egg taken that its real cases never do)
         // a room's own state turned (kRoomStory): the twisted corridor (row 173)
         "Dm_ForestTemple_0005", "Dm_ForestTemple_0007",
+        // the parts of Saria's bridge scene, whose gift only its setting gives (kGiftParts, rows 195/204)
+        "Dm_Kokiri_0150", "Dm_Kokiri_0155",
         // the Great Fairies' paid heal (Dm_FairyFountain_Din:Pay, 500 rupees)
         "Dm_FairyFountain_Courage", "Dm_FairyFountain_Din", "Dm_FairyFountain_Frore", "Dm_FairyFountain_Nayru",
         "Dm_FairyFountain_Power", "Dm_FairyFountain_Wisdom",
