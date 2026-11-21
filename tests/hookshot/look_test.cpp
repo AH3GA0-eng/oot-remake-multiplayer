@@ -1704,7 +1704,7 @@ TEST_CASE("look tunic: the wardrobe draws the tunic and the Cap trim as one pain
     };
     host.log = [](const std::string&) {};
     CoopLookTunic::Wardrobe w(host);
-    const auto& parts = TextureOf(green, kChildParts);
+    const auto parts = TextureOf(green, kChildParts);   // (a copy: gcc -Werror=dangling-reference)
     const std::uint64_t at = kBase + 0x2000;
     PutFile(m, at, parts.name, parts.texels);
     const auto drawn = [&](const std::vector<std::uint8_t>& t) { return m.Drawn(at + kOffset, t.size()) == t; };
