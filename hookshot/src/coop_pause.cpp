@@ -607,7 +607,7 @@ bool Join(const std::string& text_in) {
     if (!std::exchange(g_name_retry, false)) g_name_suffix.clear(), g_name_tries = 0;   // (a join of the player's own)
     std::string name = o.name;
     if (!g_name_suffix.empty()) {   // (at most 16 bytes in all: the name cut before a UTF-8 letter's start)
-        std::size_t n = std::min(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
+        std::size_t n = (std::min)(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
         while (n > 0 && n < name.size() && (static_cast<unsigned char>(name[n]) & 0xc0) == 0x80) --n;
         name = std::string(CoopTitleMenu::Trim(name.substr(0, n))) + g_name_suffix;
     }
