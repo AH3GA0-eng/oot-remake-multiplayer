@@ -949,11 +949,171 @@ def merge_one(root, codec, fname, win_name, win_path, others, say, fit=None):
     return 0
 
 
+GAMEDATA = ("romfs", "GameData")
+GAMEDATA_TAIL = ".byml.zs"
+GAMEDATA_KEEP = "_coop-gamedata"   # a mod's own copy of a saved values list other mods' entries were merged into
+GAMEDATA_HEAD = "coop-gamedata 1"
+
+
+def gamedata_of(path):
+    d = os.path.join(path, *GAMEDATA)
+    try:
+        return sorted(f for f in os.listdir(d) if f.endswith(GAMEDATA_TAIL) and os.path.isfile(os.path.join(d, f)))
+    except OSError:
+        return []
+
+
+def saved_of(data):
+    """A saved values list (GameDataList): (its root, {(type, hash): entry}). A type whose entries have no Hash is one
+    entry as a whole, under (type, "")."""
+    root = byml.loads(data)
+    if not isinstance(root, dict) or not isinstance(root.get("Data"), dict):
+        raise MergeError("not a list of saved values (no Data)")
+    out = {}
+    for kind, entries in root["Data"].items():
+        if isinstance(entries, list) and entries and all(isinstance(e, dict) and "Hash" in e for e in entries):
+            for e in entries:
+                out[(kind, str(e["Hash"]))] = e
+        else:
+            out[(kind, "")] = entries
+    return root, out
+
+
+def merge_gamedata(root, romfs, say=print):
+    """SHARED_NOTE, for the game's list of saved values (GameData/GameDataList): a seed changes the defaults of some
+    values, the Character Select mod adds its own (the picked characters) and with them the save's layout (MetaData).
+    The game reads one mod's list, so either the seed's defaults or the mod's values were gone. The winner's copy
+    becomes: the list of the one mod that adds values (its layout with it), with every value another mod changed from
+    the game's own, the winner's change first where two changed one. Two mods that both add values cannot be put
+    together here (two layouts): said, and nothing is written. The winner's own copy is kept in
+    `<mod>/_coop-gamedata/` with `<file>.txt` (`coop-gamedata 1` / `out` / `in` per other mod / `fit`), as merge_rows.
+
+    Returns {size path: the size the merged file needs}."""
+    order = load_order(root)
+    codec = Codec(romfs)
+    fit = {}
+    for fname in sorted({f for _, p in order for f in gamedata_of(p)}):
+        having = [(n, p) for n, p in order if fname in gamedata_of(p)]
+        if len(having) < 2:
+            continue
+        (win_name, win_path), others = having[-1], having[:-1]
+        names = ", ".join(n for n, _ in others)
+        game = os.path.join(romfs, "GameData", fname) if romfs else ""
+        if fold(win_name).startswith("contents/") and fold(win_name) != PACK:
+            say(f"Saved values: the game reads {win_name}'s GameData/{fname}, without what {names} changed in it: a "
+                "mod under contents is not rewritten.")
+            continue
+        if not os.path.isfile(game):
+            say(f"Saved values: {win_name} and {names} both ship GameData/{fname}; the game reads {win_name}'s. Not "
+                "merged without the game's own copy (--romfs): the others' values are missing.")
+            continue
+        try:
+            need = merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say)
+        except (OSError, ValueError, KeyError, IndexError, TypeError, MergeError) as e:
+            say(f"Saved values: {win_name}'s GameData/{fname} could not be merged with what {names} changed ({e}): "
+                "their values are missing. Turn one of these mods off.")
+            continue
+        if need:
+            key = "GameData/" + fname[:-3]
+            fit[key] = max(fit.get(key, 0), need)
+    return fit
+
+
+def merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say):
+    """Merges one list. Returns the size the written file needs, or 0."""
+    path = os.path.join(win_path, *GAMEDATA, fname)
+    more = [os.path.join(p, *GAMEDATA, fname) for _, p in others]
+    ins = "".join(f"in {file_line(root, t)}\n" for t in more)
+    whose = " and ".join(f"{n}'s" for n, _ in others)
+    keep = os.path.join(win_path, GAMEDATA_KEEP)
+    orig_path = os.path.join(keep, fname)
+    stamp_path = orig_path + ".txt"
+    old = read_text(stamp_path)
+    head = f"{GAMEDATA_HEAD}\nout {file_line(root, path)}\n{ins}"
+    if stamp_holds(old, head):
+        say(f"Saved values: {win_name}'s GameData/{fname} has {whose} values already (merged at an earlier start).")
+        return next((int(l.split()[2]) for l in old.split("\n") if l.startswith("fit ") and len(l.split()) == 3), 0)
+    ours = old is not None and old.split("\n")[1:2] == ["out " + file_line(root, path)] and os.path.isfile(orig_path)
+    if not ours:  # (the mod's own list: the first start with it, or a new copy of the mod)
+        os.makedirs(keep, exist_ok=True)
+        shutil.copyfile(path, orig_path + ".tmp")
+        os.replace(orig_path + ".tmp", orig_path)
+    with open(orig_path, "rb") as f:
+        orig_raw = f.read()
+    with open(game, "rb") as f:
+        games = saved_of(codec.unpack(f.read()))[1]
+    orig_data = codec.unpack(orig_raw)
+    # The winner first, then the mod nearest to it: the first to change a value decides it.
+    mods = [(win_name, win_path, orig_data)]
+    for (n, p), t in reversed(list(zip(others, more))):
+        with open(t, "rb") as f:
+            mods.append((n, p, codec.unpack(f.read())))
+    loaded = [(n, p, d) + saved_of(d) for n, p, d in mods]
+    adders = [m for m in loaded if any(k not in games for k in m[4])]
+    if len(adders) > 1:
+        raise MergeError(f"{' and '.join(m[0] for m in adders)} each add saved values of their own, with a save "
+                         "layout of their own")
+    base = adders[0] if adders else loaded[0]
+    decided, both = {}, []
+    for n, _, _, _, saved in loaded:
+        for k, e in saved.items():
+            if k not in games or same(e, games[k]):
+                continue
+            if k not in decided:
+                decided[k] = e
+            elif not same(decided[k], e) and k not in both:
+                both.append(k)
+    changed = base is not loaded[0]
+    new_root, base_saved = base[3], base[4]
+    for (kind, h), e in decided.items():
+        if (kind, h) in base_saved and same(base_saved[(kind, h)], e):
+            continue
+        changed = True
+        if h == "":
+            new_root["Data"][kind] = e
+        else:
+            entries = new_root["Data"][kind]
+            i = next(i for i, x in enumerate(entries) if str(x["Hash"]) == h)
+            entries[i] = e
+    if changed:
+        new_data = byml.dumps(new_root, big=base[2][:2] == b"BY")   # (the game's list is big-endian: kept so)
+        data = codec.pack(new_data, orig_raw)
+    else:
+        new_data, data = orig_data, orig_raw
+    key = "GameData/" + fname[:-3]
+    need = size_needed(codec, key, len(new_data), [(p, len(d)) for _, p, d, _, _ in loaded])
+    rel = os.path.relpath(path, root).replace(os.sep, "/")
+    stamp = f"{GAMEDATA_HEAD}\nout {rel} {len(data)} {fnv64_bytes(data)}\n{ins}"
+    if need:
+        stamp += f"fit {key} {need}\n"
+    write_atomic(stamp_path, stamp.encode("utf-8"))   # (the stamp first, as merge_rows_one)
+    write_atomic(path, data)
+    say(f"Saved values: the game reads {win_name}'s GameData/{fname}; merged with {whose} ({len(decided)} changed "
+        f"values kept{', the added ones and the save layout from ' + base[0] if adders else ''}). Its own copy is "
+        f"kept in {win_name}/{GAMEDATA_KEEP}."
+        + (f" {len(both)} values were changed by two mods: the one nearer the top of the list decides." if both else ""))
+    return need
+
+
 def undo(root, say=print):
     """Puts each kept original back, but only over the table the merge wrote: a new seed put into the folder since
     keeps its own table (the kept one is the old seed's). The kept folder and the mark go either way."""
     n = 0
     for name, path in find_mods(root).items():
+        gamedata_keep = os.path.join(path, GAMEDATA_KEEP)
+        if os.path.isdir(gamedata_keep):   # (merge_gamedata: each list back where the merge wrote it)
+            back = []
+            for f in sorted(os.listdir(gamedata_keep)):
+                stamp = read_text(os.path.join(gamedata_keep, f + ".txt")) if f.endswith(GAMEDATA_TAIL) else None
+                out = next((l[4:] for l in (stamp or "").split("\n") if l.startswith("out ")), None)
+                target = os.path.join(path, *GAMEDATA, f)
+                if out and os.path.isfile(target) and out == file_line(root, target):
+                    shutil.copyfile(os.path.join(gamedata_keep, f), target)
+                    back.append(f)
+            shutil.rmtree(gamedata_keep)
+            say(f"Saved values: {name}'s own {', '.join(back)} back." if back else
+                f"Saved values: {name} has another list than the merged one now: left as it is.")
+            n += 1
         members_keep = os.path.join(path, MEMBERS_KEEP)
         if os.path.isdir(members_keep):   # (merge_members: each archive back where the merge wrote it)
             back = []
@@ -1022,6 +1182,8 @@ def main(argv=None):
         return 0
     try:
         rows_failed, fit = merge_rows(a.mods, a.romfs)
+        for k, n in merge_gamedata(a.mods, a.romfs).items():
+            fit[k] = max(fit.get(k, 0), n)
         members_failed, members_fit = merge_members(a.mods, a.romfs)
         for k, n in members_fit.items():
             fit[k] = max(fit.get(k, 0), n)
