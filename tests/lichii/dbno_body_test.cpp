@@ -121,7 +121,7 @@ std::vector<Made> RunFrame(Crawl& c, Guest& g, std::uint64_t now_ms, std::uint64
     std::vector<Made> made;
     auto call = c.Next(g, false, 0, now_ms, kMain);
     while (call) {
-        Made m{call->function - kMain, call->x[0], call->x[1], call->x[2], 0};
+        Made m{call->function - kMain, call->x[0], call->x[1], call->x[2], 0, std::string(), -1.0f};
         std::uint64_t r = 0;
         if (m.function == bn::addr::kMalloc) {
             CHECK(call->x[0] == addr::kBlockSize);
