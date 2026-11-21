@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -39,6 +40,8 @@
 #include "coop_runtime.h"
 #include "coop_lobby_game.h"
 #include "coop_look.h"
+#include "coop_char_colours.h"
+#include "coop_snail_custom.h"
 #include "hos_coop_menu.h"
 #include "coop_longshot_settings.h"
 #include "coop_lobby.h"
@@ -290,14 +293,11 @@ std::uint64_t g_live_gen = 0, g_live_ms = 0;
 // message file loaded again (another language, the archive reloaded) is found where it is now, never written through
 // an old address. Ours when its length is the placeholder's and its text is the placeholder's dots, or our own words at
 // the address we wrote before (the same file still loaded).
-bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
-    if (slot < 0 || slot >= kLiveSlots) return false;   // (a slot past the table: never written through)
-    LiveSlot& l = g_live[slot];
+// (any message file of the pack's placeholders: `file` "LayoutMsg/PlusMenu_00" and "Coop_Live_NN" for the pages' rows;
+// "LayoutMsg/CharacterCustomize_00" and "Coop_Custom_NN" for Character Select's Customize screen, 0.11.9)
+bool LiveLookupIn(void* ctx, LiveSlot& l, const std::string& file, const char* label, std::uint64_t gen) {
     if (l.bad) return false;
     if (l.gen == gen && l.text != 0) return true;
-    char label[16];
-    std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
-    const std::string file = "LayoutMsg/PlusMenu_00";
     std::uint8_t b[0x80] = {};
     const std::uint64_t base = g_api->scratch(ctx, b, sizeof b);
     if (base == 0) return false;
@@ -336,12 +336,31 @@ bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
 
 // `utf8` (at most kLivePlaceholder - 1 bytes) in the text pane at `path` ("Part/Part/Pane"), through slot `slot`.
 // True when shown.
+bool LiveLookup(void* ctx, int slot, std::uint64_t gen) {
+    if (slot < 0 || slot >= kLiveSlots) return false;   // (a slot past the table: never written through)
+    char label[16];
+    std::snprintf(label, sizeof label, "Coop_Live_%02d", slot);
+    return LiveLookupIn(ctx, g_live[slot], "LayoutMsg/PlusMenu_00", label, gen);
+}
+
+// `utf8` in the text pane at `path` of `layout`, through the placeholder `l` (looked up with LiveLookupIn). `force`:
+// set again even when it shows these words (another pane given the same placeholder). True when shown.
+bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSlot& l, const std::string& utf8,
+                bool force = false);
+
 bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::string& path, int slot,
               const std::string& utf8) {
     if (slot < 0 || slot >= kLiveSlots) return false;
     LiveSlot& l = g_live[slot];
     if (l.shown == utf8) return true;
     if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || !LiveLookup(ctx, slot, gen)) return false;
+    return LiveTextIn(ctx, layout, path, l, utf8);
+}
+
+bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSlot& l, const std::string& utf8,
+                bool force) {
+    if (!force && l.shown == utf8) return true;
+    if (path.size() >= 0x40 || utf8.size() >= kLivePlaceholder || l.text == 0) return false;
     // [0x00] the path lookup's layout, [0x10] the path, [0x60] the reference.
     std::uint8_t b[0x80] = {};
     std::memcpy(b + 0x10, path.c_str(), path.size() + 1);
@@ -366,6 +385,117 @@ bool LiveText(void* ctx, std::uint64_t layout, std::uint64_t gen, const std::str
     if (!CoopRuntime::Write(base + 0x60, ref, sizeof ref)) return false;
     if (!Call(ctx, kPaneSetMsg, pane, base + 0x60, 0)) return false;
     l.shown = utf8;
+    return true;
+}
+
+// --- Character Select's Customize screen with co-op's customization (0.11.9, coop_snail_custom.h) ---
+// His screen (layout CharacterCustomize_00) is known by its own panes, once per layout. While it is open its texts are
+// co-op's (through the pack's placeholders in his message file, LayoutMsg/CharacterCustomize_00 Coop_Custom_00..12,
+// added at the kit's start by merge_tables.py), its keys co-op's but the d-pad, B and -. Fallback: when his texts
+// cannot be set (no placeholders: a start without the merge), co-op keeps his keys but the d-pad, B and - from the
+// game there, so none of his six dead rows changes anything. g_snail_mutex (the game's screen updates and the pad).
+constexpr int kSnailSlots = 13;   // 0 the title, 1..6 the labels, 7..12 the values
+constexpr std::uint64_t kSnailStaleMs = 300;
+std::mutex g_snail_mutex;
+CoopSnailCustom::Driver g_snail;
+bool g_snail_open = false, g_snail_fallback = false;
+std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_snail_gen = 0, g_snail_pad_last = 0;
+std::map<std::uint64_t, bool> g_snail_layouts;   // a layout: his Customize screen's or not (looked up once)
+std::array<LiveSlot, kSnailSlots> g_snail_live{};
+CoopSnailCustom::Texts g_snail_shown;
+
+void SnailClose(const char* why) {
+    if (!g_snail_open) return;
+    g_snail_open = false;
+    const bool driven = g_snail.Active();
+    g_snail.Close();
+    if (driven) CoopLook::ApplyOnUnpause();   // (Link wears the look chosen, as when co-op's Customize closes)
+    LOG_INFO(Core, "coop: characters: Character Select's Customize screen left ({})", why);
+}
+
+bool SnailWrite(void* ctx, const CoopSnailCustom::Texts& t) {
+    for (int i = 0; i < kSnailSlots; ++i) {
+        char label[20];
+        std::snprintf(label, sizeof label, "Coop_Custom_%02d", i);
+        if (!LiveLookupIn(ctx, g_snail_live[static_cast<std::size_t>(i)], "LayoutMsg/CharacterCustomize_00", label,
+                          g_snail_gen)) {
+            return false;
+        }
+    }
+    bool ok = LiveTextIn(ctx, g_snail_layout, "T_Head_00", g_snail_live[0], t.title);
+    char path[24];
+    for (int f = 0; f < CoopSnailCustom::kOptions; ++f) {
+        const std::size_t k = static_cast<std::size_t>(f);
+        std::snprintf(path, sizeof path, "T_Label_%02d", f);
+        ok = LiveTextIn(ctx, g_snail_layout, path, g_snail_live[1 + k], t.labels[k]) && ok;
+        // (every value pane of the option: whichever his "Val" frame shows, co-op's value shows)
+        for (int v = 0; v < 16; ++v) {
+            std::snprintf(path, sizeof path, "T_Val_%02d_%02d", f, v);
+            if (!LiveTextIn(ctx, g_snail_layout, path, g_snail_live[7 + k], t.values[k], v > 0)) break;
+        }
+    }
+    return ok;
+}
+
+// One update of any game screen (OnScreen, before the kinds of ours): his Customize screen's.
+void SnailScreen(void* ctx, std::uint64_t screen) {
+    if (ctx == nullptr || !CanCall()) return;
+    const std::uint64_t layout = Read<std::uint64_t>(screen + kScreenLayout);
+    if (layout == 0) return;
+    std::lock_guard lock(g_snail_mutex);
+    auto known = g_snail_layouts.find(layout);
+    if (known == g_snail_layouts.end()) {
+        if (g_snail_layouts.size() > 512) g_snail_layouts.clear();   // (layouts come and go: a bound)
+        const bool his = (FindOwnPane(ctx, layout, "T_Val_00_00") != 0 &&
+                                       FindOwnPane(ctx, layout, "T_Label_00") != 0 &&
+                                       FindOwnPane(ctx, layout, "N_Mark_00") != 0);
+        known = g_snail_layouts.emplace(layout, his).first;
+        if (his) LOG_INFO(Core, "coop: characters: Character Select's Customize screen found (layout {:#x})", layout);
+    }
+    if (!known->second) return;
+    const int state = Read<std::uint8_t>(screen + kScreenState);
+    if (state != 1 && state != 2) {
+        SnailClose("closed");
+        return;
+    }
+    g_snail_seen_ms = NowMs();
+    if (!g_snail_open || screen != g_snail_screen || layout != g_snail_layout) {
+        g_snail_open = true, g_snail_fallback = false;
+        g_snail_screen = screen, g_snail_layout = layout, ++g_snail_gen;
+        g_snail_shown = {};
+        for (auto& l : g_snail_live) l.shown.clear();
+        g_snail.Open(CoopLook::Shown(), CoopCharColours::ShownCharacter());
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened: co-op's customization in it");
+    }
+    if (!g_snail.Active()) return;
+    if (auto look = g_snail.TakeChange()) CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
+    const auto t = g_snail.Shown();
+    if (t == g_snail_shown) return;
+    if (!SnailWrite(ctx, t)) {
+        g_snail.Close();   // (his screen stays; its keys are kept from the game: the fallback)
+        g_snail_fallback = true;
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: its texts cannot be set (no co-op "
+                       "placeholders in its messages: start the game from the kit): its keys are kept from it");
+        return;
+    }
+    g_snail_shown = t;
+}
+
+// The pad while his screen is open: the buttons the game gets (or nothing to do: false).
+bool SnailPad(std::uint64_t in, std::uint64_t* out) {
+    std::lock_guard lock(g_snail_mutex);
+    if (g_snail_open && NowMs() - g_snail_seen_ms > kSnailStaleMs) SnailClose("not seen");
+    const std::uint64_t down = in & ~g_snail_pad_last;
+    g_snail_pad_last = in;
+    if (!g_snail_open) return false;
+    using namespace CoopSnailCustom;
+    constexpr std::uint64_t kDirs = kUp | kDown | kLeft | kRight | kStickUp | kStickDown | kStickLeft | kStickRight;
+    std::uint64_t pass = kDirs | kB | kMinus | kPadPlus;
+    if (g_snail.Active()) {
+        g_snail.Pad(down);
+        if (g_snail.Editing()) pass &= ~(kB | kMinus);   // (B leaves co-op's mixer, not his screen)
+    }
+    *out = in & pass;
     return true;
 }
 
@@ -2543,6 +2673,7 @@ void OnScreen(void* ctx, std::uint64_t screen) noexcept {
         Facts f;
         f.kind = KindOf(vtable - base);
         CensusUpdate(screen, vtable - base);   // (the - menu research: only with COOP_TEST_SCREEN_PROBE=1)
+        SnailScreen(ctx, screen);              // (Character Select's Customize screen: co-op's customization in it)
         if (f.kind == Kind::kOther) return;   // (most updates: the HUD's and the other screens', once a frame each)
         if (f.kind == Kind::kStrip) {   // (row 199: any thread may ask whether the menu is up, GameMenuUp)
             g_strip_state = Read<std::uint8_t>(screen + kScreenState);
@@ -2756,6 +2887,7 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             if (stick[0] > 20000) in |= kPadStickRight;
             if (stick[0] < -20000) in |= kPadStickLeft;
         }
+        if (std::uint64_t snail = 0; SnailPad(in, &snail)) return snail;   // (Character Select's Customize screen)
         bool typing = false;
         std::uint64_t out = 0;
         bool was = false, shown = false;

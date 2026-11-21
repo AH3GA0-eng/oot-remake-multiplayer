@@ -792,3 +792,29 @@ class MergeMembersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SnailCustomizeTest(MergeMembersTest):
+    """0.11.9: co-op's customization in Character Select's Customize screen: its message file gets the placeholders
+    the module writes co-op's words through (Coop_Custom_00..12), its own messages kept."""
+
+    def test_his_customize_messages_get_the_placeholders(self):
+        from puppet_pack import msbt
+        from test_ui_pack import make_msbt
+        his = make_msbt([("T_Label_00", "Hair Color"), ("T_Val_00_00", "Default")])
+        self.mod_raw = self.archive(dict(self.game, **{"Hdr.msbt": b"mod header", mt.SNAIL_MSG: his}))
+        self.put(os.path.join(self.mod, "romfs", *MALS.split("/")), self.mod_raw)
+        failed, _ = self.merge()
+        self.assertEqual(failed, 0)
+        got = msbt.read(self.served()[mt.SNAIL_MSG])
+        self.assertEqual(got.text("T_Label_00"), ["Hair Color"])   # (his own kept)
+        for i in range(mt.SNAIL_SLOTS):
+            self.assertEqual(got.text("Coop_Custom_%02d" % i), [mt.SNAIL_PLACEHOLDER])
+        self.assertIn("placeholders", self.lines[0])
+        self.merge()                                               # the next start: nothing new
+        self.assertIn("already", self.lines[0])
+
+    def test_without_his_customize_screen_nothing_is_added(self):
+        failed, _ = self.merge()
+        self.assertEqual(failed, 0)
+        self.assertNotIn(mt.SNAIL_MSG, self.served())

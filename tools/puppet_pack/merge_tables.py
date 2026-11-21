@@ -47,9 +47,9 @@ import sys
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from puppet_pack import byml, rstb, sarc, zs  # noqa: E402
+    from puppet_pack import byml, rstb, sarc, ui_pack, zs  # noqa: E402
 else:
-    from . import byml, rstb, sarc, zs
+    from . import byml, rstb, sarc, ui_pack, zs
 
 LIST_FILE = "coop-mods.list"
 KEEP_DIR = "_coop-size-table"
@@ -481,6 +481,28 @@ def merge_members(root, romfs, say=print):
     return failed, fit
 
 
+# 0.11.9 (the owner: co-op's customization in place of Character Select's, his screen kept): the module writes co-op's
+# words into his Customize screen's texts (hookshot/src/coop_snail_custom.h), each through a placeholder message of its
+# own in his screen's message file, as the pack's own Coop_Live_NN in LayoutMsg/PlusMenu_00 (the text box keeps a
+# pointer to its text, so each text needs storage of its own): 13 (the title, six labels, six values), 64 dots each.
+SNAIL_MSG = "LayoutMsg/CharacterCustomize_00.msbt"
+SNAIL_SLOTS = 13
+SNAIL_PLACEHOLDER = "." * 64
+
+
+def add_snail_placeholders(entries):
+    """(entries with the placeholders in his Customize screen's message file, whether one changed)."""
+    labels = {"Coop_Custom_%02d" % i: SNAIL_PLACEHOLDER for i in range(SNAIL_SLOTS)}
+    out, changed = [], False
+    for n, d in entries:
+        if n == SNAIL_MSG:
+            d2 = ui_pack.add_labels(d, labels, replace=True)
+            changed = changed or d2 != d
+            d = d2
+        out.append((n, d))
+    return out, changed
+
+
 def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say):
     """Merges one archive. Returns the size the written file needs, or 0."""
     path = os.path.join(win_path, "romfs", *rel.split("/"))
@@ -516,16 +538,17 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
             take[name] = datas   # (the mod left it as the game has it, or has none: the pack's)
         else:
             both.append(name)    # (both changed it: the mod's stays)
-    if take:
-        out, done = [], set()
-        for n, d in entries:
-            if n in take:
-                if n not in done:
-                    out.extend((n, x) for x in take[n])
-                    done.add(n)
-            else:
-                out.append((n, d))
-        out.extend((n, x) for n in sorted(take) if n not in done for x in take[n])
+    out, done = [], set()
+    for n, d in entries:
+        if n in take:
+            if n not in done:
+                out.extend((n, x) for x in take[n])
+                done.add(n)
+        else:
+            out.append((n, d))
+    out.extend((n, x) for n in sorted(take) if n not in done for x in take[n])
+    out, placeholders = add_snail_placeholders(out)
+    if take or placeholders:
         new_data = sarc.write(out, data_align=16)
         data = codec.pack(new_data, orig_raw)
     else:
@@ -550,7 +573,9 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
     say(f"Menus: the game reads {win_name}'s {rel}; merged in the puppet pack's members ({len(take)}: "
         f"{', '.join(sorted(take)) or 'none'}). Its own copy is kept in {win_name}/{MEMBERS_KEEP}."
         + (f" Both changed {', '.join(sorted(both))}: {win_name}'s kept (the co-op part of it is missing)."
-           if both else ""))
+           if both else "")
+        + (" Its Customize screen's messages got co-op's placeholders (co-op's customization in it)."
+           if placeholders else ""))
     return need
 
 
