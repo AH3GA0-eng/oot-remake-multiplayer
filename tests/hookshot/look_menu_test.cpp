@@ -230,7 +230,7 @@ TEST_CASE("look menu (0.11.9): the Character page: three pages of six, ZL and ZR
     Page page;
     page.SetPaged(true);
     Look start;
-    start[Part::master_hilt] = 0xFF0000u;
+    start[Part::master_hilt] = *CoopColors::Parse("red");   // (a preset: its name shows)
     page.Open(start);
     auto v = page.view();
     REQUIRE(v.rows.size() == 7);                    // the heading and six parts: one screen
