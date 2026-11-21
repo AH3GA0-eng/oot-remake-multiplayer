@@ -1739,7 +1739,8 @@ View Menu::view() const {
         v.help = !note_.empty() ? Joined(note_)
                  : name_row && (customize_name_ || typing_)
                      ? std::string("The name the other players see over your Link and in the chat: 1 to 16 characters.")
-                     : c.help;
+                 : character_ ? std::string(kCharacterNote)
+                              : c.help;
         v.change = c.change;
         v.confirm = c.confirm;
         v.back = c.back;

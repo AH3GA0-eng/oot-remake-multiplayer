@@ -171,6 +171,11 @@ public:
     void SetNgPlus(int level, int unlocked, int hearts);
     // (Navi) The Settings page's Saves row: solo or multiplayer saves (CoopSave::MultiplayerSaves).
     void SetSaveSet(bool multiplayer);
+    // Character Select (coop_char_colours.h ShownCharacter): this game shows a character, not Link, so the
+    // Customize page says Link's colours wait for Link (#308's live display; the character keeps its own).
+    void SetCharacter(bool picked) { character_ = picked; }
+    static constexpr const char* kCharacterNote =
+        "A Character Select character is picked: it keeps its own colours (X on its Characters page); these colours show on Link when you pick Link again.";
     // The Find a game page's list (the Join page's first row): the games on this network or the relay's public
     // rooms, as the module hears them while the page shows (find_online() says which). A game picked fills the Join
     // page: `join` its room name or its address, `port` its port (0: the default), then Join.
@@ -257,6 +262,7 @@ private:
     std::optional<std::vector<std::string>> microphones_;
     int ngplus_level_ = 0, ngplus_unlocked_ = 0, ngplus_hearts_ = 0;   // (Navi) New Game+ (SetNgPlus)
     bool mp_saves_ = false;   // (Navi) the Saves row (SetSaveSet)
+    bool character_ = false;  // SetCharacter
     bool find_online_ = true;                 // the Find a game page lists the relay's rooms (else this network's)
     std::string find_search_, search_before_; // its search, as typed
     int find_filter_ = 0, find_sort_ = 0;      // its filter and order (CoopBrowse)

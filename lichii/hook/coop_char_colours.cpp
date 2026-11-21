@@ -263,6 +263,12 @@ int ClothRow(std::uint8_t samplers, std::uint8_t textures) {
     return behind == 3 ? 2 : behind;
 }
 
+namespace {
+std::atomic<std::uint16_t> g_shown{0};
+}
+void SetShownCharacter(std::uint16_t number) { g_shown.store(number, std::memory_order_relaxed); }
+std::uint16_t ShownCharacter() { return g_shown.load(std::memory_order_relaxed); }
+
 Wardrobe& TheWardrobe() {
     static Wardrobe w;
     return w;

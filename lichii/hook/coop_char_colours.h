@@ -145,6 +145,11 @@ private:
     std::atomic<std::uint32_t> viewer_{0};
 };
 
+// The character this game shows for its own player (the save's CharacterMenu_SelectedCharacter, 0: Link), as
+// coop_hook reads it twice a second. Any thread.
+void SetShownCharacter(std::uint16_t number);
+std::uint16_t ShownCharacter();
+
 // The one wardrobe of the game (the runtime's frame and coop_hook's reading of the six Ints).
 Wardrobe& TheWardrobe();
 
