@@ -282,14 +282,35 @@ public:
     void SetMinusRows(std::uint32_t shown);
     int MinusRow() const { return minus_row_; }
     int TakeMinusDecide() { return std::exchange(minus_decide_, -1); }
-    // A row's page lives on the + menu (Find, Host, Join, Players, Settings and look: the Multiplayer page's views): the
-    // module asks the menu for the System page and the game gets one press of - (the - menu's own way to the + menu),
-    // and the Multiplayer page shows at the + menu's opening on System (as a menu closed on our page opens on it again).
-    void GoToPlus();
-    bool GoingToPlus() const { return to_plus_ > 0 || plus_since_ms_ != 0 || plus_press_ > 0; }
-    // The view the row set is kept for that opening (the module puts the page's view back to its five rows only when
-    // not): from GoToPlus until the + menu opens (on our page, or on another page of its: then not).
-    bool ViewKept() const { return keep_view_; }
+    // The page's views (0.11.9, the owner: one home, everything on the - menu): a row whose action opens a view shows
+    // that view on the same page (the module's View; SetMinusInView says one shows). The page has two places for the
+    // pad: its rows on the left, and the list on the right (SetMinusLines: which of its lines can be picked, bit k:
+    // line k). Right on the rows goes into the list when it has a line to pick; up and down move there, A picks the
+    // line (TakeMinusLineDecide), Left or B back to the rows. A list of co-op's menu's own page (Co-op settings, Mods:
+    // SetMinusLines' raw) takes the pad's moves as that menu's own events instead (TakeMinusMoves: up, down, left, right,
+    // A as kMinusMove*), B back to the rows with that menu's Back (TakeMinusListBack). B on a view's rows steps back a
+    // view (TakeMinusBack); B on the tab's own rows is the game's (the menu closes). L and R change the tab from
+    // anywhere (the module puts the view back to the tab's own rows then: MinusTabChanged).
+    void SetMinusInView(bool in_view) { minus_in_view_ = in_view; }
+    void SetMinusLines(std::uint32_t pickable, bool raw);
+    // A tab with no rows of its own (Mods: its list is the page) has the list always; B there is the list's Back while
+    // it has somewhere to go back to (SetMinusRawBack: a mod's page), else the game's (the menu closes).
+    void SetMinusRawBack(bool can) { minus_raw_back_ = can; }
+    bool MinusInList() const { return minus_list_; }
+    // Another view shows (the module saw it change): the rows' cursor on `row` (a view's own: Co-op settings' page
+    // chosen), the list without the pad. MinusEnterList: the list has the pad (A on a Co-op settings row), when it
+    // has a line.
+    void MinusViewChanged(int row);
+    void MinusEnterList();
+    int MinusLine() const { return minus_line_; }
+    int TakeMinusLineDecide() { return std::exchange(minus_line_decide_, -1); }
+    bool TakeMinusBack() { return std::exchange(minus_back_, false); }
+    bool TakeMinusListBack() { return std::exchange(minus_list_back_, false); }
+    static constexpr std::uint32_t kMinusMoveUp = 1, kMinusMoveDown = 2, kMinusMoveLeft = 4, kMinusMoveRight = 8,
+                                   kMinusMoveA = 16;
+    std::uint32_t TakeMinusMoves() { return std::exchange(minus_moves_, 0u); }
+    // The tab lit changed (or the - menu closed) since the last call: the module's view back to the tab's rows.
+    bool MinusTabChanged() { return std::exchange(minus_tab_changed_, false); }
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
@@ -358,14 +379,18 @@ private:
     int minus_row_ = 0;             // MinusRow
     int minus_decide_ = -1;         // TakeMinusDecide
     std::uint32_t minus_rows_ = 0;  // SetMinusRows
-    int to_plus_ = 0;               // GoToPlus: the pad reads left with the game's - pressed (down, then let go)
-    // GoToPlus, then: the - press closes the - menu (lane R1, 0.11.9: it never went to the + menu); once the - menu is
-    // closed the game gets one + press (down one read, let go the next), which opens the + menu on System (the menu
-    // manager's page) and so on our page. plus_since_ms_: when the - was let go (0: not waiting); given up after
-    // kPlusWaitMs (the view kept no longer).
-    int plus_press_ = 0;
-    std::uint64_t plus_since_ms_ = 0;
-    bool keep_view_ = false;        // ViewKept
+    bool minus_in_view_ = false;        // SetMinusInView
+    bool minus_list_ = false;           // MinusInList
+    bool minus_raw_ = false;            // SetMinusLines' raw
+    bool minus_raw_back_ = false;       // SetMinusRawBack
+    int minus_line_ = -1;               // MinusLine
+    std::uint32_t minus_lines_ = 0;     // SetMinusLines' pickable
+    int minus_line_decide_ = -1;        // TakeMinusLineDecide
+    bool minus_back_ = false, minus_list_back_ = false;
+    std::uint32_t minus_moves_ = 0;     // TakeMinusMoves
+    bool minus_tab_changed_ = false;    // MinusTabChanged
+    void MinusLineStep(int dir);
+    void MinusTabMoved();
     void MinusStep(int dir);
     bool CanMinus(std::uint64_t now_ms) const;
     std::uint64_t MinusPad(std::uint64_t buttons, std::uint64_t down);

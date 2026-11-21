@@ -19,8 +19,6 @@ namespace {
 
 // A screen whose updates stopped this long ago is taken as gone (the game updates an open menu once a frame).
 constexpr std::uint64_t kStaleMs = 250;
-constexpr std::uint64_t kPlusGapMs = 200;    // after our - is let go: at least this before the + press
-constexpr std::uint64_t kPlusWaitMs = 3000;  // the - menu not closed by then: no + press
 constexpr std::uint64_t kTypingStartMs = 400;   // (an A this soon after typing began is the one that began it)
 // A window over the page keeps it away this long after its last opening, open or closing update.
 constexpr std::uint64_t kBlockMs = 250;
@@ -194,47 +192,133 @@ void Page::MinusStep(int dir) {
     }
 }
 
-void Page::GoToPlus() {
-    to_plus_ = 2, keep_view_ = true;
-    again_ = true, which_ = 0;   // (the + menu's opening on System shows the Multiplayer page: ShowAgain)
+void Page::SetMinusLines(std::uint32_t pickable, bool raw) {
+    minus_lines_ = pickable, minus_raw_ = raw;
+    if (raw) return;   // (co-op's menu's own page: its selection is its own)
+    if (pickable == 0) {
+        minus_list_ = false, minus_line_ = -1;
+        return;
+    }
+    if (minus_line_ < 0 || (pickable & (1u << minus_line_)) == 0) {   // (its line gone: the nearest after, else before)
+        const int was = minus_line_;
+        minus_line_ = -1;
+        for (int k = std::max(was, 0); k < 32 && minus_line_ < 0; ++k) {
+            if ((pickable & (1u << k)) != 0) minus_line_ = k;
+        }
+        for (int k = std::min(was, 31); k >= 0 && minus_line_ < 0; --k) {
+            if ((pickable & (1u << k)) != 0) minus_line_ = k;
+        }
+    }
+}
+
+void Page::MinusViewChanged(int row) {
+    minus_row_ = row >= 0 && row < kRows ? row : 0;
+    minus_list_ = false, minus_line_ = -1, minus_line_decide_ = -1, minus_moves_ = 0, minus_list_back_ = false;
+}
+
+void Page::MinusEnterList() {
+    if (minus_lines_ == 0 || minus_tab_ < 0) return;
+    minus_list_ = true;
+    if (!minus_raw_) SetMinusLines(minus_lines_, false);
+}
+
+void Page::MinusLineStep(int dir) {
+    for (int k = minus_line_ + dir; k >= 0 && k < 32; k += dir) {   // (no wrap, as the rows)
+        if ((minus_lines_ & (1u << k)) != 0) {
+            minus_line_ = k;
+            return;
+        }
+    }
+}
+
+void Page::MinusTabMoved() {
+    minus_row_ = 0, minus_rows_ = 0;   // (another page: its first row; the module sets its rows)
+    minus_list_ = false, minus_line_ = -1, minus_lines_ = 0, minus_raw_ = false, minus_raw_back_ = false;
+    minus_in_view_ = false, minus_back_ = false, minus_list_back_ = false, minus_moves_ = 0, minus_line_decide_ = -1;
+    minus_decide_ = -1;
+    minus_tab_changed_ = true;
 }
 
 std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
-    if (to_plus_ > 0) {   // (the game's -: pressed one read, let go the next; the rest is kept from the game)
-        swallow_ |= buttons;
-        if (to_plus_ == 1) plus_since_ms_ = std::max<std::uint64_t>(pad_ms_, 1);   // (then the + press: PlusAfterMinus)
-        return to_plus_-- == 2 ? kPadMinus : 0;
-    }
     if (minus_tab_ < 0) {
         if ((down & kPadR) != 0 && strip_.lit == kMapCategory) {
             minus_tab_ = 0, minus_slide_ = 1;
+            MinusTabMoved();
             strip_sound_ = "mc_TabToRight";
             swallow_ |= buttons & ~kPadPassed;
             return buttons & kPadPassed & ~swallow_;
         }
         return buttons & ~swallow_;
     }
+    if (typing_ >= 0) {   // (a field of a view typed into: every button is its, none reaches the game)
+        TypingPad(down, buttons, pad_ms_);
+        if (pages_sound_ != nullptr) strip_sound_ = std::exchange(pages_sound_, nullptr);   // (the strip plays ours)
+        swallow_ |= buttons;
+        return 0;
+    }
+    if (minus_rows_ == 0 && minus_lines_ != 0 && !minus_list_) {   // (a tab whose list is its page: the list's)
+        minus_list_ = true;
+        if (!minus_raw_) SetMinusLines(minus_lines_, false);
+    }
+    const bool up = (down & (kPadUp | kPadStickUp)) != 0, dn = (down & (kPadDown | kPadStickDown)) != 0;
+    const bool left = (down & (kPadLeft | kPadStickLeft)) != 0, right = (down & (kPadRight | kPadStickRight)) != 0;
     if ((down & kPadR) != 0) {
         if (minus_tab_ < kMinusTabs - 1) {
             ++minus_tab_, minus_slide_ = 1;
             strip_sound_ = "mc_TabToRight";
-            minus_row_ = 0, minus_rows_ = 0;   // (another page: its first row; the module sets its rows)
+            MinusTabMoved();
         }
         swallow_ |= kPadR;
     } else if ((down & kPadL) != 0) {
         --minus_tab_, minus_slide_ = -1;   // (off the first: Map again)
         strip_sound_ = "mc_TabToLeft";
-        minus_row_ = 0, minus_rows_ = 0;
+        MinusTabMoved();
         swallow_ |= kPadL;
-    } else if ((down & (kPadUp | kPadStickUp | kPadDown | kPadStickDown)) != 0 && minus_rows_ != 0) {
+    } else if (minus_list_ && minus_raw_) {   // (co-op's menu's own page: the moves are its events)
+        if ((down & kPadB) != 0 && (minus_rows_ != 0 || minus_raw_back_)) {
+            if (minus_rows_ != 0) minus_list_ = false;   // (back to the rows; a tab with none keeps the list)
+            minus_list_back_ = true;
+            strip_sound_ = "button_cancel";
+            swallow_ |= kPadB;
+        } else if ((down & kPadB) == 0) {
+            const std::uint32_t moves = (up ? kMinusMoveUp : 0u) | (dn ? kMinusMoveDown : 0u) |
+                                        (left ? kMinusMoveLeft : 0u) | (right ? kMinusMoveRight : 0u) |
+                                        ((down & kPadA) != 0 ? kMinusMoveA : 0u);
+            minus_moves_ |= moves;
+            if ((moves & kMinusMoveA) != 0) strip_sound_ = "button_decide";
+            else if (moves != 0) strip_sound_ = "button_on";
+        }
+    } else if (minus_list_) {
+        if (((down & kPadB) != 0 || left) && minus_rows_ != 0) {
+            minus_list_ = false;
+            strip_sound_ = "button_cancel";
+            if ((down & kPadB) != 0) swallow_ |= kPadB;
+        } else if (up || dn) {
+            const int was = minus_line_;
+            MinusLineStep(up ? -1 : 1);
+            if (minus_line_ != was) strip_sound_ = "button_on";
+        } else if ((down & kPadA) != 0 && minus_line_ >= 0) {
+            minus_line_decide_ = minus_line_;
+            strip_sound_ = "button_decide";
+        }
+    } else if (right && minus_lines_ != 0) {   // (into the list on the right)
+        minus_list_ = true;
+        if (!minus_raw_) SetMinusLines(minus_lines_, false);   // (a line picked)
+        strip_sound_ = "button_on";
+    } else if ((up || dn) && minus_rows_ != 0) {
         const int was = minus_row_;
-        MinusStep((down & (kPadUp | kPadStickUp)) != 0 ? -1 : 1);
+        MinusStep(up ? -1 : 1);
         if (minus_row_ != was) strip_sound_ = "button_on";
     } else if ((down & kPadA) != 0 && (minus_rows_ & (1u << minus_row_)) != 0) {
         minus_decide_ = minus_row_;
         strip_sound_ = "button_decide";
+    } else if ((down & kPadB) != 0 && minus_in_view_) {   // (a view: back a view, not out of the menu)
+        minus_back_ = true;
+        strip_sound_ = "button_cancel";
+        swallow_ |= kPadB;
     }
-    // (ours shows: its page has the pad; B, + and - stay the game's, which close or change the menu)
+    // (ours shows: its page has the pad; B (on the tab's own rows), + and - stay the game's, which close or change
+    // the menu)
     const std::uint64_t game = kPadB | kPadPlus | kPadMinus;
     swallow_ |= buttons & ~game;
     return buttons & game & ~swallow_;
@@ -335,8 +419,8 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         // (the - menu's tabs of ours: shown while its strip is open; gone with it, and ours with them)
         if (minus_ok_) {
             const bool minus_open = f.mode != kPlusMode && (f.state == 1 || f.state == 2);
-            if (!minus_open) minus_tab_ = -1, minus_row_ = 0, minus_rows_ = 0, minus_decide_ = -1;
-            if (!minus_open && to_plus_ > 0) to_plus_ = 0, plus_since_ms_ = 0, keep_view_ = again_ = false;   // (closed early)
+            if (!minus_open && minus_tab_ >= 0) minus_tab_ = -1, MinusTabMoved();   // (closed: the view with it)
+            if (!minus_open && !shown_ && typing_ >= 0) EndTyping(false);
             const int state = !minus_open ? -2 : minus_tab_;
             const std::uint64_t gen = strip_seen_.gen;
             if (state != minus_set_ || (minus_open && minus_gen_ != gen)) {
@@ -363,23 +447,6 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     swallow_ &= buttons;   // (let go: the game gets it again)
     if (shown_ && !CanStay(now_ms)) {
         Hide("the menu's state changed", pages_.state == 3 || pages_.state == 0 || strip_.state == 3 || strip_.state == 0);
-    }
-    if (plus_press_ > 0 || plus_since_ms_ != 0) {   // (after our -: the + menu, once the - menu is closed)
-        if (plus_press_ > 0) {
-            swallow_ |= buttons;
-            return plus_press_-- == 2 ? kPadPlus : 0;
-        }
-        // (closing, state 3, still counts as up: a + during the close is the game's to drop)
-        const bool minus_up = strip_.screen != 0 && now_ms - strip_ms_ < kStaleMs && strip_.mode != kPlusMode &&
-                              strip_.state != 0;
-        if (!minus_up && now_ms - plus_since_ms_ >= kPlusGapMs) {
-            plus_since_ms_ = 0, plus_press_ = 2;
-            swallow_ |= buttons;
-            return 0;
-        }
-        if (now_ms - plus_since_ms_ >= kPlusWaitMs) {   // (the - menu never closed: the view is not kept)
-            plus_since_ms_ = 0, keep_view_ = again_ = false;
-        }
     }
     if (!shown_ && CanMinus(now_ms)) return MinusPad(buttons, down);   // (the - menu: its tabs of ours)
     if (!shown_) {
@@ -441,7 +508,7 @@ bool Page::TakeBack() {
 }
 
 void Page::StartTyping(int which) {
-    if (!shown_) return;
+    if (!shown_ && minus_tab_ < 0) return;   // (our page, or a view on the - menu's)
     typing_ = which >= 0 && which < kFields ? which : 0;
     typing_was_ = Field(typing_).text();
     key_ = 0;
@@ -576,15 +643,14 @@ bool Page::Char(std::uint32_t cp) {
 
 void Page::ShowAgain(std::uint64_t now_ms) {
     if (!again_ || shown_) {
-        if (!again_) keep_view_ = false;
         return;
     }
     if (pages_.state == 2 && pages_.page != kSystemPage && pages_.page >= 0) {
-        again_ = false, keep_view_ = false;   // (the menu open on another page: not ours)
+        again_ = false;   // (the menu open on another page: not ours)
         return;
     }
     if (CanStay(now_ms)) {
-        shown_ = true, again_ = false, decide_ = false, why_.clear(), keep_view_ = false;
+        shown_ = true, again_ = false, decide_ = false, why_.clear();
         slide_ = 0;   // (the menu opening on our page: at once, as the game opens on its own last page)
     }
 }
