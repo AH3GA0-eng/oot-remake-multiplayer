@@ -972,6 +972,7 @@ class Session {
  private:
   SessionConfig config_;
   std::string session_game_build_;  // set while players are in
+  std::string session_release_;     // the first player's co-op release (coop_release), "" none; while players are in
   std::map<ConnectionId, Connection> connections_;
   ConnectionId next_local_id_ = kLocalPlayerIds;
   // The host's connection; set while players are in.

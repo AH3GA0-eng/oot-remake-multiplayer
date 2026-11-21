@@ -1992,7 +1992,8 @@ public:
                     world_.TakenKey(key);
                     // skulltula-0118: taken here, so no copy of it stays or is made
                     // here either, and our own one leaving is its death for all.
-                    sync_.Take(key);
+                    sync_.Take(key);       // (#308: its key + 2 too, as a take from another game's flag does: an
+                    sync_.Take(key + 2);   // announcement of it made a copy, 2026-11-20; both name one placement)
                     char hex[24];
                     std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(key));
                     LOG_INFO(Core, "coop: objects: Gold Skulltula {} is taken in this save: its token goes",
