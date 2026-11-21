@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdint>
 #include <utility>
 
 #include "coop_i18n.h"
@@ -70,6 +72,12 @@ constexpr std::size_t kMaxPortBytes = 5;
 const char* const kHostPortHelp =
     "The UDP port other players reach you on (default 27510). Type a number from 1 to 65535; changing it while "
     "hosting restarts hosting: friends join again with the new code.";
+// The Host page's Game row, its two choices' notes (docs/play-online.md "Public games").
+const char* const kPrivateHelp =
+    "Private game (the default): friends join with your code or room name and the password. Nobody else can join.";
+const char* const kPublicHelp =
+    "Public game: shows in Public games and anyone can join, no password. Only through the game list's server, so "
+    "players never see your internet address. Kick or ban players from the Lobby tab.";
 
 // A join password is never drawn: one star per character.
 std::string Masked(const std::string& password) {
@@ -327,6 +335,9 @@ std::vector<Menu::Line> Menu::Lines() const {
                     out.push_back({Note("+" + std::to_string(session_.asking.size() - 1) + " more ask"), Act::kNone, {}});
                 }
             }
+            // (a public game: relay only, so no row that holds an address or a password: no code, answer,
+            // same-network, VPN or password line)
+            if (!session_.public_game) {
             out.push_back({Action("Copy the code again", "Copy", session_.code.empty()), Act::kCopyInvite,
                            "Puts your code on the clipboard again. Share it in DMs only: it contains your internet address."});
             out.push_back({Action("Paste friend's answer (or Ctrl+V)", "Paste"), Act::kPasteAnswer,
@@ -353,12 +364,30 @@ std::vector<Menu::Line> Menu::Lines() const {
                                "A new join password, typed on the keyboard; Enter gives it to your game. Players who "
                                "join from now on need it; players already in stay. No spaces, at most 128 characters."});
             }
+            }   // (not a public game)
             out.push_back({Action("Port", port_value), Act::kHostPort, kHostPortHelp});
+            // (the game's kind as it was hosted; a change applies at the next Host, and the row says so)
+            out.push_back({Choice("Game", options_.public_game ? "Public game" : "Private game"), Act::kGameKind,
+                           options_.public_game == session_.public_game
+                               ? std::string(session_.public_game ? kPublicHelp : kPrivateHelp)
+                               : std::string("Applies at your next Host: stop hosting, then start again.")});
             out.push_back({Action("Stop hosting", confirm_leave_ ? "Press again to confirm" : "Stop"), Act::kLeave,
                            "Ends your game for everyone in it."});
         } else {
             out.push_back({Action("Start hosting", "Start", session_.by_launcher || guest), Act::kStartHost,
-                           "Starts a game on this PC and makes a code for your friends."});
+                           options_.public_game ? "Starts a public game on this PC: it shows in Public games, and "
+                                                  "anyone can join without a password."
+                                                : "Starts a game on this PC and makes a code for your friends."});
+            out.push_back({Choice("Game", options_.public_game ? "Public game" : "Private game"), Act::kGameKind,
+                           options_.public_game ? kPublicHelp : kPrivateHelp});
+            if (options_.public_game) {
+                out.push_back({Action("Room name", typing_ && typing_act_ == Act::kRoom ? options_.relay_room + "_"
+                                                   : options_.relay_room.empty()        ? std::string("None")
+                                                                                        : options_.relay_room),
+                               Act::kRoom,
+                               "Your public game's name in Public games: 3 to 24 letters, digits, - or _. A ready one "
+                               "is offered; change it if you like."});
+            }
             out.push_back({Choice("Players", std::to_string(options_.max_players)), Act::kPlayers,
                            "The most players in your game, you included."});
             out.push_back({Action("Port", port_value), Act::kHostPort, kHostPortHelp});
@@ -1212,6 +1241,10 @@ void Menu::Decide(Act act) {
         }
         break;
     case Act::kStartHost:
+        if (options_.public_game && options_.relay_room.empty()) {   // (as kGameKind: a ready name)
+            options_.relay_room = CoopTitleMenu::Options::RandomRoomName(static_cast<std::uint64_t>(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        }
         request_ = Request{Request::Kind::kHost, {}};
         break;
     case Act::kOpenJoin:
@@ -1408,6 +1441,7 @@ void Menu::Decide(Act act) {
     case Act::kSameNetwork:
     case Act::kListRoom:
     case Act::kAutoRejoin:
+    case Act::kGameKind:
         Change(act, 0);   // (a toggle: A flips it)
         break;
     case Act::kNone:
@@ -1453,6 +1487,14 @@ void Menu::Change(Act act, int step) {
     case Act::kFindSort:
         find_sort_ = (find_sort_ + (step < 0 ? CoopBrowse::kSorts - 1 : 1)) % CoopBrowse::kSorts;
         Clamp();
+        break;
+    case Act::kGameKind:
+        options_.public_game = !options_.public_game;   // (two choices: either way flips it)
+        if (options_.public_game && options_.relay_room.empty()) {   // (a public game needs a name: a ready one)
+            options_.relay_room = CoopTitleMenu::Options::RandomRoomName(static_cast<std::uint64_t>(
+                std::chrono::steady_clock::now().time_since_epoch().count()));
+        }
+        request_ = Request{Request::Kind::kSave, {}};
         break;
     case Act::kMic: {
         if (!microphones_) {
