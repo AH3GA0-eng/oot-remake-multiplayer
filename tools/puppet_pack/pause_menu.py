@@ -51,6 +51,10 @@ MALS_GLOB = "Mals/*.Product.*.sarc.zs"
 TAB = "Pa_Category_%02d"
 GAME_TABS = 4                 # Pa_Category_00..03
 NEW_TAB = TAB % GAME_TABS     # Pa_Category_04: the Character tab (0.11.9), after System
+# The - menu's tabs of ours (0.11.9: Multiplayer, Local co-op, Mods, right of Map; CoopPauseTab::kMinusTabNames):
+# Pa_Category_05..07, copies of the third tab (Pa_Category_02, the - menu's Map) one game step apart after it.
+MINUS_TABS = [TAB % (GAME_TABS + 1 + i) for i in range(3)]
+MINUS_SOURCE = TAB % 2
 TAB_ROOT = "RootPane"
 L_LABEL, R_LABEL = "T_BtnL_00", "T_BtnR_00"
 SYSTEM_PAGE = "Pa_System_00"
@@ -100,8 +104,9 @@ def add_tab(d):
     for i in range(GAME_TABS):
         if TAB % i not in names:
             raise PauseMenuError("the layout has no %s" % (TAB % i))
-    if NEW_TAB in names:
-        raise PauseMenuError("the layout has %s already" % NEW_TAB)
+    for name in [NEW_TAB] + MINUS_TABS:
+        if name in names:
+            raise PauseMenuError("the layout has %s already" % name)
     for name in (L_LABEL, R_LABEL, TAB_ROOT):
         if name not in names:
             raise PauseMenuError("the layout has no %s" % name)
@@ -112,6 +117,11 @@ def add_tab(d):
     off = ui_pack.frame_offset(d, last, TAB_ROOT)
     d = ui_pack.clone_parts(d, [ui_pack.Copy(last, NEW_TAB, (step - FIFTH_GAP + off[0], off[1]), parent=TAB_ROOT,
                                              hidden=True)], new_id=_new_id)
+    # (the - menu's three after its Map, stored hidden: the module shows, places and fills them there)
+    src_off = ui_pack.frame_offset(d, MINUS_SOURCE, TAB_ROOT)
+    d = ui_pack.clone_parts(d, [ui_pack.Copy(MINUS_SOURCE, name, ((i + 1) * step + src_off[0], src_off[1]),
+                                             parent=TAB_ROOT, hidden=True) for i, name in enumerate(MINUS_TABS)],
+                            new_id=_new_id)
     return ui_pack.move_panes(d, {R_LABEL: (R_MOVE, 0.0)})
 
 

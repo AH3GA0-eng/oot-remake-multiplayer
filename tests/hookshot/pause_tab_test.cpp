@@ -2439,3 +2439,74 @@ TEST_CASE("pause tab: the fourth tab's place and fades taken one update ahead, n
     CHECK(Ahead(0.4f, 0.1f, 0.0f) == 0.0f);
     CHECK(Ahead(1.0f, 1.0f, 1.0f) == 1.0f);
 }
+
+TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R and L among ours, L back to Map") {
+    constexpr int kMinusMode = 0;
+    Page p = UsablePage();
+    std::uint64_t now = 1000;
+    // Without the pack's tabs: the - menu's R and L stay the game's.
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now);
+    p.OnPad(0, now);
+    CHECK(p.OnPad(kPadR, now + 10) == kPadR);
+    CHECK(p.MinusTab() == -1);
+    p.OnPad(0, now + 12);
+
+    p.SetMinusTabsUsable(true);
+    Page::Do d = p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now + 20);
+    CHECK(d.set_minus);
+    CHECK(d.minus_shown);
+    CHECK(d.fill_minus);
+    CHECK(d.minus_lit == -1);
+    // R on Map: our first tab, sliding in, the game's tab sound; never the game's R.
+    CHECK(p.OnPad(kPadR, now + 30) == 0);
+    CHECK(p.MinusTab() == 0);
+    CHECK(std::string(kMinusTabNames[p.MinusTab()]) == "Multiplayer");
+    CHECK(std::string(p.TakeStripSound()) == "mc_TabToRight");
+    d = p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now + 40);
+    CHECK(d.set_minus);
+    CHECK(d.minus_lit == 0);
+    CHECK(d.minus_slide == 1);
+    CHECK_FALSE(d.fill_minus);
+    // Its page has the pad: A and the d-pad are ours, B / + / - the game's.
+    p.OnPad(0, now + 42);
+    CHECK(p.OnPad(kPadA, now + 44) == 0);
+    p.OnPad(0, now + 46);
+    CHECK((p.OnPad(kPadB, now + 48) & kPadB) != 0);
+    p.OnPad(0, now + 50);
+    // R to Local co-op and Mods, then nothing past the last.
+    p.OnPad(kPadR, now + 52), p.OnPad(0, now + 54);
+    CHECK(p.MinusTab() == 1);
+    p.OnPad(kPadR, now + 56), p.OnPad(0, now + 58);
+    CHECK(p.MinusTab() == 2);
+    p.TakeStripSound();
+    CHECK(p.OnPad(kPadR, now + 60) == 0);
+    CHECK(p.MinusTab() == 2);
+    CHECK(p.TakeStripSound() == nullptr);
+    p.OnPad(0, now + 62);
+    // L back through ours to Map.
+    for (int want : {1, 0, -1}) {
+        CHECK(p.OnPad(kPadL, now + 64) == 0);
+        CHECK(p.MinusTab() == want);
+        CHECK(std::string(p.TakeStripSound()) == "mc_TabToLeft");
+        p.OnPad(0, now + 66);
+    }
+    d = p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now + 70);
+    CHECK(d.minus_lit == -1);
+    CHECK(d.minus_slide == -1);
+    // R on another - page (Key Items): the game's.
+    p.OnScreen(Strip(0x9000, 8, 6, kMinusMode), now + 80);
+    CHECK(p.OnPad(kPadR, now + 82) == kPadR);
+    CHECK(p.MinusTab() == -1);
+    p.OnPad(0, now + 84);
+    // The menu closing (or the + menu) leaves ours, and the tabs go.
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now + 90);
+    p.OnPad(kPadR, now + 92), p.OnPad(0, now + 94);
+    REQUIRE(p.MinusTab() == 0);
+    d = p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 100);
+    CHECK(p.MinusTab() == -1);
+    CHECK(d.set_minus);
+    CHECK_FALSE(d.minus_shown);
+    // In the + menu nothing of ours there.
+    d = p.OnScreen(Strip(0x9000, 8, kSystemPage), now + 120);
+    CHECK_FALSE(d.minus_shown);
+}

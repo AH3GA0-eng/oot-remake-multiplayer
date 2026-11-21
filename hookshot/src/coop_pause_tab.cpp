@@ -168,6 +168,40 @@ bool Page::CanStay(std::uint64_t now_ms) const {
            strip_.mode == kPlusMode && strip_.tabs >= 4 && now_ms >= blocked_until_ms_;
 }
 
+bool Page::CanMinus(std::uint64_t now_ms) const {
+    return minus_ok_ && strip_.screen != 0 && now_ms - strip_ms_ < kStaleMs && strip_.mode != kPlusMode &&
+           (strip_.state == 1 || strip_.state == 2) && now_ms >= blocked_until_ms_;
+}
+
+// The pad while the - menu is up and ours can be used: R on Map onto ours, R / L among ours, L off the first back to
+// Map. Buttons the module took are kept from the game until let go.
+std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
+    if (minus_tab_ < 0) {
+        if ((down & kPadR) != 0 && strip_.lit == kMapCategory) {
+            minus_tab_ = 0, minus_slide_ = 1;
+            strip_sound_ = "mc_TabToRight";
+            swallow_ |= buttons & ~kPadPassed;
+            return buttons & kPadPassed & ~swallow_;
+        }
+        return buttons & ~swallow_;
+    }
+    if ((down & kPadR) != 0) {
+        if (minus_tab_ < kMinusTabs - 1) {
+            ++minus_tab_, minus_slide_ = 1;
+            strip_sound_ = "mc_TabToRight";
+        }
+        swallow_ |= kPadR;
+    } else if ((down & kPadL) != 0) {
+        --minus_tab_, minus_slide_ = -1;   // (off the first: Map again)
+        strip_sound_ = "mc_TabToLeft";
+        swallow_ |= kPadL;
+    }
+    // (ours shows: its page has the pad; B, + and - stay the game's, which close or change the menu)
+    const std::uint64_t game = kPadB | kPadPlus | kPadMinus;
+    swallow_ |= buttons & ~game;
+    return buttons & game & ~swallow_;
+}
+
 void Page::Hide(const char* why, bool keep) {
     if (!shown_) {
         return;
@@ -263,6 +297,20 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
             d.set_page = true, d.page_shown = true, d.page_from = std::max(page_set_, 0), d.page_to = 1 + which_;
             d.slide = std::exchange(slide_, 0), page_set_ = 1 + which_;
         }
+        // (the - menu's tabs of ours: shown while its strip is open; gone with it, and ours with them)
+        if (minus_ok_) {
+            const bool minus_open = f.mode != kPlusMode && (f.state == 1 || f.state == 2);
+            if (!minus_open) minus_tab_ = -1;
+            const int state = !minus_open ? -2 : minus_tab_;
+            const std::uint64_t gen = strip_seen_.gen;
+            if (state != minus_set_ || (minus_open && minus_gen_ != gen)) {
+                d.set_minus = true, d.minus_shown = minus_open, d.minus_lit = minus_open ? minus_tab_ : -1;
+                d.fill_minus = minus_open && minus_gen_ != gen;
+                if (d.fill_minus) minus_gen_ = gen;
+                d.minus_slide = std::exchange(minus_slide_, 0);
+                minus_set_ = state;
+            }
+        }
         // (the Character tab: shown in the Plus menu while the strip is open, lit with its page; System's lit while
         // System is the page, ours in its place included. Set when it changes, and filled once per opening)
         if (tab_ok_) {
@@ -295,6 +343,7 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     if (shown_ && !CanStay(now_ms)) {
         Hide("the menu's state changed", pages_.state == 3 || pages_.state == 0 || strip_.state == 3 || strip_.state == 0);
     }
+    if (!shown_ && CanMinus(now_ms)) return MinusPad(buttons, down);   // (the - menu: its tabs of ours)
     if (!shown_) {
         if ((down & (kPadR | kPadZR)) != 0 && tab_ok_ && CanShow(now_ms)) {
             // (R on System: the Character tab, sliding in from the right with the game's own tab sound; the game's R

@@ -68,8 +68,14 @@ class TabTest(unittest.TestCase):
         d = overlay()
         n = pm.add_tab(d)
         panes, parts = ui_pack.read_layout(n)
-        self.assertEqual(len(panes), len(OVERLAY) + 1)
-        self.assertEqual((panes[-1].name, parts[-1].name), ("Pa_Category_04", "Pa_Category_04"))
+        self.assertEqual(len(panes), len(OVERLAY) + 4)   # the Character tab and the - menu's three
+        names = [p.name for p in panes]
+        self.assertEqual(names[len(OVERLAY):], ["Pa_Category_04"] + pm.MINUS_TABS)
+        # the - menu's three: copies of the third tab (its Map), one game step apart after it, under the root, hidden
+        for i, name in enumerate(pm.MINUS_TABS):
+            x, y, parent, _ = pane(n, name)
+            self.assertEqual((x, y, parent), (600.0 + (i + 1) * 100.0 + 600.0, -60.0 - 60.0, "RootPane"), name)
+        self.assertEqual([p.name for p in parts][-4:], ["Pa_Category_04"] + pm.MINUS_TABS)
         # the game's four and L where they were (the strip's animation places them)
         for name in ["Pa_Category_%02d" % i for i in range(4)] + ["T_BtnL_00"]:
             self.assertEqual(pane(n, name), pane(d, name), name)
@@ -80,14 +86,16 @@ class TabTest(unittest.TestCase):
         # the order holds: only the root reaches the copy, every other pane ends where it did
         old = [struct.unpack_from("<I", d, p.record + 0x34)[0] for p in ui_pack.read_layout(d)[0]]
         new = [struct.unpack_from("<I", n, p.record + 0x34)[0] for p in panes[:len(OVERLAY)]]
-        self.assertEqual(new, [len(OVERLAY) + 1] + old[1:])
+        self.assertEqual(new, [len(OVERLAY) + 4] + old[1:])
         # the copy is the fourth tab's part, with its own parameters
-        rec = parts[-1].record
-        self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, rec)[0]), "PaMenuCategory_00")
-        self.assertEqual(panes[-1].id, ui_pack.part_id("Pa_Category_04"))   # (the game's id: CityHash64 of the name)
-        # stored hidden: only the co-op module shows it (bit 0 of the kind word; the source's has it)
+        # each copy is a tab's part, with the game's id for its name (CityHash64), stored hidden: only the co-op
+        # module shows it (bit 0 of the kind word; the source's has it)
         kind = lambda n, i: struct.unpack_from("<I", n, ui_pack.read_layout(n)[0][i].record + 0x38)[0]
-        self.assertEqual(kind(n, -1), kind(d, 7) & ~1)
+        for k, name in enumerate(["Pa_Category_04"] + pm.MINUS_TABS):
+            i = len(OVERLAY) + k
+            self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-4 + k].record)[0]), "PaMenuCategory_00")
+            self.assertEqual(panes[i].id, ui_pack.part_id(name))
+            self.assertEqual(kind(n, i), kind(d, 7 if k == 0 else 6) & ~1)
         self.assertTrue(kind(d, 7) & 1)
 
 
@@ -265,7 +273,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(set(written), set(made))
         common = dict(sarc.read_entries(written[pm.COMMON_ARCHIVE]))
         self.assertIn("Pa_Category_04", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
-        self.assertNotIn("Pa_Category_05", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
+        self.assertNotIn("Pa_Category_08", [p.name for p in ui_pack.read_layout(common[pm.OVERLAY_LAYOUT])[0]])
         self.assertIn("Pa_Coop_00", [p.name for p in ui_pack.read_layout(common[pm.PAGES_LAYOUT])[0]])
         self.assertIn(pm.ROW % 6, [p.name for p in ui_pack.read_layout(common[pm.SYSTEM_LAYOUT])[0]])
         self.assertIn(pm.SETTINGS_BUTTON, [p.name for p in ui_pack.read_layout(common[pm.SYSTEM_LAYOUT])[0]])
