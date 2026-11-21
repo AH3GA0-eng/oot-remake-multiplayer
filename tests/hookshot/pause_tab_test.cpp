@@ -740,11 +740,14 @@ TEST_CASE("pause tab: the rows' own views: Players, Let in and Join on the same 
     CHECK(ActionFor(View::kJoin, kRows - 1, idle) == RowAction::kBack);
     Session in_one;
     in_one.in_one = in_one.rejoin = true;
-    CHECK(ActionFor(View::kJoin, 0, in_one) == RowAction::kNone);
-    CHECK(ActionFor(View::kJoin, 1, in_one) == RowAction::kNone);
+    // (0.11.9: in a session the Join view is that session's: its details and Leave, nobody joins from inside it)
+    CHECK(ActionFor(View::kJoin, 0, in_one) == RowAction::kViewSession);
+    CHECK(ActionFor(View::kJoin, 1, in_one) == RowAction::kConfirmLeave);
+    CHECK(ActionFor(View::kJoin, 2, in_one) == RowAction::kNone);
+    CHECK(ActionFor(View::kJoin, 3, in_one) == RowAction::kNone);
     Session launcher;
     launcher.by_launcher = launcher.rejoin = true;
-    CHECK(ActionFor(View::kJoin, 0, launcher) == RowAction::kNone);
+    CHECK(ActionFor(View::kJoin, 0, launcher) == RowAction::kViewSession);
     SessionView jv;
     jv.s = again;
     jv.rejoin_host = "Saria";
@@ -1447,7 +1450,8 @@ TEST_CASE("pause tab: typing ends when the page goes, and the Join view's rows s
     s.room_ready = s.rejoin = true;
     CHECK(ActionFor(View::kJoin, 3, s) == RowAction::kJoinRoom);     // (a room name typed: that room, not the last game)
     s.in_one = true;
-    CHECK(ActionFor(View::kJoin, 1, s) == RowAction::kNone);         // (nobody joins from inside a session)
+    CHECK(ActionFor(View::kJoin, 1, s) == RowAction::kConfirmLeave);  // (nobody joins from inside a session: Leave)
+    CHECK(ActionFor(View::kJoin, 2, s) == RowAction::kNone);
     SessionView v;
     auto rows = RowTexts(View::kJoin, v);
     CHECK(rows[1] == "Room or IP: A to type");
@@ -1688,7 +1692,8 @@ TEST_CASE("pause tab: a guest the host's game turned away: the rows say so and w
     v.banned = true;
     d = DetailLines(View::kSession, v);
     CHECK(text(d).find("join again") == std::string::npos);   // (a ban: joining again cannot work)
-    CHECK(RowTexts(View::kJoin, v)[0] == "Turned away: Leave first");
+    CHECK(RowTexts(View::kJoin, v)[0] == "Turned away: why");      // (0.11.9: the Join view leaves it)
+    CHECK(RowTexts(View::kJoin, v)[kJoinRowLeave] == "Leave the game");
     CHECK(RowTexts(View::kLanGame, v)[1] == "Turned away: Leave first");
     for (const View w : {View::kMain, View::kSession, View::kJoin, View::kLanGame}) {
         for (const std::string& r : RowTexts(w, v)) CHECK(r.size() <= kRowChars);
