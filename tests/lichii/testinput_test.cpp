@@ -401,8 +401,7 @@ std::string ReadScenario(const std::filesystem::path& path, int depth = 0) {
     std::string out;
     std::size_t at = 0;
     while (at <= text.size()) {
-        const std::size_t end = std::min(text.find('
-', at), text.size());
+        const std::size_t end = std::min(text.find('\n', at), text.size());
         const std::string line = text.substr(at, end - at);
         std::istringstream words(line.substr(0, line.find('#')));
         std::string first, file;
@@ -412,8 +411,7 @@ std::string ReadScenario(const std::filesystem::path& path, int depth = 0) {
         } else {
             out += line;
         }
-        out += '
-';
+        out += '\n';
         at = end + 1;
     }
     return out;
