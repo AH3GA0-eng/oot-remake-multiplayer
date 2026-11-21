@@ -2135,3 +2135,35 @@ TEST_CASE("native boss: row 178: our fallen boss is also put back at its fight s
     c.Publish({Phantom(Role::copy, -400.0f)});
     CHECK(c.TakeReturns().empty());
 }
+
+TEST_CASE("native boss (row 190): the game's answer to an owner's move is counted and said, 3 named as a busy slot") {
+    // main+0xc08f0 answers 3 when the slot already took a request since the BSA's last update (one per slot a
+    // frame) and 2 when the slot has no record; both were counted as applied, unseen.
+    for (const std::uint64_t answer : {addr::kActionTaken, addr::kActionSlotBusy, addr::kActionNoSlot}) {
+        Table t;
+        t.SetOn(true, true);
+        t.Publish({Gohma(Role::copy)});
+        BossAction a = *ActionFromRequest(GameRequest(11, 0xdead));
+        t.Receive(kActor, BossBsa{1, 2, a, {}});
+        FakeGuest g;
+        const std::int32_t verb = 2;
+        g.Write(kBsa + addr::kBsaBrainVerb, &verb, 4);
+        CHECK(t.OnActionVerb(kBsa, GameRequest(12, kNode), true, false));
+        auto c = t.Step(g, false, 0, kMain);
+        REQUIRE(c);
+        c = t.Step(g, true, kBlock, kMain);
+        REQUIRE(c);
+        REQUIRE(c->function == kMain + addr::kRequestActionVerb);
+        t.TakeNotes();
+        CHECK_FALSE(t.Step(g, true, answer, kMain));
+        const Counts n = t.Totals();
+        CHECK(n.action_applied == 1);  // (as before: the move is not asked again)
+        CHECK(n.action_slot_busy == (answer == addr::kActionSlotBusy ? 1u : 0u));
+        CHECK(n.action_refused == (answer == addr::kActionNoSlot ? 1u : 0u));
+        bool said = false;
+        for (const std::string& line : t.TakeNotes()) {
+            said = said || line.find("was not taken by the game (" + std::to_string(answer)) != std::string::npos;
+        }
+        CHECK(said == (answer != addr::kActionTaken));
+    }
+}

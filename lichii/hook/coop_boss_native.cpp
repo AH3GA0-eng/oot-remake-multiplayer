@@ -1198,12 +1198,17 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             break;
         case Pending::action:
             ++counts_.action_applied;
+            NoteAnswer("the owner's move", result, true);
             Made(true);
             break;
-        case Pending::late:
+        case Pending::late: {
             ++counts_.copy_own_late;
+            const Entry* e = Find(pending_bsa_);
+            NoteAnswer("its own move made late", result,
+                       e != nullptr && !e->own_late.empty() && std::holds_alternative<BossAction>(e->own_late.front()));
             Made(true);
             break;
+        }
         case Pending::rechoose:
             if (Entry* e = Find(std::exchange(pending_bsa_, 0)); e != nullptr && e->role == Role::owner) {
                 e->rechoose = false;
@@ -1211,6 +1216,7 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
             }
             break;
         case Pending::restart:
+            NoteAnswer("its move started over as ours", result, true);
             if (Entry* e = Find(std::exchange(pending_bsa_, 0)); e != nullptr && e->role == Role::owner) {
                 e->restart_action.reset();
                 ++counts_.owner_restarted;
@@ -1249,6 +1255,21 @@ std::optional<CoopPuppet::Call> Table::Step(CoopPuppet::Guest& guest, bool after
         }
     }
     return std::nullopt;
+}
+
+void Table::NoteAnswer(const char* what, std::uint64_t result, bool is_action) {
+    // (the lock is held; pending_bsa_ still names the boss) Only the action request has an answer (the brain
+    // verb's x0 is not one).
+    if (!is_action || result == addr::kActionTaken) {
+        return;
+    }
+    const bool busy = result == addr::kActionSlotBusy;
+    std::uint64_t& n = busy ? counts_.action_slot_busy : counts_.action_refused;
+    if (++n <= 8) {
+        const Entry* e = Find(pending_bsa_);
+        Note((e != nullptr ? e->name : std::string("a boss")) + ": " + what + " was not taken by the game (" +
+             std::to_string(result) + (busy ? ": its slot had taken a request this frame)" : ")"));
+    }
 }
 
 void Table::Made(bool made) {
