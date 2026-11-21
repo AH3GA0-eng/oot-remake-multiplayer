@@ -112,6 +112,35 @@ class TabTest(unittest.TestCase):
             pm.add_tab(make_layout(uneven, OVERLAY_PARTS))
 
 
+class MinusPageTest(unittest.TestCase):
+    def test_the_minus_page_a_system_layout_part_where_a_shown_page_sits(self):
+        p = pages()
+        place, size = pm.shown_page(p)
+        # the System page's place once the strip slid to it: N_InOut_00's own place, x 0 under it, its y
+        full = ui_pack.frame_offset(p, "Pa_System_00", "RootPane")
+        strip = ui_pack.frame_offset(p, "Pa_System_00", "N_InOut_00")
+        self.assertEqual(place, (full[0] - strip[0], full[1] + pane(p, "Pa_System_00")[1]))
+        rec = next(q for q in ui_pack.read_layout(p)[0] if q.name == "Pa_System_00").record
+        self.assertEqual(size, struct.unpack_from("<ff", p, rec + 0x2c))
+        d = pm.add_tab(overlay())
+        n = pm.add_minus_page(d, (12.5, -40.0), (2400.0, 1100.0))
+        panes, parts = ui_pack.read_layout(n)
+        self.assertEqual(panes[-1].name, pm.MINUS_PAGE)
+        self.assertEqual(panes[-1].id, ui_pack.part_id(pm.MINUS_PAGE))
+        self.assertEqual(pane(n, pm.MINUS_PAGE)[:3], (12.5, -40.0, "RootPane"))
+        self.assertEqual(struct.unpack_from("<ff", n, panes[-1].record + 0x2c), (2400.0, 1100.0))
+        self.assertEqual(struct.unpack_from("<I", n, panes[-1].record + 0x38)[0] & 1, 0)   # (stored hidden)
+        self.assertEqual(parts[-1].name, pm.MINUS_PAGE)
+        self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, parts[-1].record)[0]), "PaSystemMenu_00")
+        self.assertEqual(struct.unpack_from("<QI", n, parts[-1].record + 0x28), (0, 0))   # (no parameters)
+        for name in [q[0] for q in OVERLAY] + pm.MINUS_TABS:
+            self.assertEqual(pane(n, name)[:3], pane(d, name)[:3], name)   # the strip's panes where they were
+        with self.assertRaises(pm.PauseMenuError):
+            pm.add_minus_page(n, place, size)   # (twice)
+        with self.assertRaises(pm.PauseMenuError):
+            pm.shown_page(overlay())   # (no System page)
+
+
 class PageTest(unittest.TestCase):
     def test_the_page_where_a_shown_page_sits(self):
         d = pages()
@@ -291,6 +320,10 @@ class BuildTest(unittest.TestCase):
         for i in range(48):
             label = "Coop_Live_%02d" % i
             self.assertEqual(page.text(label), ["." * 64], label)
+        # (and the - menu's page's, Coop_Minus_00..04, in the strip's own message file: MinusWords)
+        strip = msbt.read(msgs[pm.OVERLAY_MSG])
+        for i in range(5):
+            self.assertEqual(strip.text("Coop_Minus_%02d" % i), ["." * 64], i)
         self.assertTrue(all(sizes[k] > before[k] for k in before
                             if k not in (pm.OVERLAY_LAYOUT, pm.PAGES_LAYOUT, pm.SYSTEM_LAYOUT)))
         self.assertTrue(sizes[pm.SYSTEM_LAYOUT] > before[pm.SYSTEM_LAYOUT])

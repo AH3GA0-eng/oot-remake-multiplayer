@@ -2432,6 +2432,71 @@ TEST_CASE("pause tab (0.11.9): the - menu's tabs: R on Map onto Multiplayer, R a
     CHECK_FALSE(d.minus_shown);
 }
 
+TEST_CASE("pause tab (0.11.9): the - menu's own page: up and down among its rows shown, A picks one, then the + menu") {
+    constexpr int kMinusMode = 0;
+    Page p = UsablePage();
+    p.SetMinusTabsUsable(true);
+    std::uint64_t now = 1000;
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now);
+    p.OnPad(kPadR, now + 10), p.OnPad(0, now + 12);
+    REQUIRE(p.MinusTab() == 0);
+    p.TakeStripSound();
+    // No rows yet (the module has not set them): A and the d-pad do nothing, and stay kept from the game.
+    CHECK(p.OnPad(kPadDown, now + 14) == 0);
+    p.OnPad(0, now + 16);
+    CHECK(p.OnPad(kPadA, now + 18) == 0);
+    CHECK(p.TakeMinusDecide() == -1);
+    p.OnPad(0, now + 20);
+    // Rows 0, 1 and 3 (2 empty): down skips the empty one, stops at the last, up stops at the first; the game's sound.
+    p.SetMinusRows(0b1011);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 22), p.OnPad(0, now + 24);
+    CHECK(p.MinusRow() == 1);
+    CHECK(std::string(p.TakeStripSound()) == "button_on");
+    p.OnPad(kPadStickDown, now + 26), p.OnPad(0, now + 28);
+    CHECK(p.MinusRow() == 3);
+    p.OnPad(kPadDown, now + 30), p.OnPad(0, now + 32);
+    CHECK(p.MinusRow() == 3);
+    CHECK(p.TakeStripSound() != nullptr);   // (the move to 3's)
+    CHECK(p.TakeStripSound() == nullptr);   // (none at the end)
+    // The row under the cursor gone (out of a game): the next shown one around.
+    p.SetMinusRows(0b0011);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 34), p.OnPad(0, now + 36);
+    p.OnPad(kPadUp, now + 38), p.OnPad(0, now + 40);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 42), p.OnPad(0, now + 44);
+    // A: the row, once, with the game's decide sound; never the game's A.
+    CHECK(p.OnPad(kPadA, now + 46) == 0);
+    CHECK(p.TakeMinusDecide() == 1);
+    CHECK(p.TakeMinusDecide() == -1);
+    CHECK(std::string(p.TakeStripSound()) == "button_decide");
+    p.OnPad(0, now + 48);
+    // Another tab: its first row, its rows set again.
+    p.OnPad(kPadR, now + 50), p.OnPad(0, now + 52);
+    CHECK(p.MinusTab() == 1);
+    CHECK(p.MinusRow() == 0);
+    p.OnPad(kPadDown, now + 54), p.OnPad(0, now + 56);
+    CHECK(p.MinusRow() == 0);   // (no rows set for it yet)
+    // The + menu: the game gets one press of - (down, then let go), nothing else of the pad meanwhile.
+    p.SetMinusRows(0b111);
+    p.GoToPlus();
+    CHECK(p.GoingToPlus());
+    CHECK(p.ViewKept());
+    CHECK(p.OnPad(kPadA, now + 58) == kPadMinus);
+    CHECK(p.OnPad(kPadA, now + 60) == 0);
+    CHECK_FALSE(p.GoingToPlus());
+    // The - menu goes, the + menu opens on System: the Multiplayer page shows there.
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 70);
+    CHECK(p.MinusTab() == -1);
+    p.OnPad(0, now + 72);
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 80);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 80);
+    CHECK(p.Shown());
+    CHECK(p.Which() == 0);
+    CHECK_FALSE(p.ViewKept());   // (shown: the view is the page's own again)
+}
+
 TEST_CASE("pause tab (0.11.9): the - menu's Lobby and Multiplayer pages: every row opens something, none empty-handed") {
     SessionView idle;
     CHECK(RowTexts(MinusPage::kLobby, idle) == std::vector<std::string>{"Find a game", "Host a game", "Join a game", "", ""});

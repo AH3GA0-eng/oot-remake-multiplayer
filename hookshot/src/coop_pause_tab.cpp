@@ -175,7 +175,33 @@ bool Page::CanMinus(std::uint64_t now_ms) const {
 
 // The pad while the - menu is up and ours can be used: R on Map onto ours, R / L among ours, L off the first back to
 // Map. Buttons the module took are kept from the game until let go.
+void Page::SetMinusRows(std::uint32_t shown) {
+    minus_rows_ = shown & ((1u << kRows) - 1);
+    if (minus_rows_ != 0 && (minus_rows_ & (1u << minus_row_)) == 0) MinusStep(1);   // (its row gone: the next shown)
+}
+
+void Page::MinusStep(int dir) {
+    if (minus_rows_ == 0) return;
+    for (int k = 1; k <= kRows; ++k) {
+        const int r = ((minus_row_ + dir * k) % kRows + kRows) % kRows;
+        if ((minus_rows_ & (1u << r)) == 0) continue;
+        // (no wrap, as System's buttons; a row gone from under the cursor finds the next one around)
+        if ((minus_rows_ & (1u << minus_row_)) != 0 && (dir > 0 ? r < minus_row_ : r > minus_row_)) return;
+        minus_row_ = r;
+        return;
+    }
+}
+
+void Page::GoToPlus() {
+    to_plus_ = 2, keep_view_ = true;
+    again_ = true, which_ = 0;   // (the + menu's opening on System shows the Multiplayer page: ShowAgain)
+}
+
 std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
+    if (to_plus_ > 0) {   // (the game's -: pressed one read, let go the next; the rest is kept from the game)
+        swallow_ |= buttons;
+        return to_plus_-- == 2 ? kPadMinus : 0;
+    }
     if (minus_tab_ < 0) {
         if ((down & kPadR) != 0 && strip_.lit == kMapCategory) {
             minus_tab_ = 0, minus_slide_ = 1;
@@ -189,12 +215,21 @@ std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
         if (minus_tab_ < kMinusTabs - 1) {
             ++minus_tab_, minus_slide_ = 1;
             strip_sound_ = "mc_TabToRight";
+            minus_row_ = 0, minus_rows_ = 0;   // (another page: its first row; the module sets its rows)
         }
         swallow_ |= kPadR;
     } else if ((down & kPadL) != 0) {
         --minus_tab_, minus_slide_ = -1;   // (off the first: Map again)
         strip_sound_ = "mc_TabToLeft";
+        minus_row_ = 0, minus_rows_ = 0;
         swallow_ |= kPadL;
+    } else if ((down & (kPadUp | kPadStickUp | kPadDown | kPadStickDown)) != 0 && minus_rows_ != 0) {
+        const int was = minus_row_;
+        MinusStep((down & (kPadUp | kPadStickUp)) != 0 ? -1 : 1);
+        if (minus_row_ != was) strip_sound_ = "button_on";
+    } else if ((down & kPadA) != 0 && (minus_rows_ & (1u << minus_row_)) != 0) {
+        minus_decide_ = minus_row_;
+        strip_sound_ = "button_decide";
     }
     // (ours shows: its page has the pad; B, + and - stay the game's, which close or change the menu)
     const std::uint64_t game = kPadB | kPadPlus | kPadMinus;
@@ -297,7 +332,7 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         // (the - menu's tabs of ours: shown while its strip is open; gone with it, and ours with them)
         if (minus_ok_) {
             const bool minus_open = f.mode != kPlusMode && (f.state == 1 || f.state == 2);
-            if (!minus_open) minus_tab_ = -1;
+            if (!minus_open) minus_tab_ = -1, minus_row_ = 0, minus_rows_ = 0, minus_decide_ = -1, to_plus_ = 0;
             const int state = !minus_open ? -2 : minus_tab_;
             const std::uint64_t gen = strip_seen_.gen;
             if (state != minus_set_ || (minus_open && minus_gen_ != gen)) {
@@ -520,14 +555,15 @@ bool Page::Char(std::uint32_t cp) {
 
 void Page::ShowAgain(std::uint64_t now_ms) {
     if (!again_ || shown_) {
+        if (!again_) keep_view_ = false;
         return;
     }
     if (pages_.state == 2 && pages_.page != kSystemPage && pages_.page >= 0) {
-        again_ = false;   // (the menu open on another page: not ours)
+        again_ = false, keep_view_ = false;   // (the menu open on another page: not ours)
         return;
     }
     if (CanStay(now_ms)) {
-        shown_ = true, again_ = false, decide_ = false, why_.clear();
+        shown_ = true, again_ = false, decide_ = false, why_.clear(), keep_view_ = false;
         slide_ = 0;   // (the menu opening on our page: at once, as the game opens on its own last page)
     }
 }

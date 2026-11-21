@@ -270,6 +270,20 @@ public:
     void SetMinusTabsUsable(bool usable) { minus_ok_ = usable; }
     // Ours shown now: 0 Multiplayer, 1 Lobby, 2 Mods; -1 none.
     int MinusTab() const { return minus_tab_; }
+    // Our tab's own page (the pack's Pa_CoopMinus_00, the System page's buttons): which of its rows show (bit r: row r,
+    // RowTexts(MinusPage) not ""), set by the module for the tab lit. Up and down move the cursor among the rows shown
+    // (the game's button_on), A picks the row under it (button_decide): TakeMinusDecide says which, once.
+    void SetMinusRows(std::uint32_t shown);
+    int MinusRow() const { return minus_row_; }
+    int TakeMinusDecide() { return std::exchange(minus_decide_, -1); }
+    // A row's page lives on the + menu (Find, Host, Join, Players, Settings and look: the Multiplayer page's views): the
+    // module asks the menu for the System page and the game gets one press of - (the - menu's own way to the + menu),
+    // and the Multiplayer page shows at the + menu's opening on System (as a menu closed on our page opens on it again).
+    void GoToPlus();
+    bool GoingToPlus() const { return to_plus_ > 0; }
+    // The view the row set is kept for that opening (the module puts the page's view back to its five rows only when
+    // not): from GoToPlus until the + menu opens (on our page, or on another page of its: then not).
+    bool ViewKept() const { return keep_view_; }
 
     // The Join view's two fields (the room name, the join password) and which one is typed into (-1: none). While one
     // is, the pad's buttons are all the page's (none reach System) and the keyboard's keys are the field's (Key, Char).
@@ -335,6 +349,12 @@ private:
     int minus_set_ = -2;       // the - tabs' state last set (Do::set_minus): -2 none, -1 shown none lit, else lit
     int minus_slide_ = 0;
     std::uint64_t minus_gen_ = 0;   // the strip opening whose - tabs were filled
+    int minus_row_ = 0;             // MinusRow
+    int minus_decide_ = -1;         // TakeMinusDecide
+    std::uint32_t minus_rows_ = 0;  // SetMinusRows
+    int to_plus_ = 0;               // GoToPlus: the pad reads left with the game's - pressed (down, then let go)
+    bool keep_view_ = false;        // ViewKept
+    void MinusStep(int dir);
     bool CanMinus(std::uint64_t now_ms) const;
     std::uint64_t MinusPad(std::uint64_t buttons, std::uint64_t down);
     const char* strip_sound_ = nullptr;
