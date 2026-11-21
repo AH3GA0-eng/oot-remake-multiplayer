@@ -296,6 +296,26 @@ def character_project(variant, file):
     return f"Player_{variant}_C{file:03d}"
 
 
+def mod_list_off(mods_root, name):
+    """The Mods tab's list (mods/coop-mods.list, "coop-mods 1") names `name` (its path under mods with '/') off: the
+    first row for it, letters without case (as Longshot reads it). No list or no row: on (C #58: a mod switched off
+    loads no models, so its characters get no puppets)."""
+    fold = lambda t: "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in t.replace("\\", "/"))
+    try:
+        with open(os.path.join(mods_root, "coop-mods.list"), "rb") as f:
+            lines = f.read().decode("utf-8", "replace").split("\n")
+    except OSError:
+        return False
+    if lines[0].rstrip("\r") != "coop-mods 1":
+        return False
+    for line in lines[1:]:
+        line = line.rstrip("\r")
+        for state in ("on ", "off "):
+            if line.startswith(state) and fold(line[len(state):]) == fold(name):
+                return state == "off "
+    return False
+
+
 def find_characters(mod_dir, log=print):
     """The Character Select mod among the mods the pack is made into: {"mod": its folder, "files":
     {file number: [variants it has a model for]}, "heaps": {variant: {field: bytes}}, "numbers": {file:
@@ -318,6 +338,10 @@ def find_characters(mod_dir, log=print):
                 with open(path, encoding="utf-8") as f:
                     doc = json.load(f)
                 if doc.get("mod") != CHARACTERS_MOD or doc.get("format") != CHARACTERS_FORMAT:
+                    continue
+                if len(roots) > 1 and mod_list_off(roots[1], (f"contents/{os.path.basename(root)}/{name}"
+                                                             if root == roots[0] else name)):
+                    log(f"characters: {name} is switched off in the Mods tab: no character puppets from it")
                     continue
                 files, numbers = {}, {}
                 for row in doc["characters"]:

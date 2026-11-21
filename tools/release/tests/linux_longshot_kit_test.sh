@@ -239,10 +239,29 @@ check 'pack: the tool fixed: the next start makes the pack' bash -c '[ $CODE -eq
 
 # OoT Character Select by Snail (data/longshot/CHARACTER-SELECT.txt): fetched from his release onto the PC, never
 # carried. Offline with his zip and characters.json already in data/builder/charsel (their SHA-256 match): no network.
-# No terminal: the question's answer is yes.
-mkdir -p "$tmp/cs-rel/CS-v1/mods/OoT Character Select/romfs/Model" "$tmp/cs-rel/CS-v1/mods/OoT Character Select/exefs" "$D/builder/charsel"
-printf 'model' >"$tmp/cs-rel/CS-v1/mods/OoT Character Select/romfs/Model/Player_Child_C000.Player_Child.bfres.zs"
-printf 'ips' >"$tmp/cs-rel/CS-v1/mods/OoT Character Select/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips"
+# Owner, 0.11.9: every kit gets the Characters page (the default part); the NPC characters only on a yes (no terminal:
+# no); his customizer is left out of his code patch.
+CSR="$tmp/cs-rel/CS-v1/mods/OoT Character Select"
+mkdir -p "$CSR/romfs/Model" "$CSR/romfs/Tex" "$CSR/romfs/UI" "$CSR/exefs" "$D/builder/charsel"
+printf 'npc model' >"$CSR/romfs/Model/Player_Child_C000.Player_Child.bfres.zs"
+printf 'link' >"$CSR/romfs/Model/Player_Child.Player_Child.bfres.zs"
+printf 'tex' >"$CSR/romfs/Tex/Npc_A.bntx.zs"
+printf 'ui' >"$CSR/romfs/UI/LayoutArchiveCategory.Product.100.byml.zs"
+# His code patch as IPS32: a kept record, one record in each customizer region his source names, a kept run record.
+cs_ips() { "$py" -c '
+import sys
+regions = [0x804D756C, 0x8289D600, 0x832E1620, 0x832E39D0, 0x8103AE80, 0x83BCDC10, 0x83BCCE70]
+skip = int(sys.argv[2])
+out = bytearray(b"IPS32")
+rec = lambda at, b: (at.to_bytes(4, "big") + len(b).to_bytes(2, "big") + b)
+out += rec(0x14910, b"keep v1")
+for i, a in enumerate(regions):
+    if i != skip:
+        out += rec(a - 0x8001FF00, b"\x01\x02\x03\x04")
+out += bytes([0x00, 0x9B, 0x77, 0xB0, 0, 0, 0, 16, 0xAA]) + b"EEOF"
+open(sys.argv[1], "wb").write(out)' "$1" "${2:--1}"; }
+cs_ips "$CSR/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips"
+cp "$CSR/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips" "$tmp/cs-his.ips"
 printf 'install' >"$tmp/cs-rel/CS-v1/INSTALL.txt"
 (cd "$tmp/cs-rel" && "$py" -c 'import os, zipfile
 with zipfile.ZipFile("CS-v1.zip", "w") as z:
@@ -251,34 +270,95 @@ with zipfile.ZipFile("CS-v1.zip", "w") as z:
 cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"
 printf '{"format": 1, "mod": "OoT Character Select", "characters": []}' >"$D/builder/charsel/characters.json"
 cs_zsha=$(sha256sum "$D/builder/charsel/CS-v1.zip" | cut -d' ' -f1) cs_osha=$(sha256sum "$D/builder/charsel/characters.json" | cut -d' ' -f1)
-printf 'release=v1\nurl=https://example.invalid/cs\nzip=CS-v1.zip\nzip_sha256=%s\nzip_folder=CS-v1/mods/OoT Character Select\nfolder=OoT Character Select\noverlay_url=https://example.invalid/characters.json\noverlay_sha256=%s\nips_url=\nips_sha256=\n' \
-    "$cs_zsha" "$cs_osha" >"$kit/data/longshot/CHARACTER-SELECT.txt"
+cs_pin() { printf 'release=v1\nurl=https://example.invalid/cs\nzip=CS-v1.zip\nzip_sha256=%s\nzip_folder=CS-v1/mods/OoT Character Select\nfolder=OoT Character Select\noverlay_url=https://example.invalid/characters.json\noverlay_sha256=%s\nips_url=%s\nips_sha256=%s\n' \
+    "$cs_zsha" "$cs_osha" "${1:-}" "${2:-}" >"$kit/data/longshot/CHARACTER-SELECT.txt"; }
+cs_pin
 rm -f "$D/character-select-answer.txt"
 CS="$D/game/mods/OoT Character Select"
+# (the kept records of an installed patch, one per line, and the whole of his own kept beside it)
+cs_recs() { "$py" -c '
+import sys
+d = open(sys.argv[1], "rb").read(); o = 5; n = 0
+assert d[:5] == b"IPS32"
+while d[o:o + 4] != b"EEOF":
+    k = int.from_bytes(d[o + 4:o + 6], "big"); o += 9 if k == 0 else 6 + k; n += 1
+print(n)' "$1"; }
 # review-geno-0118: the game build after the install fails -> the mods folder goes back to what the game was built
 # with, one line says so, and the start goes on with the game as it was (not stopped).
 stamp_was=$(cat "$D/game/coop-built-from.txt")
 FAKE_BUILD_FAIL=1 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs0.txt" 2>&1; export CODE=$?
-check 'Character Select: a failed game build after the install takes it back out and the start goes on with the game as it was'     bash -c '[ $CODE -eq 0 ] && grep -q "no terminal: yes" "$1" && grep -q "taken back out for now" "$1" && [ ! -e "$2" ] && [ ! -e "$3/game/mods/_OoT Character Select.none" ] && [ ! -e "$3/game/mods/_OoT Character Select.prev" ] &&
+check 'Character Select: a failed game build after the install takes it back out and the start goes on with the game as it was'     bash -c '[ $CODE -eq 0 ] && grep -q "no terminal: no" "$1" && grep -q "taken back out for now" "$1" && [ ! -e "$2" ] && [ ! -e "$3/game/mods/_OoT Character Select.none" ] && [ ! -e "$3/game/mods/_OoT Character Select.prev" ] &&
         [ "$(cat "$3/game/coop-built-from.txt")" = "$4" ]' _ "$tmp/build-cs0.txt" "$CS" "$D" "$stamp_was"
 cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs1.txt" 2>&1; export CODE=$?
-check 'Character Select: his folder alone in data/game/mods with characters.json, stamped, credited, the answer kept' \
-    bash -c '[ $CODE -eq 0 ] && [ -f "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ -f "$2/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips" ] &&
-        [ -f "$2/characters.json" ] && [ ! -e "$2/INSTALL.txt" ] && grep -q "^v1 " "$2/coop-charsel.txt" && grep -q "belong to Nintendo" "$2/CREDITS-coop.txt" &&
-        grep -qx yes "$3/character-select-answer.txt" && [ ! -e "$3/builder/charsel/CS-v1.zip" ] && [ ! -e "$3/game/mods/coop-mods.list" ]' _ "$tmp/build-cs1.txt" "$CS" "$D"
+check 'Character Select: no -> the default part alone (the Characters page, Link), characters.json, stamped ui, credited, the answer kept' \
+    bash -c '[ $CODE -eq 0 ] && [ -f "$2/romfs/UI/LayoutArchiveCategory.Product.100.byml.zs" ] && [ -f "$2/romfs/Model/Player_Child.Player_Child.bfres.zs" ] &&
+        [ ! -e "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ ! -e "$2/romfs/Tex" ] && [ -f "$2/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips" ] &&
+        [ -f "$2/characters.json" ] && [ ! -e "$2/INSTALL.txt" ] && grep -q "^v1 .* ui cz1$" "$2/coop-charsel.txt" && grep -q "belong to Nintendo" "$2/CREDITS-coop.txt" &&
+        grep -qx no "$3/character-select-answer.txt" && [ ! -e "$3/builder/charsel/CS-v1.zip" ] && [ ! -e "$3/game/mods/coop-mods.list" ]' _ "$tmp/build-cs1.txt" "$CS" "$D"
+export CS_RECS=$(cs_recs "$CS/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips")
+check 'Character Select strip: the exefs patch keeps only the 2 records outside his customizer, his own whole beside it (outside exefs)' \
+    bash -c '[ "$CS_RECS" = 2 ] && cmp -s "$1/coop-charsel-code.ips" "$2" && grep -q "keep v1" "$1/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips"' _ "$CS" "$tmp/cs-his.ips"
 check 'Character Select: its code patch is in the game stamp (the build takes it in: patches 0034/0035)' grep -q 'exefs=OoT Character Select/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips:' "$D/game/coop-built-from.txt"
 OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs2.txt" 2>&1
 check 'Character Select: a built game confirms the change (no kept state left)' bash -c '[ ! -e "$1/_OoT Character Select.none" ] && [ ! -e "$1/_OoT Character Select.prev" ]' _ "$D/game/mods"
-check 'Character Select: there already -> not asked again, nothing done' bash -c 'grep -q "Character Select v1 -> .*(there already)" "$1" && ! grep -q "Install the playable NPC mod" "$1"' _ "$tmp/build-cs2.txt"
-printf 'character_select = no\n' >>"$D/coop-options.ini"
-OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs3.txt" 2>&1; export CODE=$?
-check 'Character Select: character_select = no takes the kit'"'"'s copy out and the game is built without its code' \
-    bash -c '[ $CODE -eq 0 ] && grep -q "taken out" "$1" && [ ! -e "$2" ] && ! grep -q "exefs=" "$3/game/coop-built-from.txt"' _ "$tmp/build-cs3.txt" "$CS" "$D"
-sed -i '/^character_select = no$/d' "$D/coop-options.ini"
+check 'Character Select: there already -> not asked again, nothing done' bash -c 'grep -q "Character Select v1 -> .*(there already)" "$1" && ! grep -q "Download the NPC characters" "$1"' _ "$tmp/build-cs2.txt"
+# Turned on later: the default part cannot give the NPC part, so his release is used again.
+printf 'character_select = yes\n' >>"$D/coop-options.ini"
+cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"
+: >"$log"; OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs3.txt" 2>&1; export CODE=$?
+export CS_RECS=$(cs_recs "$CS/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips")
+check 'Character Select: character_select = yes gets the NPC part too, his patch still stripped' \
+    bash -c '[ $CODE -eq 0 ] && [ -f "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ -f "$2/romfs/Tex/Npc_A.bntx.zs" ] && grep -q "^v1 .* full cz1$" "$2/coop-charsel.txt" &&
+        [ "$CS_RECS" = 2 ]' _ "$tmp/build-cs3.txt" "$CS"
+check 'Character Select pack: UI-only -> full (NPC models put in) makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "models:" "$2/.coop-stamp"' _ "$log" "$P"
+# Off again: from the copy there (no zip here, nothing downloaded): the NPC part out, the Characters page kept.
+sed -i 's/^character_select = yes$/character_select = no/' "$D/coop-options.ini"
+: >"$log"; OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs4.txt" 2>&1; export CODE=$?
+check 'Character Select: character_select = no keeps the Characters page, takes the NPC part out, no download' \
+    bash -c '[ $CODE -eq 0 ] && [ ! -e "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && [ ! -e "$2/romfs/Tex" ] && [ -f "$2/romfs/UI/LayoutArchiveCategory.Product.100.byml.zs" ] &&
+        grep -q "^v1 .* ui cz1$" "$2/coop-charsel.txt" && grep -q "exefs=OoT Character Select/exefs/" "$3/game/coop-built-from.txt" && ! grep -q downloading "$1"' _ "$tmp/build-cs4.txt" "$CS" "$D"
+check 'Character Select pack: full -> UI-only (NPC models taken out) makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1"' _ "$log"
+# The mod switched off in the Mods tab, then on again: the pack each time (its characters follow the list).
+printf 'coop-mods 1\noff OoT Character Select\n' >"$D/game/mods/coop-mods.list"; : >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+check 'Character Select pack: switched off in the Mods tab makes the puppet pack again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "list:off" "$2/.coop-stamp"' _ "$log" "$P"
+rm -f "$D/game/mods/coop-mods.list"; : >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+check 'Character Select pack: switched on again makes it again' bash -c 'grep -q "^puppet_pack" "$1" && grep -q "list:on" "$2/.coop-stamp"' _ "$log" "$P"
+: >"$log"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+check 'Character Select pack: nothing changed -> the pack is not made again' bash -c '! grep -q "^puppet_pack" "$1"' _ "$log"
+# A 0.11.8 copy (four-field stamp, his patch as it came): kept full, stripped in place, no download.
+sed -i 's/^character_select = no$/character_select = yes/' "$D/coop-options.ini"
+cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1
+printf 'v1 %s %s -\n' "$cs_zsha" "$cs_osha" >"$CS/coop-charsel.txt"
+rm -f "$CS/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips" "$CS/coop-charsel-code.ips"
+cp "$tmp/cs-his.ips" "$CS/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs5.txt" 2>&1; export CODE=$?
+export CS_RECS=$(cs_recs "$CS/exefs/E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348.ips")
+check 'Character Select: a 0.11.8 full copy keeps its NPC part, his patch stripped, his own kept aside, no download' \
+    bash -c '[ $CODE -eq 0 ] && [ -f "$2/romfs/Model/Player_Child_C000.Player_Child.bfres.zs" ] && grep -q "^v1 .* full cz1$" "$2/coop-charsel.txt" &&
+        [ "$CS_RECS" = 2 ] && cmp -s "$2/coop-charsel-code.ips" "$3" && ! grep -q downloading "$1"' _ "$tmp/build-cs5.txt" "$CS" "$tmp/cs-his.ips"
+# A newer patch of his laid out otherwise (no record at cz_head): refused, the copy there kept as it was.
+cs_ips "$D/builder/charsel/code.ips" 0
+cs_pin https://example.invalid/code.ips "$(sha256sum "$D/builder/charsel/code.ips" | cut -d' ' -f1)"
+cp "$tmp/cs-rel/CS-v1.zip" "$D/builder/charsel/CS-v1.zip"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs6.txt" 2>&1; export CODE=$?
+check 'Character Select strip: a patch without a customizer region is refused, the copy there kept' \
+    bash -c '[ $CODE -eq 0 ] && grep -q "nothing at cz_head" "$1" && grep -q "^v1 .* - full cz1$" "$2/coop-charsel.txt"' _ "$tmp/build-cs6.txt" "$CS"
+cs_pin
+# A copy the player put in by hand (no stamp) is never touched.
+rm -f "$CS/coop-charsel.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs7.txt" 2>&1
+check 'Character Select: the player'"'"'s own copy is used as it is' bash -c 'grep -q "your own copy" "$1" && [ -f "$2/romfs/Tex/Npc_A.bntx.zs" ]' _ "$tmp/build-cs7.txt" "$CS"
+rm -rf "$CS"
+sed -i '/^character_select = /d' "$D/coop-options.ini"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >/dev/null 2>&1   # (the game built again without it)
 rm -f "$kit/data/longshot/CHARACTER-SELECT.txt" "$D/character-select-answer.txt"
-OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs4.txt" 2>&1; export CODE=$?
-check 'Character Select: a kit without CHARACTER-SELECT.txt asks nothing and fetches nothing' bash -c '[ $CODE -eq 0 ] && ! grep -q "Character Select" "$1"' _ "$tmp/build-cs4.txt"
+OOT_COOP_OFFLINE=1 bash "$kit/scripts/build.sh" </dev/null >"$tmp/build-cs8.txt" 2>&1; export CODE=$?
+check 'Character Select: a kit without CHARACTER-SELECT.txt asks nothing and fetches nothing' bash -c '[ $CODE -eq 0 ] && ! grep -q "Character Select" "$1"' _ "$tmp/build-cs8.txt"
 
 # The randomizer the kit brings (data/longshot/OOTRR.txt): fetched and unpacked into data/game/tools/ootrr.
 mkdir -p "$tmp/ootrr-rel/ootrr-0.5.0-linux-x86_64"
