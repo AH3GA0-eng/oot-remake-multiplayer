@@ -129,7 +129,7 @@ The game windows start in front of the server window. To see the invite code aga
 
 ### Join a game on this network
 
-With **This PC: Join a game on this network**, nobody on this PC starts a server. Each game joins the first game hosted on your network that it can join, with no password: a host lets its own network in. To join one host only, put `join_lan_host = <host's name>` in the kit's `coop-options.ini`. With no host found after 60 seconds, the game says so: pick one in the pause menu's Multiplayer page, **Browse games**. Saves, controllers and the 15 seconds between starts are as above. Ending the session still closes every `coop_server.exe` on this PC.
+With **This PC: Join a game on this network**, nobody on this PC starts a server. Each game joins the first game hosted on your network that it can join, with no password: a host lets its own network in. To join one host only, put `join_lan_host = <host's name>` in the kit's `coop-options.ini`. With no host found after 60 seconds, the game says so: pick one in the pause menu's Multiplayer page, **Browse games**. Saves, controllers and the 15 seconds between starts are as above. Ending the session closes only the games: this mode closes no `coop_server.exe`, so a server of your own on this PC keeps running.
 
 ### Join a game on another PC
 

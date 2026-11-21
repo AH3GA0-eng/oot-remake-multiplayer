@@ -192,7 +192,6 @@ function coopStartOnline(kit) {
     return { password: password, server: bind !== "" ? bind : "127.0.0.1", port: port, pads: 0 };
 }
 
-// A player name the game takes: up to 16 characters, no control characters ("" when none is left).
 // ---- Join a game on another PC ----
 // The invite code's letters and bytes are those of tools/release/kit/scripts/invite.ps1 (ConvertFrom-InviteCode, from
 // server/nat_codes.cpp): kind 0x11/0x12, the host's IPv4 address and port, the join password, a 4-byte SHA-256
@@ -378,6 +377,7 @@ function coopNoHost(inst) {
     coopWrite(coopPath(inst, "coop.ini"), "# Join a game on another PC: no usable host code, so no server line (Nucleus handler).\r\n");
 }
 
+// A player name the game takes: up to 16 characters, no control characters ("" when none is left).
 function coopCleanName(nick) {
     var n = coopTrim(String(nick || "").replace(/[\x00-\x1f\x7f]/g, ""));
     if (n.length > 16) {
@@ -578,10 +578,7 @@ Game.Play = function () {
         coopJoinFailed = false;
         coopSession = { password: joined.password, server: joined.server, port: joined.port, pads: 0 };
         Context.Log("OoT Co-op: joining the host at " + joined.server + ":" + joined.port + " (no server started here)");
-        coopWrite(sessionFile, coopSession.password + "
-" + coopSession.server + "
-" + coopSession.port + "
-");
+        coopWrite(sessionFile, coopSession.password + "\r\n" + coopSession.server + "\r\n" + coopSession.port + "\r\n");
     } else if (remote && coopJoinFailed) {
         coopNoHost(inst);
         throw new Error("Join a game on another PC: no usable host code (see player 1's message)");
