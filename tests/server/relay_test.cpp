@@ -1277,6 +1277,14 @@ TEST_CASE("public game: listed with the public bit, relay only, a guest joins wi
   host.stop();
 }
 
+// (a named namespace with using-declarations, as room_list_tests: the using-directive for coop::protocol in an
+// earlier unnamed namespace makes Message, encode and decode ambiguous here under clang)
+namespace room_proof_tests {
+
+using coop::server::relay::decode;
+using coop::server::relay::encode;
+using coop::server::relay::Message;
+
 namespace {
 
 Message proof_message(std::uint64_t token, std::uint64_t time_s, std::uint8_t fill) {
@@ -1372,3 +1380,5 @@ TEST_CASE("relay: a listed room's proof is kept and passed on as given, none for
   CHECK(page->proofs.empty());
   CHECK(f.relay.stats().proofs_kept == 2);
 }
+
+}  // namespace room_proof_tests
