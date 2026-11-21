@@ -320,11 +320,19 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
                     // Not a refusal of the crawl: the slot took another
                     // request this frame. Skipping is on now: next frame.
                     next_ask_ms_ = 0;
-                    Note("our downed Link: " + Named(asked_verb_) +
-                         " waits: the slot took a request this frame (3); asked next frame");
+                    if (++refusals_noted_ <= 3) {   // (as the refusals below: a boss fight's events start many rounds)
+                        Note("our downed Link: " + Named(asked_verb_) +
+                             " waits: the slot took a request this frame (3); asked next frame" +
+                             (refusals_noted_ == 3 ? "; more while down are not noted" : ""));
+                    }
                 } else {
                     blocked_ = true;  // a real refusal: the game's own runs
-                    Note("our downed Link: " + Named(asked_verb_) + " refused (" + std::to_string(result) + ")");
+                    // A refusal repeats while the game keeps our Link busy (60 lines in a boss fight's
+                    // log): the first three are noted, the rest only counted (counts_.refused).
+                    if (++refusals_noted_ <= 3) {
+                        Note("our downed Link: " + Named(asked_verb_) + " refused (" + std::to_string(result) + ")" +
+                             (refusals_noted_ == 3 ? "; more refusals while down are not noted" : ""));
+                    }
                 }
             } else {
                 // (kSlotBusy: the game's own Walk or Wait, no longer skipped, took the slot first this frame.)
@@ -383,6 +391,7 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
     };
     if (want_.lying != was_lying_) {
         was_lying_ = want_.lying;
+        refusals_noted_ = 0;  // (the first few misses noted again each time our Link goes down, not each round)
         new_round();
         spot_rounds_ = 0;
         airborne_ = false;
