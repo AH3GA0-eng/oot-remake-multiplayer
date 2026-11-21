@@ -2455,7 +2455,12 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
             // (A on System's Longshot Settings button opens its page: the button's name read only while A is held)
             {   // (which of System's buttons of ours the game's cursor is on: their names, read only while A is held)
                 int on = -1;
-                if ((in & kPadA) != 0 && !g_page.Shown()) on = OurSystemButtonFocused();
+                // (only while the pause menu's pages update: closed, System's layout keeps its last focus, and every A
+                // in the game read as one on our button and was kept from it: nobody could roll or talk, four
+                // testers 2026-11-20)
+                if ((in & kPadA) != 0 && !g_page.Shown() && NowMs() - g_pages_seen_ms.load() < 500) {
+                    on = OurSystemButtonFocused();
+                }
                 g_page.SetSystemButton(on);
             }
             if (g_page.Typing() >= 0) {
