@@ -433,3 +433,11 @@ TEST_CASE("char colours (0.11.9): co-op's hair colour as the hair parameters (li
     o.hair_exact = h;
     CHECK(o.Colours());
 }
+
+TEST_CASE("char colours (row 207): whether Character Select is in this game, as the hook last read it") {
+    CHECK_FALSE(CoopCharColours::ModPresent());
+    CoopCharColours::SetModPresent(true);
+    CHECK(CoopCharColours::ModPresent());
+    CoopCharColours::SetModPresent(false);
+    CHECK_FALSE(CoopCharColours::ModPresent());
+}

@@ -1287,6 +1287,9 @@ void PutModel(std::uint64_t actor, const float pos[3], const float rot[9]) {
 }
 
 void MenuModel(void* ctx, const Facts& f, bool want) {
+    // (row 207: with Character Select, never the menu's Link model forced here: its code patches that model's making
+    // for its own pages, and Customize is in its screen)
+    want = want && !CoopCharColours::ModPresent();
     const std::uint64_t base = CoopRuntime::MainBase();
     const std::uint64_t manager = Read<std::uint64_t>(base + kMenuManager);
     const std::uint64_t obj = manager != 0 ? Read<std::uint64_t>(manager + kPouchObject) : 0;
@@ -1540,7 +1543,8 @@ bool SystemOwn(std::uint64_t pane) {
 void SystemButtons(void* ctx) {
     const std::uint64_t now = NowMs();
     const int want = (g_page.Usable() && g_mp_button != 0 ? 1 : 0) | (g_page.SettingsUsable() && g_settings_button != 0 ? 2 : 0) |
-                     (g_page.Usable() && g_cl_button != 0 ? 4 : 0);
+                     (g_page.Usable() && g_cl_button != 0 && !CoopCharColours::ModPresent() ? 4 : 0);   // (row 207: with
+                                                                // Character Select, Customize is in its own screen)
     const bool over = g_page.Shown();
     if (want != g_settings_button_shown || over != g_sys_hidden) {
         if (over != g_sys_hidden) {

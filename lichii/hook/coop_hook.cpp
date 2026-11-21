@@ -1675,6 +1675,7 @@ public:
             const std::uint32_t custom = 0;   // (none of the mod's own: nothing of them goes to the others either)
             // What the mod's own code puts on every player-like model, puppets too (coop_char_colours.h Wardrobe).
             CoopCharColours::TheWardrobe().SetViewer(custom);
+            CoopCharColours::SetModPresent(picked.has_value());   // (row 207: its saved Int is there)
             CoopCharColours::SetShownCharacter(picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax
                                                    ? static_cast<std::uint16_t>(*picked)
                                                    : std::uint16_t{0});

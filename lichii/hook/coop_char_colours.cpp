@@ -294,6 +294,11 @@ namespace {
 std::atomic<std::uint16_t> g_shown{0};
 }
 void SetShownCharacter(std::uint16_t number) { g_shown.store(number, std::memory_order_relaxed); }
+namespace {
+std::atomic<bool> g_mod_present{false};
+}
+void SetModPresent(bool present) { g_mod_present.store(present, std::memory_order_relaxed); }
+bool ModPresent() { return g_mod_present.load(std::memory_order_relaxed); }
 std::uint16_t ShownCharacter() { return g_shown.load(std::memory_order_relaxed); }
 
 Wardrobe& TheWardrobe() {

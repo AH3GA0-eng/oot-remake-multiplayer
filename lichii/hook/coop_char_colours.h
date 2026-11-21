@@ -191,6 +191,11 @@ private:
 // coop_hook reads it twice a second. Any thread.
 void SetShownCharacter(std::uint16_t number);
 std::uint16_t ShownCharacter();
+// Character Select's code and data are in this game (its saved Int CharacterMenu_SelectedCharacter exists; the hook
+// reads it twice a second). Any thread. Row 207 (0.11.9): co-op then never opens its own Customize on System, whose
+// live picture forces the menu's Link model, which that mod's code patches; Customize is in its screen.
+void SetModPresent(bool present);
+bool ModPresent();
 
 // The one wardrobe of the game (the runtime's frame and coop_hook's reading of the six Ints).
 Wardrobe& TheWardrobe();
