@@ -1701,6 +1701,10 @@ bool g_strip_looked = false;
 std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
 std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
+// Ours sit under the strip's root (the pack's), the game's under N_MenuChange_00: the two frames apart by how far ours
+// were packed from where the game's step puts them (their own places read at the lookup against the fourth tab's).
+float g_minus_frame_x = 0.0f, g_minus_frame_y = 0.0f;
+bool g_minus_frame = false;
 bool g_minus_ok = false, g_minus_shown = false;
 // The strip's L and R labels (T_BtnL_00, T_BtnR_00) and their own places; whether the row is laid out as ours now.
 std::array<std::uint64_t, 2> g_strip_btns{};
@@ -1741,8 +1745,22 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         g_minus_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "N_MenuChangeTextIn_00");
         g_minus_ok = g_minus_ok && IsPart(g_minus_panes[static_cast<std::size_t>(i)]);
     }
-    LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours (Pa_Category_04..06): {}",
-             g_minus_ok ? "found" : "not in the pack (the - menu stays the game's)");
+    // (pause_menu.add_tab: ours i at the fourth tab's place plus (i + 1) steps, in the root's frame)
+    // (once per pane: a strip opened again on the same layout has ours where FollowMinus last put them)
+    static std::uint64_t framed = 0;
+    if (g_minus_panes[0] != framed) g_minus_frame = false;
+    if (!g_minus_frame && g_minus_ok && g_game_tabs[3] != 0 && g_game_tabs[0] != 0 && g_game_tabs[1] != 0) {
+        framed = g_minus_panes[0];
+        const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
+        const std::uint64_t first = g_minus_panes[0];
+        g_minus_frame_x = Read<float>(first + 0x6c) - (g_game_tabs_x[3] + step);
+        g_minus_frame_y = Read<float>(first + kPaneOwnY) - Read<float>(g_game_tabs[3] + kPaneOwnY);
+        g_minus_frame = std::isfinite(g_minus_frame_x) && std::isfinite(g_minus_frame_y);
+    }
+    LOG_INFO(Core, "coop: pause tab: the - menu's tabs of ours (Pa_Category_04..06): {} (frames {:.1f}, {:.1f}; the "
+                   "strip's tab objects {})",
+             g_minus_ok ? "found" : "not in the pack (the - menu stays the game's)", g_minus_frame_x, g_minus_frame_y,
+             f.tabs);
     if (g_minus_ok) LookMinusPage(ctx, f.layout, gen);
 }
 
@@ -1798,7 +1816,7 @@ void FollowMinus(void* ctx) {
             if (g_strip_btns[i] != 0) PlacePane(ctx, g_strip_btns[i], g_strip_btns_x[i]);
         }
     };
-    if (!g_minus_shown || !g_minus_ok || g_game_tabs[0] == 0 || g_game_tabs[1] == 0) {
+    if (!g_minus_shown || !g_minus_ok || !g_minus_frame || g_game_tabs[0] == 0 || g_game_tabs[1] == 0) {
         put_back();
         return;
     }
@@ -1811,10 +1829,12 @@ void FollowMinus(void* ctx) {
     const int n = game + kMinusTabs;
     const auto x_of = [&](int k) { return centre + step * (static_cast<float>(k) - static_cast<float>(n - 1) / 2.0f); };
     for (int k = 0; k < game; ++k) PlacePane(ctx, g_game_tabs[static_cast<std::size_t>(k)], x_of(k));
-    const float y = Read<float>(g_game_tabs[0] + kPaneOwnY);
+    // (ours in the root's frame: the game's places plus the frames' distance. R1 lane 12:52 had ours placed with the
+    // game's own numbers, so they sat a header's distance off, over the Map)
+    const float y = Read<float>(g_game_tabs[0] + kPaneOwnY) + g_minus_frame_y;
     for (int i = 0; i < kMinusTabs; ++i) {
         const std::uint64_t pane = g_minus_panes[static_cast<std::size_t>(i)];
-        PlacePane(ctx, pane, x_of(game + i));
+        PlacePane(ctx, pane, x_of(game + i) + g_minus_frame_x);
         if (std::isfinite(y) && Read<float>(pane + kPaneOwnY) != y) {
             CoopRuntime::Write(pane + kPaneOwnY, &y, sizeof y);
             Call(ctx, kPaneMoved, pane);
