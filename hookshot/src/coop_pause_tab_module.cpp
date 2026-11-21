@@ -403,6 +403,7 @@ std::mutex g_snail_mutex;
 CoopSnailCustom::Driver g_snail;
 bool g_snail_open = false, g_snail_fallback = false;
 std::uint64_t g_snail_screen = 0, g_snail_layout = 0, g_snail_seen_ms = 0, g_snail_gen = 0, g_snail_pad_last = 0;
+std::uint64_t g_snail_edge_ms = 0;   // when his screen's state was first seen open (0: not open), SnailEdgeFrom
 struct SnailLayout {
     std::uint64_t screen = 0;   // the screen it was looked at with
     bool his = false;           // his Customize screen's
@@ -496,10 +497,20 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
     if (!known->second.his) return;
     const int state = Read<std::uint8_t>(screen + kScreenState);
     if (state != 1 && state != 2) {
+        g_snail_edge_ms = 0;
         SnailClose("closed");
         return;
     }
-    g_snail_seen_ms = NowMs();
+    // (taken as open only inside a menu that is up: lane 062917, his layout read open for a second while the - menu
+    // closed, and co-op kept his rows' keys from the field then. CoopPauseTab::SnailEdgeFrom)
+    const std::uint64_t now = NowMs();
+    if (g_snail_edge_ms == 0) g_snail_edge_ms = now;
+    switch (SnailEdgeFrom(g_snail_open, g_snail_edge_ms, g_strip_state.load(), g_strip_seen_ms.load(), now)) {
+        case SnailEdge::kWait: return;
+        case SnailEdge::kClose: SnailClose("the menu is closing"); return;
+        case SnailEdge::kOpen: break;
+    }
+    g_snail_seen_ms = now;
     if (!g_snail_open || screen != g_snail_screen || layout != g_snail_layout) {
         g_snail_open = true, g_snail_fallback = false;
         g_snail_screen = screen, g_snail_layout = layout, ++g_snail_gen;
