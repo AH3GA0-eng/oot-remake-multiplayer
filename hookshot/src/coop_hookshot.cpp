@@ -950,7 +950,7 @@ CoopDraw::Scene DrawScene() {
             }
         }
     }
-    // The voice icons (docs/voice.md, "Who is talking"): only while voice chat is on here.
+    // The voice states after the names, as words (docs/voice.md, "Who is talking"): only while voice chat is on here.
     const bool voice_on = game && CoopVoice::Available() && CoopVoice::Get().mode != coop::voice::Mode::off;
     const CoopLobby::Seen seen = voice_on ? CoopLobby::Now() : CoopLobby::Seen{};
     const auto voice_muted = [&](std::uint8_t number) {

@@ -485,34 +485,13 @@ void DrawPlayers(const HosCoopDraw& d, const std::vector<CoopHook::PlayerRow>& r
     }
 }
 
-// The voice icon (docs/voice.md, "Who is talking"), `size` high with its top
-// left at (x, top), in the HUD's way: a soft shadow under the shape. A
-// microphone: lit green while talking, dim while quiet, crossed out in red
-// when muted.
-void DrawVoiceIcon(const HosCoopDraw& d, float x, float top, float size, CoopVoice::Icon icon, int alpha) {
-    if (icon == CoopVoice::Icon::none) {
-        return;
-    }
-    const float s = size;
-    const int a = icon == CoopVoice::Icon::idle ? alpha * 110 / 255 : alpha;
-    const std::uint32_t fill = icon == CoopVoice::Icon::talking ? Rgba(120, 235, 120, a) : Rgba(215, 215, 215, a);
-    const auto mic = [&](float ox, float oy, std::uint32_t c) {
-        const float l = x + ox, t = top + oy;
-        d.rect(d.user, l + 0.34f * s, t + 0.05f * s, l + 0.66f * s, t + 0.62f * s, c, 0.16f * s);   // the head
-        d.rect(d.user, l + 0.47f * s, t + 0.62f * s, l + 0.53f * s, t + 0.82f * s, c, 0.0f);       // the stem
-        d.rect(d.user, l + 0.30f * s, t + 0.80f * s, l + 0.70f * s, t + 0.88f * s, c, 0.04f * s);  // the base
-    };
-    const float sh = std::max(1.0f, 0.06f * s);
-    mic(sh, sh, Rgba(0, 0, 0, a * 150 / 255));
-    mic(0, 0, fill);
-    if (icon == CoopVoice::Icon::talking) {
-        d.circle(d.user, x + 0.5f * s, top + 0.42f * s, 0.5f * s, Rgba(120, 235, 120, a / 2), std::max(1.0f, 0.07f * s));
-    } else if (icon == CoopVoice::Icon::muted) {   // a red bar across, two triangles
-        const float w = 0.06f * s;
-        const float x0 = x + 0.12f * s, y0 = top + 0.02f * s, x1 = x + 0.88f * s, y1 = top + 0.92f * s;
-        const std::uint32_t red = Rgba(230, 70, 60, a);
-        d.triangle(d.user, x0 - w, y0 + w, x0 + w, y0 - w, x1 + w, y1 - w, red);
-        d.triangle(d.user, x0 - w, y0 + w, x1 + w, y1 - w, x1 - w, y1 + w, red);
+// The voice state after a name (docs/voice.md, "Who is talking"), as words in the game's font: " (talking)",
+// " (muted)", nothing while quiet. (Before 2026-11-21 a drawn microphone: no own-drawn shapes on the HUD, owner.)
+std::string VoiceWords(CoopVoice::Icon icon) {
+    switch (icon) {
+    case CoopVoice::Icon::talking: return " (" + CoopI18n::Tr("talking") + ")";
+    case CoopVoice::Icon::muted: return " (" + CoopI18n::Tr("muted") + ")";
+    default: return "";
     }
 }
 
@@ -557,12 +536,10 @@ void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks, CoopVoic
     const float heart = kHeartPx * u;
     const float name_px = kHudNamePx * u;
     const float place_px = kHudPlacePx * u;
-    const float icon_gap = 0.3f * name_px;
-    if (own_voice != CoopVoice::Icon::none && !blocks.empty()) {   // our own row: "You" and our icon
+    if (own_voice != CoopVoice::Icon::none && !blocks.empty()) {   // our own row: "You" and our voice state
         Font(d, look.medium);
-        const std::string you = CoopI18n::Tr("You");
+        const std::string you = CoopI18n::Tr("You") + VoiceWords(own_voice);
         GameText(d, x, y, name_px, Rgba(255, 255, 255, 255), you.c_str());
-        DrawVoiceIcon(d, x + d.text_width(d.user, name_px, you.c_str()) + icon_gap, y, name_px, own_voice, 255);
         y += name_px + kHudGap * u;
     }
     std::vector<double> heights;
@@ -575,8 +552,7 @@ void DrawHud(const HosCoopDraw& d, const std::vector<HudBlock>& blocks, CoopVoic
         const auto& b = blocks[i];
         const int a = b.dim ? 150 : 255;
         Font(d, look.medium);
-        GameText(d, x, y, name_px, Rgba(255, 255, 255, a), b.name.c_str());
-        DrawVoiceIcon(d, x + d.text_width(d.user, name_px, b.name.c_str()) + icon_gap, y, name_px, b.voice, a);
+        GameText(d, x, y, name_px, Rgba(255, 255, 255, a), (b.name + VoiceWords(b.voice)).c_str());
         y += name_px + 2 * u;
         if (!b.hearts.empty()) {
             for (std::size_t i = 0; i < b.hearts.size(); ++i) {
