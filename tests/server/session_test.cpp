@@ -2924,12 +2924,12 @@ TEST_CASE("boss turns: in a fight the boss goes to the next player every 20 s, r
   // Player 2's turn: 20 s from the change, then player 3's.
   h.receive(2, ObjectSample{0, placed(7), 1, state_at(0, 10)}, kChannelObjectSamples);
   h.clear();
-  h.run(19 * kSecond);
+  h.run(18 * kSecond);
   attack_ends(h, 2, 1, 10);  // an attack's end before its 20 s: no turn
   h.run(250'000);
   CHECK(messages_to<HandoverAsk>(h, 2).empty());
-  h.run(1'500'000);
-  CHECK(messages_to<HandoverAsk>(h, 2).empty());  // nor that old edge later
+  h.run(2'500'000);
+  CHECK(messages_to<HandoverAsk>(h, 2).empty());  // nor that edge at 20 s (older than boss_turn_edge_us)
   attack_ends(h, 2, 1, 10);
   h.run(250'000);
   REQUIRE(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 3}});
