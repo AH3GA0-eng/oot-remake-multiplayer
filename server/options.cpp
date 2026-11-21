@@ -193,6 +193,8 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
       }
       line.relay_room = *room;
       ++i;
+    } else if (arg == "--public") {
+      line.public_game = true;
     } else if (arg == "--relay-list") {
       // The name shown in the list is optional (the room name without one); the next option is never taken as it.
       list_room = true;
@@ -217,6 +219,17 @@ std::optional<CommandLine> parse_command_line(const std::vector<std::string>& ar
   if (!line.relay_room.empty() && line.relay_via.empty()) {
     error = "--relay-room is a name on a relay: it needs --relay-via";
     return std::nullopt;
+  }
+  if (line.public_game) {
+    if (line.relay_via.empty() || line.relay_room.empty()) {
+      error = "--public is a public game on the relay's list: it needs --relay-via and --relay-room";
+      return std::nullopt;
+    }
+    if (line.upnp) {
+      error = "--public is through the relay only: leave out --upnp (it would open this PC's port)";
+      return std::nullopt;
+    }
+    list_room = true;   // (a public game is always on the list)
   }
   if (list_room && line.relay_list.empty()) line.relay_list = line.relay_room;
   if (list_room && line.relay_room.empty()) {
@@ -281,6 +294,9 @@ const char* usage() {
          "                   public room list, shown as NAME (the room name\n"
          "                   without one; players and version shown too, never\n"
          "                   the password)\n"
+         "  --public         a public game: with --relay-via and --relay-room,\n"
+         "                   anyone with the room name joins without a password\n"
+         "                   (still encrypted), through the relay only, listed\n"
          "  --relay          run as a relay for hosts that use --relay-via\n"
          "                   (UDP port 27530 unless --port), not a game server\n"
          "  --relay-key TEXT | --relay-key-env NAME  the relay's host key: on the\n"

@@ -47,6 +47,11 @@ struct CommandLine {
   // room list, shown as NAME; without one, as the room name (players, most
   // players and the protocol version go with it; never the password).
   std::string relay_list;
+  // --public: a public game (HostServiceConfig::public_game): anyone with the
+  // room name joins without a password, through the relay only, listed. Needs
+  // --relay-via and --relay-room; no --upnp. A --password given is replaced by
+  // the room's (protocol::public_join_password), as the game's Host page does.
+  bool public_game = false;
   // --relay-key / --relay-key-env: the relay's host key (on the relay: the one
   // hosts must give; with --relay-via: the one to give).
   std::string relay_key;
