@@ -916,8 +916,12 @@ void Init(const HosCoopApi* api) {
              g_native ? "; the 4th title button opens it too (LICHII_COOP_TITLE_NATIVE)" : "");
 }
 
+fs::path LookFile() {
+    return KitOptionsFile().value_or(CoopIni());
+}
+
 void SaveLook(const CoopLook::Look& look) {
-    const auto kit = KitOptionsFile();   // (the one the game reads: the kit's, or beside longshot.exe, as Save)
+    const auto kit = KitOptionsFile();   // (as LookFile: the kit's, or beside longshot.exe, else coop.ini below)
     std::string coop = ReadText(CoopIni());
     std::string options = kit ? ReadText(*kit) : std::string();
     const bool ok = !CoopLook::WriteSettings(look, coop, kit ? &options : nullptr) ||
