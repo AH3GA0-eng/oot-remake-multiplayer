@@ -78,6 +78,12 @@ inline constexpr std::uint64_t kPaneTable = 0x43c040;  // (layout + 0x40) -> its
 inline constexpr std::uint64_t kPaneByName = 0x43e300; // (table, "name") -> the pane, a part's own (kFindPane gives
                                                        //  a part's inner root instead)
 inline constexpr std::uint64_t kSetVisible = 0x20aea0; // (pane, visible): pane +0xa8 bit 0 (as f_802edef0 hides a tab)
+// A layout's animation by name or by a path through its parts ("Pa_A/Pa_B/Select": main+0x43c4a0 walks the parts by
+// '/', read from main 2026-11-21), stopped at a frame: the title's BtnNum way (coop_title.cpp, run in the game).
+inline constexpr std::uint64_t kAnimFind = 0x43d870;      // (layout, "name or path") -> the animation, 0 none
+inline constexpr std::uint64_t kAnimPlayer = 0x20;        // an animation's player
+inline constexpr std::uint64_t kAnimLastFrame = 0x2d1340; // (player) -> s32: its last frame
+inline constexpr std::uint64_t kAnimStopAt = 0x2d2d90;    // (animation, s0 frame): stopped at that frame
 inline constexpr std::uint64_t kTabFill = 0xa6ab50;    // (tab, category, enabled): its text and Plus/Minus look
 inline constexpr std::uint64_t kTabLight = 0x2ccf60;   // (tab, lit, instant): its CurrentIn / CurrentOut
 inline constexpr std::uint64_t kPaneAlpha = 0x2d8ac0;  // (pane, s0 alpha 0..1): a pane's own alpha (+0x74), marked dirty

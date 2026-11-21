@@ -1858,6 +1858,8 @@ void FollowMinus(void* ctx) {
 constexpr std::uint64_t kMapMenuVtable = 0x4be8300;   // main+: UIMapMenuScreen (MapMenu_00: the HUD and the Map page)
 constexpr std::uint64_t kMenuSetCurrent = 0x340b720;  // (mgr, category): the menu manager's current page (f_8342b720)
 std::uint64_t g_minus_page = 0, g_minus_part = 0;      // Pa_CoopMinus_00's pane and its part layout (LookStrip). g_mutex
+std::uint64_t g_minus_layout = 0;                       // the strip's layout they were found in (its animations by path)
+bool g_minus_anim_said = false;                         // (the focus animations' result said once per opening)
 std::uint64_t g_minus_page_gen = 0;                     // the strip's opening they were looked up for
 std::array<std::uint64_t, kRows> g_minus_buttons{}, g_minus_cursors{};
 // Each button's W_Select_00: the focus frame the game shows (lane R1: a frame stayed on the last button copied and our
@@ -1875,8 +1877,31 @@ std::atomic<bool> g_minus_go_plus{false};               // a row's view asked: t
 std::uint64_t g_map_root = 0, g_map_layout = 0;
 bool g_map_hidden = false;                              // (the map screen's updates: one thread)
 
+// A part's animation (a path from `layout`, kAnimFind) stopped at its first frame or its last, the title's BtnNum way.
+// nullptr when done, else why not.
+const char* StopPartAnim(void* ctx, std::uint64_t layout, const std::string& path, bool last) {
+    const std::uint64_t name = g_api->scratch(ctx, path.c_str(), path.size() + 1);
+    if (name == 0) return "no scratch";
+    std::uint64_t anim = 0;
+    if (!Call(ctx, kAnimFind, layout, name, 0, 0, 0, &anim) || anim == 0) return "not found";
+    float frame = 0.0f;
+    if (last) {
+        const std::uint64_t player = Read<std::uint64_t>(anim + kAnimPlayer);
+        std::uint64_t end = 0;
+        if (player == 0 || !Call(ctx, kAnimLastFrame, player, 0, 0, 0, 0, &end)) return "no last frame";
+        frame = static_cast<float>(static_cast<std::int32_t>(end));
+    }
+    HosCoopCall k{};
+    k.function = CoopRuntime::MainBase() + kAnimStopAt;
+    k.x[0] = anim;
+    k.s0 = frame;
+    std::uint64_t r = 0;
+    return g_api->call(ctx, &k, &r) ? nullptr : "not stopped";
+}
+
 void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen) {
     g_minus_page_gen = gen;
+    g_minus_layout = layout, g_minus_anim_said = false;
     g_minus_page = 0, g_minus_part = 0, g_minus_buttons = {}, g_minus_cursors = {}, g_minus_selects = {};
     g_minus_hide.clear();
     g_minus_vis = -1, g_minus_page_tab = -1, g_minus_focus = -1, g_minus_shown_rows = ~0u, g_minus_rows_ms = 0;
@@ -1957,9 +1982,25 @@ int ApplyMinusPage(void* ctx, std::uint64_t gen) {
         if (g_minus_selects[k] != 0) SetVisible(ctx, g_minus_selects[k], r == focus);
     }
     if (focus != g_minus_focus) {
+        // (the frame itself is the button's own Select animation, as the game's buttons show it: lane R1 20261121-085053, the
+        // pane alone made visible drew nothing, as PaCommonBtnThin_00's FunctionalAnimSelect / UnSelect key it and
+        // no button controller plays them on the strip's copies. The focused row's Select at its last frame, the
+        // others' at its first.)
+        std::string anim_why;
         for (int r = 0; r < kRows; ++r) {
             const std::size_t k = static_cast<std::size_t>(r);
             if (g_minus_buttons[k] != 0) CallAlpha(ctx, g_minus_buttons[k], r == focus ? 1.0f : 0.8f);
+            if (g_minus_buttons[k] == 0 || g_minus_layout == 0) continue;
+            char path[48];
+            std::snprintf(path, sizeof path, "Pa_CoopMinus_00/Pa_Button_%02d/Select", r);
+            if (const char* why = StopPartAnim(ctx, g_minus_layout, path, r == focus)) {
+                anim_why += std::string(anim_why.empty() ? "" : ", ") + path + " " + why;
+            }
+        }
+        if (!g_minus_anim_said || !anim_why.empty()) {
+            g_minus_anim_said = anim_why.empty();
+            LOG_INFO(Core, "coop: pause tab: the - menu's page: the focus frames by the buttons' Select animation: {}",
+                     anim_why.empty() ? std::string("set") : anim_why);
         }
         LOG_INFO(Core, "coop: pause tab: the - menu's page: focus on row {}", focus);
         g_minus_focus = focus;
