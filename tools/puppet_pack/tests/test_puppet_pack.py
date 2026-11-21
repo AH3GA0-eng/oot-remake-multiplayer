@@ -1661,8 +1661,15 @@ class FullBuildTest(unittest.TestCase):
                       f"Model/{actor}.{item}.bfres", f"Tex/{name}.bntx"):
                 self.assertGreater(t.get(f) or 0, 0, f)
         self.assertEqual(m["look_items"]["copies"], 4)   # two per slot
+        # (row 198) and one more, the neutral copy: the game's colours, marked with its number, never painted
+        self.assertEqual(m["look_items"]["neutral"], 5)
+        name = look_items.tex_name("Mt_Weapon_Shield_Hylian_Alb", 5)
+        got = d.decompress(build.read(os.path.join(out, f"Tex/{name}.bntx.zs")))
+        renamed = tex.replace(b"Mt_Weapon_Shield_Hylian_Alb\x00", name.encode() + b"\x00")
+        self.assertEqual(got, look_live.mark_bntx(renamed, 5))
         self.assertTrue(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look4.pack.zs")))
-        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look5.pack.zs")))
+        self.assertTrue(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look5.pack.zs")))    # (the neutral)
+        self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}_Look6.pack.zs")))
 
         # The game's own item is not in the pack.
         self.assertFalse(os.path.exists(os.path.join(out, f"Pack/Actor/{item}.pack.zs")))

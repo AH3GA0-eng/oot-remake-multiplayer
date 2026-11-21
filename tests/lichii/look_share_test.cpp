@@ -166,6 +166,9 @@ TEST_CASE("look items: the pack's item copies are read from its manifest") {
     CHECK(items.copies == 8);
     CHECK(items.actors == std::vector<std::string>{"Weapon_Shield_Hylian", "Armor_Adult_Zora"});
     CHECK(CoopPuppet::PackLookItems(R"({"look_items": null})").copies == 0);
+    CHECK(CoopPuppet::PackLookItems(R"({"look_items": {"slots": 4, "copies": 8, "neutral": 9, "actors": ["A"]}})")
+              .neutral == 9u);   // (row 198)
+    CHECK(CoopPuppet::PackLookItems(R"({"look_items": {"slots": 4, "copies": 8, "actors": ["A"]}})").neutral == 0u);
     CHECK(CoopPuppet::PackLookItems(R"({"actors": []})").copies == 0);
     CHECK(CoopPuppet::PackLookItems(R"({"look_items": {"copies": 2, "actors": []}})").copies == 0);
     CHECK(CoopPuppet::PackLookItems("").actors.empty());
@@ -228,9 +231,20 @@ TEST_CASE("blade copies: every puppet with no ready Look copy wears its own numb
     CHECK(in.targets[0].gear[0] == std::string("Weapon_Sword_Kokiri_Look1"));
     CHECK(in.targets[0].gear[1] == std::string("Weapon_Shield_Hylian_Look1"));
     CHECK(in.targets[1].gear[0] == std::string("Weapon_Sword_Kokiri_Blade6"));   // a 5th+ player: no slot
-    CHECK(in.targets[1].gear[1] == std::string("Weapon_Shield_Hylian"));         // no blade: the game's
+    CHECK(in.targets[1].gear[1] == std::string("Weapon_Shield_Hylian"));         // no neutral copy: the game's
     CHECK(in.targets[2].gear[0] == std::string("Weapon_Sword_Kokiri_Blade16"));
     CHECK(in.targets[3].gear[0] == std::string("Weapon_Sword_Giant_Blade9"));
+
+    // Row 198: with the pack's neutral copy, a puppet with no copy of its own wears it for every coloured piece but
+    // its sword's own wearer copy: never the game's item, whose texture your own colour is drawn over.
+    settings.look_neutral = 9;
+    CoopPuppet::Planner pn(settings);
+    const auto withn = pn.Plan(0x8000000, std::string("Kokiri"), CoopPuppet::Vec3{0, 0, 0}, false, remotes, 1000);
+    REQUIRE(withn.targets.size() == 4);
+    CHECK(withn.targets[0].gear[1] == std::string("Weapon_Shield_Hylian_Look1"));   // (its own copy: as before)
+    CHECK(withn.targets[1].gear[0] == std::string("Weapon_Sword_Kokiri_Blade6"));   // (its own wearer copy)
+    CHECK(withn.targets[1].gear[1] == std::string("Weapon_Shield_Hylian_Look9"));   // (the neutral copy)
+    settings.look_neutral = 0;
 
     // A pack with fewer numbers than the player's: the game's own sword, as before.
     CoopPuppet::Gear gear;

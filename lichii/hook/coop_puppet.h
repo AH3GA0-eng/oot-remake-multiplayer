@@ -846,6 +846,7 @@ struct PlannerSettings {
     // (PackLookItems). None: every puppet wears the game's items.
     std::vector<std::string> look_items;
     std::size_t look_copies = 0;
+    std::size_t look_neutral = 0;   // (row 198: LookItems::neutral; 0 none)
     // Wearer copies (coop_puppet.json "blade_items", look_items.is_wearer_item):
     // the items the pack has one copy of per player number (every player item
     // with the game's weapon component: swords, hammer, Deku Stick, bottles,
@@ -916,6 +917,9 @@ std::optional<std::pair<std::uint64_t, std::array<std::uint8_t, 16>>> PackCharac
 struct LookItems {
     std::vector<std::string> actors;
     std::size_t copies = 0;
+    // Row 198: the neutral copy's number ("neutral": the game's colours, marked, never painted), worn by a puppet with
+    // no slot of its own; 0 for a pack made before it.
+    std::size_t neutral = 0;
 };
 // `key`: "look_items", or "blade_items" (the same shape, "copies" per player number).
 LookItems PackLookItems(std::string_view manifest, std::string_view key = "look_items");

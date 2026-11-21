@@ -1458,7 +1458,9 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
         if not models:
             log(f"look items: no Model/{project}.* in this romfs, {item} left out")
             continue
-        for slot in range(1, slots * look_items.COPIES_PER_SLOT + 1):  # (each slot's two copies)
+        # (each slot's two copies, then one more, the neutral copy (row 198): the game's colours, marked, never
+        # painted, worn by a puppet with no slot of its own, so it never wears the game's item your colour is drawn on)
+        for slot in range(1, slots * look_items.COPIES_PER_SLOT + 2):
             actor = look_items.actor_name(item, slot)
             pack, ap, info = look_items.copy_pack(members, item, slot)
             dst = f"Pack/Actor/{actor}.pack.zs"
@@ -1504,7 +1506,8 @@ def write_look_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, slots, l
         log(f"look items: {len(made)} items x {slots} slots x {look_items.COPIES_PER_SLOT} copies ({len(files)} files): "
             "puppets in their own gear colours")
     copies = slots * look_items.COPIES_PER_SLOT
-    return {"slots": slots, "copies": copies, "actors": made, "files": files} if made else None, new_ai, new_gai
+    return ({"slots": slots, "copies": copies, "neutral": copies + 1, "actors": made, "files": files} if made else None,
+            new_ai, new_gai)
 
 
 def write_blade_items(romfs, out_romfs, dicts, table, ai_rows, gai_rows, copies, log=print):

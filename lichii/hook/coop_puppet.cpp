@@ -2318,10 +2318,16 @@ Input Planner::Plan(std::uint64_t main_base, const std::optional<std::string>& s
         t.anim = r.anim;
         t.anim_serial = r.anim_serial;
         t.gear = r.gear;
-        if (r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies) {
+        const bool own_copy = r.look_copy && *r.look_copy >= 1 && *r.look_copy <= settings_.look_copies;
+        if (own_copy) {
             DressInLook(t.gear, *r.look_copy, settings_.look_items);
         }
         DressInBlades(t.gear, r.number, settings_.blade_items, settings_.blade_copies);
+        // (row 198: no copy of its own (more players than slots): the neutral copy, never the game's item, whose
+        // texture your own colour is drawn over; a sword already on its player's own wearer copy keeps it)
+        if (!own_copy && settings_.look_neutral > settings_.look_copies) {
+            DressInLook(t.gear, settings_.look_neutral, settings_.look_items);
+        }
         t.drawn = r.drawn;
         t.lit = r.lit;
         t.ocarina = r.ocarina;
@@ -2459,6 +2465,13 @@ LookItems PackLookItems(std::string_view manifest, std::string_view key) {
         return out;
     }
     const std::string_view body = manifest.substr(open, close - open);
+    if (const auto s = body.find("\"neutral\""); s != std::string_view::npos) {
+        std::size_t i = body.find_first_not_of(" \t\r\n:", s + 9);
+        while (i < body.size() && body[i] >= '0' && body[i] <= '9' && out.neutral < 100) {
+            out.neutral = out.neutral * 10 + static_cast<std::size_t>(body[i] - '0');
+            ++i;
+        }
+    }
     std::size_t copies = 0;
     if (const auto s = body.find("\"copies\""); s != std::string_view::npos) {
         std::size_t i = body.find_first_not_of(" \t\r\n:", s + 8);
