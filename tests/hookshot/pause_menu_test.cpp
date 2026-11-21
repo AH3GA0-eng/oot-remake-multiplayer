@@ -1699,3 +1699,16 @@ TEST_CASE("pause tab: Settings: A, Left and Right on Original game and Player li
     m.Press(Input::kRight);
     CHECK(m.options().hud_size == "auto");
 }
+
+TEST_CASE("pause tab: Settings: Original game, A flips it and asks for a save") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Original game");
+    CHECK_FALSE(m.options().original_game);
+    m.Press(Input::kDecide);
+    CHECK(m.options().original_game);
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kSave);
+}

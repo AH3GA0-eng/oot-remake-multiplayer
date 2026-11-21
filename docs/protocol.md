@@ -345,7 +345,7 @@ Protocol 11, type 430 (430 to 434 kept for looks). The colours a player chose fo
 |---|---|
 | u8 | player: 0 from a client, 1 to 16 relayed |
 | u8 | parts listed, 0 to 64 |
-| per part: u8 | the part's number, 0 to 63 (one a build does not know is passed over by it) |
+| per part: u8 | the part's number, 0 to 63 (one a build does not know is passed over by it): 0 to 16 the first parts, 17 the Cap trim (branch `test-kit-0117`, your own Link's cap trims; an older build passes it over) |
 | per part: u8 u8 u8 | its colour: red, green, blue |
 
 Only the parts set are listed, each once (a part twice, a number past 63 or a count past 64 is refused); none listed: every part in the game's own colours. An older game skips the type as unknown.
