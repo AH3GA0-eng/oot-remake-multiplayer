@@ -2,6 +2,7 @@
 #include "coop_look_menu.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include "coop_colors.h"
@@ -18,7 +19,7 @@ namespace {
 constexpr int kHueStep = 10;    // degrees a press (wraps round)
 constexpr int kLevelStep = 5;   // percent a press on Saturation or Brightness
 
-enum class What { kHeading, kPart, kAllGame, kHue, kSaturation, kBrightness, kPreset, kGameOwn, kDone };
+enum class What { kHeading, kPart, kAllGame, kHue, kSaturation, kBrightness, kPreset, kGameOwn, kDone, kNote };
 
 // The game's own colours, near enough for the picture (the textures' averages).
 std::uint32_t GameColour(Part part) {
@@ -226,6 +227,32 @@ std::uint32_t ToRgb(const Hsv& c) {
     return (byte(r) << 16) | (byte(g) << 8) | byte(b);
 }
 
+const std::array<Group, 3>& Groups() {
+    static const std::array<Group, 3> kGroups = {{
+        {"Clothes", {Part::tunic, Part::cap_trim, Part::goron_tunic, Part::zora_tunic, Part::boots, Part::gauntlets}},
+        {"Shields", {Part::hylian_frame, Part::hylian_face, Part::hylian_emblem, Part::mirror_rim, Part::mirror_face,
+                     Part::deku_shield}},
+        {"Swords", {Part::kokiri_blade, Part::kokiri_hilt, Part::master_blade, Part::master_hilt, Part::biggoron_blade,
+                    Part::biggoron_hilt}},
+    }};
+    return kGroups;
+}
+
+std::string PagedName(Part part) {
+    switch (part) {
+    case Part::tunic: return "Kokiri Tunic";
+    case Part::cap_trim: return "Cap Trim";
+    case Part::goron_tunic: return "Goron Tunic";
+    case Part::zora_tunic: return "Zora Tunic";
+    case Part::boots: return "Boots";
+    case Part::gauntlets: return "Gauntlets";
+    case Part::deku_shield: return "Deku Shield";
+    default: break;
+    }
+    const PartInfo& info = CoopLook::InfoOf(part);
+    return std::string(info.item) + " " + info.name;   // ("Hylian Shield Frame", "Master Sword Hilt")
+}
+
 const std::vector<std::string>& Presets() {
     static const std::vector<std::string> kPresets = {"",     "red",    "orange", "yellow", "green", "cyan",
                                                       "blue", "purple", "pink",   "white",  "black"};
@@ -275,6 +302,26 @@ std::vector<Page::Line> Page::Lines() const {
         out.push_back({{"Done", "", 0}, What::kDone, p, "Back to the list of parts."});
         return out;
     }
+    if (paged_) {
+        const auto offered = Offered();
+        if (offered.empty()) {
+            out.push_back({{"Customize", "", 3}, What::kHeading, Part::tunic, ""});
+            out.push_back({{kNoColourOptions, "", 4}, What::kNote, Part::tunic, ""});
+            return out;
+        }
+        const std::size_t shown = std::min(group_, offered.size() - 1);
+        const Group& g = Groups()[offered[shown]];
+        out.push_back({{std::string(g.name) + " (page " + std::to_string(shown + 1) + " of " +
+                            std::to_string(offered.size()) + ")",
+                        "", 3},
+                       What::kHeading, g.parts[0], ""});
+        for (const Part p : g.parts) {
+            out.push_back({{PagedName(p), ValueText(p, look_[p]), 1, true, true}, What::kPart, p,
+                           CoopI18n::Tr(Note(p)) + " " +
+                               CoopI18n::Tr("Left and Right try the colours; A picks any colour of your own.")});
+        }
+        return out;
+    }
     std::string item;
     for (const PartInfo& info : CoopLook::Parts()) {
         if (item != info.item) {
@@ -299,7 +346,44 @@ std::vector<Page::Line> Page::Lines() const {
 
 bool Page::Selectable(std::size_t row) const {
     const auto lines = Lines();
-    return row < lines.size() && lines[row].what != What::kHeading;
+    return row < lines.size() && lines[row].what != What::kHeading && lines[row].what != What::kNote;
+}
+
+void Page::SetPaged(bool on) {
+    paged_ = on;
+    group_ = 0;
+    selected_ = 1;
+}
+
+void Page::SetCharacter(std::uint16_t character, bool gear_shows) {
+    if (character == character_ && gear_shows == gear_shows_) return;
+    character_ = character, gear_shows_ = gear_shows;
+    editing_.reset();
+    group_ = 0;
+    selected_ = 1;
+}
+
+std::vector<std::size_t> Page::Offered() const {
+    if (character_ == 0) return {0, 1, 2};   // Link: every part
+    if (gear_shows_) return {1, 2};          // a character: its held gear only, once shown to work
+    return {};
+}
+
+std::size_t Page::GroupShown() const {
+    const auto offered = Offered();
+    return offered.empty() ? 0 : offered[std::min(group_, offered.size() - 1)];
+}
+
+std::size_t Page::GroupsOffered() const {
+    return Offered().size();
+}
+
+void Page::TurnPage(int step) {
+    const std::size_t n = Offered().size();
+    if (!paged_ || editing_ || n == 0) return;
+    group_ = (group_ + n + static_cast<std::size_t>(step > 0 ? 1 : n - 1)) % n;
+    selected_ = 1;
+    Focus(Lines()[1].part);
 }
 
 void Page::Open(const CoopLook::Look& look) {
@@ -332,7 +416,7 @@ void Page::Move(int step) {
     const std::size_t n = lines.size();
     for (std::size_t tries = 0; tries < n; ++tries) {
         selected_ = step > 0 ? (selected_ + 1) % n : (selected_ + n - 1) % n;
-        if (lines[selected_].what != What::kHeading) {
+        if (lines[selected_].what != What::kHeading && lines[selected_].what != What::kNote) {
             Focus(lines[selected_].part);
             return;
         }
@@ -411,6 +495,13 @@ bool Page::Press(Input input) {
     case Input::kLeft: Change(selected_, -1); return true;
     case Input::kRight: Change(selected_, 1); return true;
     case Input::kDecide: Decide(selected_); return true;
+    case Input::kPagePrev: TurnPage(-1); return true;
+    case Input::kPageNext: TurnPage(1); return true;
+    case Input::kResetAll:
+        if (!editing_) {
+            for (const PartInfo& info : CoopLook::Parts()) Set(info.part, std::nullopt);
+        }
+        return true;
     case Input::kBack:
         if (editing_) {
             editing_.reset();

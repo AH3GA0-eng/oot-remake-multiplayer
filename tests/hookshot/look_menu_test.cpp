@@ -225,3 +225,73 @@ TEST_CASE("look menu (0.11.9): any colour round-trips through hue, saturation an
         }
     }
 }
+
+TEST_CASE("look menu (0.11.9): the Character page: three pages of six, ZL and ZR turn, nothing below a scroll") {
+    Page page;
+    page.SetPaged(true);
+    Look start;
+    start[Part::master_hilt] = 0xFF0000u;
+    page.Open(start);
+    auto v = page.view();
+    REQUIRE(v.rows.size() == 7);                    // the heading and six parts: one screen
+    CHECK(v.rows[0].kind == 3);
+    CHECK(v.rows[0].name == "Clothes (page 1 of 3)");
+    CHECK(v.rows[1].name == "Kokiri Tunic");
+    CHECK(v.rows[2].name == "Cap Trim");
+    CHECK(v.rows[5].name == "Boots");
+    CHECK(v.rows[6].name == "Gauntlets");
+    CHECK(v.selected == 1);
+    page.Press(Input::kPageNext);
+    v = page.view();
+    CHECK(v.rows[0].name == "Shields (page 2 of 3)");
+    CHECK(v.rows[1].name == "Hylian Shield Frame");
+    CHECK(v.rows[6].name == "Deku Shield");
+    page.Press(Input::kPageNext);
+    v = page.view();
+    CHECK(v.rows[0].name == "Swords (page 3 of 3)");
+    CHECK(v.rows[4].name == "Master Sword Hilt");
+    CHECK(v.rows[4].value == "red");
+    CHECK(v.rows[6].name == "Biggoron's Sword Hilt");
+    page.Press(Input::kPageNext);                   // round to the first
+    CHECK(page.view().rows[0].name == "Clothes (page 1 of 3)");
+    page.Press(Input::kPagePrev);
+    CHECK(page.GroupShown() == 2u);
+    // Every part is on exactly one page.
+    std::vector<Part> seen;
+    for (const auto& g : CoopLookMenu::Groups()) seen.insert(seen.end(), g.parts.begin(), g.parts.end());
+    CHECK(seen.size() == CoopLook::kParts);
+    for (const auto& info : CoopLook::Parts()) CHECK(std::count(seen.begin(), seen.end(), info.part) == 1);
+    // A on a part: the colour mixer, which a page turn leaves alone; X resets every part.
+    page.Press(Input::kDown);
+    page.Press(Input::kDown);
+    page.Press(Input::kDown);                       // Master Sword Hilt
+    page.Press(Input::kDecide);
+    REQUIRE(page.editing());
+    page.Press(Input::kPageNext);
+    CHECK(page.editing());
+    page.Press(Input::kBack);
+    page.Press(Input::kResetAll);
+    CHECK(page.look() == Look{});
+}
+
+TEST_CASE("look menu (0.11.9): a character other than Link: its gear pages once shown to work, else one plain line") {
+    Page page;
+    page.SetPaged(true);
+    page.Open(Look{});
+    page.SetCharacter(9, false);
+    auto v = page.view();
+    REQUIRE(v.rows.size() == 2);
+    CHECK(v.rows[1].name == CoopLookMenu::kNoColourOptions);
+    CHECK(v.rows[1].kind == 4);
+    CHECK(page.GroupsOffered() == 0u);
+    page.Press(Input::kDecide);                     // nothing to press: no change, no mixer
+    CHECK_FALSE(page.editing());
+    CHECK_FALSE(page.TakeChange());
+    page.SetCharacter(9, true);
+    v = page.view();
+    CHECK(v.rows[0].name == "Shields (page 1 of 2)");
+    page.Press(Input::kPageNext);
+    CHECK(page.view().rows[0].name == "Swords (page 2 of 2)");
+    page.SetCharacter(0, true);                     // Link again: every page
+    CHECK(page.view().rows[0].name == "Clothes (page 1 of 3)");
+}
