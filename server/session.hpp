@@ -622,6 +622,9 @@ class Session {
     // one on a rejoin): what that game tries again when it drops.
     std::string proved_password;
     std::uint8_t number = 0;  // 1 to max_players once joined
+    // When it joined, in order (Session::joins_): the host passes to the
+    // earliest joiner still in (a number can be a newer player's, freed).
+    std::uint64_t joined_order = 0;
     std::string nickname;
     // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
     std::optional<protocol::ModList> mods;
@@ -983,6 +986,7 @@ class Session {
   std::string session_release_;     // the first player's co-op release (coop_release), "" none; while players are in
   std::map<ConnectionId, Connection> connections_;
   ConnectionId next_local_id_ = kLocalPlayerIds;
+  std::uint64_t joins_ = 0;   // players joined so far (Connection::joined_order)
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
   // The Lobby, by lobby_id (the player key; the name only without one), so a

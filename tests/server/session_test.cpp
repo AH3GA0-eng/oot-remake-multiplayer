@@ -5364,6 +5364,23 @@ TEST_CASE("lobby: a player muted in voice is not relayed, the others are") {
   CHECK(count_to<VoiceFrame>(h, 1) == 1);
 }
 
+TEST_CASE("the host passes in join order: to the player in the longest, not the lowest number") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.session.disconnected(2, h.now);   // (number 2 is free again)
+  h.join(4, "Mido");                  // joins last, takes number 2
+  h.collect();
+  h.clear();
+  h.session.disconnected(1, h.now);   // the host leaves
+  h.collect();
+  CHECK(h.session.host() == 3);       // Saria (number 3, in longer), not Mido (number 2)
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(h.session.host() == 2);       // (Mido: number 2)
+}
+
 TEST_CASE("lobby: when the host leaves, the new host has the controls and the mutes hold") {
   Harness h;
   h.join(1, "Link");

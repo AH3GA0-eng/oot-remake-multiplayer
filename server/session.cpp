@@ -456,6 +456,7 @@ void Session::admit(ConnectionId id, Connection& c, const Hello& hello,
             [](const PlayerInfo& a, const PlayerInfo& b) { return a.number < b.number; });
 
   c.state = State::joined;
+  c.joined_order = ++joins_;
   c.number = welcome.player_number;
   c.nickname = hello.nickname;
   c.player_key = player_key;
@@ -3077,8 +3078,10 @@ void Session::remove_player(ConnectionId id, LeaveReason reason, std::uint64_t n
     // told on the progress channel, so the new host learns it hosts before
     // any FLAG_SET relayed to it.
     std::optional<ConnectionId> next;
+    // The player in the session longest (join order; a game's own seats never host).
     for (const auto& [other, oc] : connections_) {
-      if (oc.state == State::joined && !oc.parent && (!next || oc.number < connections_.at(*next).number)) {
+      if (oc.state == State::joined && !oc.parent &&
+          (!next || oc.joined_order < connections_.at(*next).joined_order)) {
         next = other;
       }
     }
