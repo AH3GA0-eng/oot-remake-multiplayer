@@ -872,6 +872,54 @@ class MergeMembersTest(unittest.TestCase):
         self.assertEqual(self.merge(), (0, {}))
         self.assertEqual(self.lines, [])
 
+    # Player report 206: a seed's messages and the Character Select mod's, in the same archive.
+    HAND = "OoT_Randomizer_0123456789abcdef"   # (sorts after the Character Select mod: it wins)
+
+    def put_seed(self):
+        raw = self.archive(dict(self.game, **{"X.msbt": b"seed X"}))
+        self.put(os.path.join(self.mods, self.HAND, "romfs", *MALS.split("/")), raw)
+        return raw
+
+    def served_by(self, mod):
+        raw = read(os.path.join(self.mods, mod, "romfs", *MALS.split("/")))
+        return sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(raw))
+
+    def test_a_seed_that_wins_gets_the_character_mods_members_and_the_packs(self):
+        seed = self.put_seed()
+        self.assertEqual(self.merge()[0], 0)
+        got = self.served_by(self.HAND)
+        self.assertEqual(got["X.msbt"], b"seed X")          # the seed's own
+        self.assertEqual(got["Char.msbt"], b"mod only")     # the Character Select mod's
+        self.assertEqual(got["Hdr.msbt"], b"mod header")    # mod and pack changed it: the mod is nearer the winner
+        self.assertEqual(got["A.msbt"], b"pack A")
+        self.assertEqual(got["Coop.msbt"], b"pack only")
+        self.assertEqual(read(os.path.join(self.mod, "romfs", *MALS.split("/"))), self.mod_raw)   # lower: not written
+        before = read(os.path.join(self.mods, self.HAND, "romfs", *MALS.split("/")))
+        self.assertEqual(self.merge()[0], 0)
+        self.assertIn("already", self.lines[0])
+        self.assertEqual(read(os.path.join(self.mods, self.HAND, "romfs", *MALS.split("/"))), before)
+        mt.undo(self.mods, say=self.lines.append)
+        self.assertEqual(read(os.path.join(self.mods, self.HAND, "romfs", *MALS.split("/"))), seed)
+
+    def test_two_mods_without_the_pack_are_merged_too(self):
+        self.put_seed()
+        shutil.rmtree(self.pack)
+        self.assertEqual(self.merge()[0], 0)
+        got = self.served_by(self.HAND)
+        self.assertEqual((got["X.msbt"], got["Char.msbt"], got["Hdr.msbt"], got["A.msbt"]),
+                         (b"seed X", b"mod only", b"mod header", b"game A"))
+        self.assertEqual(self.merge(romfs="")[0], 0)   # without the game's copy: said, no failure of the puppets
+        self.assertIn("Not merged without the game's own copy", self.lines[0])
+
+    def test_the_pack_that_wins_gets_the_mods_members(self):
+        os.rename(self.mod, os.path.join(self.mods, "a-menu-mod"))
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write("coop-mods 1\n")   # (not named by the list, and under contents/ by name: the pack wins)
+        self.assertEqual(self.merge()[0], 0)
+        got = self.served_by(PACK)
+        self.assertEqual((got["Char.msbt"], got["Hdr.msbt"], got["Coop.msbt"]),
+                         (b"mod only", b"pack header", b"pack only"))
+
 
 if __name__ == "__main__":
     unittest.main()
