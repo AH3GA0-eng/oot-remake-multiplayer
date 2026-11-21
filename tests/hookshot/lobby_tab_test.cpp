@@ -6,6 +6,8 @@
 #include <string>
 
 #include "coop_lobby_tab.h"
+#include "coop/protocol/messages.hpp"
+#include "coop_room_list.h"
 
 using namespace CoopLobbyTab;
 using coop::protocol::LobbyActionKind;
@@ -363,4 +365,56 @@ TEST_CASE("lobby tab: Resync from host is a guest's row only, and asks once per 
     solo.can_resync = true;
     t.Set(solo);
     CHECK_FALSE(Has(t.view(), "Resync from host"));
+}
+
+TEST_CASE("public games: only a room with a proof that checks is the official game, first and marked") {
+    using CoopRoomList::Proof;
+    using CoopRoomList::Room;
+    namespace proto = coop::protocol;
+    // A test key (RFC 8032's), given to Order in place of the kits' built-in one.
+    const proto::OfficialSeed seed =
+        *proto::official_seed_from_text("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    const proto::OfficialPublicKey key = proto::official_public_key(seed);
+    const std::uint64_t now = 1'795'000'000;
+    const auto room = [](const char* name, bool pub) {
+        Room r;
+        r.room = name;
+        r.is_public = pub;
+        r.protocol = proto::kProtocolVersion;
+        return r;
+    };
+    const std::string kits = proto::official_relay_name("159.54.182.85", 27530);
+    const std::string other_relay = proto::official_relay_name("203.0.113.9", 27530);
+    const proto::OfficialProof good =
+        proto::official_sign(seed, kits, "squadala", proto::public_listing_version(), now - 5);
+    std::vector<Room> rooms{room("kokiri", false), room("forest-4821", true), room("squadala", true), room("zora", true)};
+    CoopRoomList::Order(rooms, {Proof{"squadala", good}}, now, kits, kits, key);
+    REQUIRE(rooms.size() == 4);
+    CHECK(rooms[0].room == "squadala");
+    CHECK(rooms[0].official);
+    CHECK(rooms[1].room == "forest-4821");   // (then public games, in the relay's order)
+    CHECK(rooms[2].room == "zora");
+    CHECK(rooms[3].room == "kokiri");
+    CHECK_FALSE(rooms[1].official);
+    // No proof (an old relay, or someone who took the name): an ordinary public game, in the relay's order.
+    std::vector<Room> plain{room("forest-4821", true), room("squadala", true)};
+    CoopRoomList::Order(plain, {}, now, kits, kits, key);
+    CHECK(plain[0].room == "forest-4821");
+    CHECK_FALSE(plain[1].official);
+    // The proof given for another room, a stale (replayed) one, one of another key, or a private room: not official.
+    CHECK_FALSE(CoopRoomList::Proven(room("forest-4821", true), {Proof{"forest-4821", good}}, now, kits, kits, key));
+    CHECK_FALSE(CoopRoomList::Proven(room("squadala", true), {Proof{"squadala", good}},
+                                     now + proto::kOfficialProofMaxAgeS + 60, kits, kits, key));
+    CHECK_FALSE(CoopRoomList::Proven(room("squadala", true), {Proof{"squadala", good}}, now, kits, kits));   // (built-in key)
+    // The same fresh proof passed on through another relay (listed there with our proofs): never official, whether
+    // that relay is the player's own setting or not.
+    CHECK_FALSE(CoopRoomList::Proven(room("squadala", true), {Proof{"squadala", good}}, now, other_relay, kits, key));
+    CHECK_FALSE(CoopRoomList::Proven(room("squadala", true), {Proof{"squadala", good}}, now, other_relay,
+                                     other_relay, key));
+    CHECK_FALSE(CoopRoomList::Proven(room("squadala", true), {Proof{"squadala", good}}, now, "", "", key));
+    CHECK_FALSE(CoopRoomList::Proven(room("squadala", false), {Proof{"squadala", good}}, now, kits, kits, key));
+    // A room of another version: its listing's version is in the proof.
+    Room older = room("squadala", true);
+    older.protocol = proto::kProtocolVersion - 1;
+    CHECK_FALSE(CoopRoomList::Proven(older, {Proof{"squadala", good}}, now, kits, kits, key));
 }

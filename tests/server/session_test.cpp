@@ -5364,6 +5364,23 @@ TEST_CASE("lobby: a player muted in voice is not relayed, the others are") {
   CHECK(count_to<VoiceFrame>(h, 1) == 1);
 }
 
+TEST_CASE("the host passes in join order: to the player in the longest, not the lowest number") {
+  Harness h;
+  h.join(1, "Link");
+  h.join(2, "Zelda");
+  h.join(3, "Saria");
+  h.session.disconnected(2, h.now);   // (number 2 is free again)
+  h.join(4, "Mido");                  // joins last, takes number 2
+  h.collect();
+  h.clear();
+  h.session.disconnected(1, h.now);   // the host leaves
+  h.collect();
+  CHECK(h.session.host() == 3);       // Saria (number 3, in longer), not Mido (number 2)
+  h.session.disconnected(3, h.now);
+  h.collect();
+  CHECK(h.session.host() == 2);       // (Mido: number 2)
+}
+
 TEST_CASE("lobby: when the host leaves, the new host has the controls and the mutes hold") {
   Harness h;
   h.join(1, "Link");
@@ -7050,4 +7067,81 @@ TEST_CASE("player lift: grown up while carried, the lifter's places stop at the 
   // Its own freed answer still reaches the lifter.
   h.receive(2, LiftAnswer{0, 1, LiftRefusal::not_young}, kChannelOwnership);
   CHECK(only_message_to<LiftAnswer>(h, 1) == LiftAnswer{2, 1, LiftRefusal::not_young});
+}
+
+TEST_CASE("lobby: the server console (coop_server --dedicated) lists, kicks, bans, unbans and mutes by number, never shows addresses") {
+  Harness h;
+  constexpr std::uint32_t kHome = 0x0A00A8C0;  // 192.168.0.10 in ENet's memory order
+  REQUIRE_FALSE(join_keyed(h, 1, "Link", 1, kHome));
+  REQUIRE_FALSE(join_keyed(h, 2, "Zelda", 2, kHome));
+  REQUIRE_FALSE(join_keyed(h, 3, "Saria", 3, kHome));
+  h.clear();
+  const std::string list = h.session.admin("/players", h.now);
+  CHECK(list.rfind("3 player(s)", 0) == 0);
+  CHECK(list.find("Zelda") != std::string::npos);
+  CHECK(list.find("k:02") != std::string::npos);
+  CHECK(list.find("(hosts the save)") != std::string::npos);
+  CHECK(list.find("192.168") == std::string::npos);
+  CHECK(list.find("10.0") == std::string::npos);
+  // Kick and ban by number; a number nobody has; anything else gets the help line.
+  CHECK(h.session.admin("/kick 2", h.now) == "kick 2: done");
+  CHECK(h.session.player_count() == 2);
+  CHECK(h.session.admin("/kick 9", h.now) == "kick 9: no player with that number");
+  CHECK(h.session.admin("/kick", h.now).rfind("commands:", 0) == 0);
+  CHECK(h.session.admin("/shutdown", h.now).rfind("commands:", 0) == 0);
+  CHECK(h.session.admin("  /ban 3", h.now) == "ban 3: done");
+  const std::vector<std::string> bans = h.session.key_bans();
+  REQUIRE(bans.size() == 1);
+  CHECK(bans[0].rfind("k:03", 0) == 0);
+  h.collect();
+  h.clear();
+  CHECK(join_keyed(h, 4, "Sheik", 3) == Refused{RefuseReason::banned});
+  h.clear();
+  // Unban by the short key id (/players' or the bans file's); too short or unknown ids are refused.
+  CHECK(h.session.admin("/unban k:03", h.now).rfind("unban: give", 0) == 0);
+  CHECK(h.session.admin("/unban ffffffffffff", h.now) == "unban: no ban with that key id");
+  CHECK(h.session.admin("/unban " + bans[0].substr(2, 12), h.now) == "unban: done");
+  CHECK(h.session.key_bans().empty());
+  CHECK_FALSE(join_keyed(h, 5, "Saria", 3));
+  h.clear();
+  // Mute: the session's host player too (the console is above every player); twice is "already".
+  CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: done");
+  CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: it was so already");
+  CHECK(h.session.admin("/mute 1 loud", h.now).rfind("commands:", 0) == 0);
+  h.clear();
+  h.receive(1, Chat{0, "hello"}, kChannelSession);
+  CHECK(all_to<Chat>(h, 5).empty());
+  CHECK(h.session.admin("/unmute 1 chat", h.now) == "unmute 1 chat: done");
+}
+
+TEST_CASE("dedicated: the player who hosts the progress has no host powers, the console keeps moderation") {
+  SessionConfig config = approving();
+  config.dedicated = true;
+  Harness h(config);
+  h.join(1, "Link");
+  REQUIRE(h.session.host() == std::optional<std::uint8_t>{1});   // (the first in hosts the session's progress)
+  const JoinKnock k = knock(h, 2, "Zelda", 2);
+  h.clear();
+  // Join answers: not from a player.
+  h.receive(1, JoinAllow{k.knock, true, false}, kChannelSession);
+  CHECK(h.session.player_count() == 1);
+  CHECK(h.session.stats().join_answers_stray == 1);
+  // Kick, ban, mute: refused as from a guest; nothing is banned.
+  h.clear();
+  h.receive(1, LobbyAction{LobbyActionKind::ban, 2}, kChannelSession);
+  h.receive(1, LobbyAction{LobbyActionKind::mute_chat, 2}, kChannelSession);
+  CHECK(h.session.stats().lobby_refused == 2);
+  CHECK(h.session.key_bans().empty());
+  // PvP, down but not out, difficulty: the server's settings stay.
+  h.receive(1, PvpMode{0, true}, kChannelSession);
+  CHECK_FALSE(h.session.pvp());
+  CHECK(h.session.stats().pvp_mode_refused == 1);
+  h.receive(1, DbnoMode{0, true, 60, 20, 8}, kChannelSession);
+  CHECK(h.session.dbno() == DbnoMode{});
+  CHECK(h.session.stats().dbno_mode_refused == 1);
+  h.receive(1, Difficulty{0, false, DifficultyPreset::hard, {}}, kChannelSession);
+  CHECK(h.session.difficulty() == Difficulty{});
+  CHECK(h.session.stats().difficulty_refused == 1);
+  // The console still acts.
+  CHECK(h.session.admin("/mute 1 chat", h.now) == "mute 1 chat: done");
 }

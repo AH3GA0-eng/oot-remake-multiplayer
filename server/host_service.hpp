@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/protocol/official_mark.hpp"
 #include "enet_server.hpp"
 #include "nat_codes.hpp"
 
@@ -71,6 +72,11 @@ struct HostServiceConfig {
   // same-network door, and the game port listens on 127.0.0.1 only, so nobody reaches it but through the relay
   // and no player learns the host's address. A private game (false) may not use a password of the public shape.
   bool public_game = false;
+  // The official game's key (coop_server --official-key-file, docs/official-game.md): with a public game, each
+  // listing goes with a fresh signed proof (protocol::official_sign: room, listing version, time), so kits show the
+  // room as the official public game. Never logged.
+  std::optional<protocol::OfficialSeed> official_key;
+  std::string official_relay;   // the relay as the kits reach it (protocol::official_relay_name), signed in
   // coop_server's window shows the invite code (the host copies it from
   // there). The game's log must not have it: it holds the join password and
   // logs are shared (collect-logs). false: the code is only in status().
@@ -132,6 +138,8 @@ class HostService {
   bool port_failed() const { return port_failed_; }
   std::uint16_t port() const;
   const Session* session() const;
+  // The console's moderation (Session::admin); "not hosting" when not running.
+  std::string admin(const std::string& line);
   // (Navi) New Game+: the hosting game's level (Session::set_ngplus). Between
   // service() calls, on the same thread.
   void set_ngplus(std::uint8_t level);
@@ -174,5 +182,9 @@ class HostService {
 
 // "1.2.3.4" for an IPv4 address held first dotted part highest.
 std::string show_ipv4(std::uint32_t ip);
+// The host's kept bans file (one lobby id of a player key, "k:" and hex, a line; comments and anything else skipped):
+// read sorted, written whole. The game's Host (coop-bans.txt) and coop_server --bans-file use it.
+std::vector<std::string> read_ban_file(const std::string& path);
+void write_ban_file(const std::string& path, const std::vector<std::string>& bans);
 
 }  // namespace coop::server

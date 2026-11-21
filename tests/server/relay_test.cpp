@@ -1276,3 +1276,99 @@ TEST_CASE("public game: listed with the public bit, relay only, a guest joins wi
                   [&] { return host.session()->player_count() == 1; }));
   host.stop();
 }
+
+namespace {
+
+Message proof_message(std::uint64_t token, std::uint64_t time_s, std::uint8_t fill) {
+  Message m;
+  m.kind = Kind::kRoomProof;
+  m.token = token;
+  m.proof.time_s = time_s;
+  m.proof.signature.fill(fill);
+  return m;
+}
+
+std::optional<Message> ask_proofs(Fixture& f, Endpoint from = kGuest, std::uint64_t now = 0) {
+  Message ask;
+  ask.kind = Kind::kListProofs;
+  auto out = f.relay.received(from, encode(ask), now);
+  if (out.empty()) return std::nullopt;
+  REQUIRE(out.size() == 1);
+  CHECK(out[0].to == from);
+  CHECK(out[0].bytes.size() <= kMaxPayloadBytes);
+  return decoded(out[0]);
+}
+
+}  // namespace
+
+TEST_CASE("relay wire: a room's proof and the proofs' ask and answer go through encode and decode") {
+  auto back = decode(encode(proof_message(77, 1'795'000'000, 0xab)));
+  REQUIRE(back.has_value());
+  CHECK(back->kind == Kind::kRoomProof);
+  CHECK(back->token == 77);
+  CHECK(back->proof.time_s == 1'795'000'000);
+  CHECK(back->proof.signature[63] == 0xab);
+  std::vector<std::uint8_t> cut = encode(proof_message(77, 1, 1));
+  cut.pop_back();
+  CHECK_FALSE(decode(cut).has_value());   // (a signature byte short)
+
+  Message ask;
+  ask.kind = Kind::kListProofs;
+  std::vector<std::uint8_t> bytes = encode(ask);
+  CHECK(bytes.size() == kListRequestBytes);   // (padded as the list's ask: the answer is never much bigger)
+  REQUIRE(decode(bytes).has_value());
+  CHECK(decode(bytes)->kind == Kind::kListProofs);
+  bytes[200] = 1;
+  CHECK_FALSE(decode(bytes).has_value());
+
+  Message answer;
+  answer.kind = Kind::kRoomProofs;
+  RoomProof p;
+  p.room = "squadala";
+  p.time_s = 5;
+  p.signature.fill(7);
+  answer.proofs = {p};
+  back = decode(encode(answer));
+  REQUIRE(back.has_value());
+  CHECK(back->proofs == answer.proofs);
+  answer.proofs[0].room = "no spaces";
+  CHECK_FALSE(decode(encode(answer)).has_value());
+}
+
+TEST_CASE("relay: a listed room's proof is kept and passed on as given, none for unlisted rooms or join codes") {
+  Fixture f;
+  REQUIRE(f.register_room(1, "squadala", host_at(1)).kind == Kind::kRegisteredName);
+  REQUIRE(f.register_room(2, "forest-4821", host_at(2)).kind == Kind::kRegisteredName);
+  CHECK_FALSE(f.register_host(3, host_at(3)).empty());
+  // Nothing listed: no proofs.
+  auto page = ask_proofs(f);
+  REQUIRE(page.has_value());
+  CHECK(page->proofs.empty());
+  CHECK(f.relay.received(host_at(1), encode(list_room_message(1, true, "Squadala public game", 0, 16)), 10).empty());
+  CHECK(f.relay.received(host_at(1), encode(proof_message(1, 1000, 0x11)), 11).empty());   // (never answered)
+  CHECK(f.relay.received(host_at(2), encode(list_room_message(2, true, "forest")), 12).empty());
+  // A join-code host's proof and an unknown token's are not kept.
+  CHECK(f.relay.received(host_at(3), encode(proof_message(3, 1000, 0x33)), 13).empty());
+  f.relay.received(host_at(9), encode(proof_message(99, 1000, 0x99)), 14);
+  page = ask_proofs(f, kGuest, 20);
+  REQUIRE(page.has_value());
+  REQUIRE(page->proofs.size() == 1);
+  CHECK(page->proofs[0].room == "squadala");
+  CHECK(page->proofs[0].time_s == 1000);
+  CHECK(page->proofs[0].signature[0] == 0x11);
+  // The list itself is as before (old kits read it unchanged).
+  auto list = ask_list(f, 0, kGuest, 21);
+  REQUIRE(list.has_value());
+  CHECK(list->total == 2);
+  // A newer proof replaces it; unlisted, the room's proof is not passed on.
+  CHECK(f.relay.received(host_at(1), encode(proof_message(1, 1005, 0x12)), 30).empty());
+  page = ask_proofs(f, kGuest, 31);
+  REQUIRE(page.has_value());
+  REQUIRE(page->proofs.size() == 1);
+  CHECK(page->proofs[0].time_s == 1005);
+  CHECK(f.relay.received(host_at(1), encode(list_room_message(1, false, "")), 40).empty());
+  page = ask_proofs(f, kGuest, 41);
+  REQUIRE(page.has_value());
+  CHECK(page->proofs.empty());
+  CHECK(f.relay.stats().proofs_kept == 2);
+}

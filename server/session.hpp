@@ -107,6 +107,11 @@ struct SessionConfig {
   // At most max_held_joins wait at once; one more is told the server is full.
   // Off: everyone with the password joins at once, as before.
   bool approve_joins = false;
+  // An always-on server with no hosting game (coop_server --dedicated, docs/official-game.md): the player who hosts
+  // the session's progress (the first in, then join order) gets no host powers: no kick, ban or mute, no join
+  // answers, no PvP, down-but-not-out or difficulty change. Moderation is the console's (admin) alone; the session
+  // keeps the server's settings. (MOD_SETTINGS stay the save host's: they belong to the save's mods.)
+  bool dedicated = false;
   // Bans the host made in earlier sessions, kept by their player key (lobby
   // ids "k:<hex>", the host's ban file): in force from the start and kept when
   // the session empties. Names are never kept (one is easy to change, and
@@ -544,6 +549,11 @@ class Session {
   // The bans by player key now (the kept ones and this session's), for the
   // host's ban file; sorted.
   std::vector<std::string> key_bans() const;
+  // The server console's moderation (coop_server --dedicated, docs/official-game.md): "/players" (number, name, a
+  // short key id, never an address), "/kick N", "/ban N", "/unban KEYID" (its first 8 or more hex digits),
+  // "/mute N voice|chat", "/unmute N voice|chat". Returns what to print. Acts as the host would, on anyone (the
+  // session's host player too); a ban by key is kept as the host's (key_bans()).
+  std::string admin(std::string_view line, std::uint64_t now_us);
   // Whether players hurt each other now (config.pvp, then the host's PVP_MODE).
   bool pvp() const { return pvp_; }
   // Down but not out now (config.dbno, then the host's DBNO_MODE).
@@ -622,6 +632,9 @@ class Session {
     // one on a rejoin): what that game tries again when it drops.
     std::string proved_password;
     std::uint8_t number = 0;  // 1 to max_players once joined
+    // When it joined, in order (Session::joins_): the host passes to the
+    // earliest joiner still in (a number can be a newer player's, freed).
+    std::uint64_t joined_order = 0;
     std::string nickname;
     // Its last MOD_LIST, with its number (docs/protocol.md, "Mods").
     std::optional<protocol::ModList> mods;
@@ -813,6 +826,11 @@ class Session {
   void on_mods(ConnectionId id, Connection& c, protocol::Message& message);
   // The Lobby: the host's kick, ban and mutes (docs/protocol.md "Lobby").
   void on_lobby(ConnectionId id, const protocol::LobbyAction& a, std::uint64_t now_us);
+  // A kick, ban or mute on player a.target, by the host (`actor`: its connection, which may not be its own target)
+  // or by the server's console (no actor); `by` names who in the log. Empty: nothing to answer.
+  std::optional<protocol::LobbyResultCode> apply_lobby(const protocol::LobbyAction& a,
+                                                       std::optional<ConnectionId> actor, std::uint64_t now_us,
+                                                       const char* by);
   std::uint8_t lobby_mutes_of(const Connection& c) const;
   // Who a player is to the Lobby: its player key (sealed in JOIN_PROOF, protocol 11) when it
   // sent one, a split-screen seat by its game's key and seat; the name only
@@ -820,6 +838,8 @@ class Session {
   std::string lobby_id(const std::string& nickname, const std::optional<protocol::PlayerKey>& key,
                        std::optional<ConnectionId> parent, std::uint8_t seat) const;
   std::string lobby_id(const Connection& c) const;
+  // Whether this player may use the host's powers over the session (SessionConfig::dedicated: nobody may).
+  bool hosts_rules(ConnectionId id) const { return !config_.dedicated && host_ && *host_ == id; }
   // A ban of a player known by name (no key, or a key another player had)
   // holds for that name whatever key comes with it.
   bool lobby_banned(const std::string& id, const std::string& nickname,
@@ -983,6 +1003,7 @@ class Session {
   std::string session_release_;     // the first player's co-op release (coop_release), "" none; while players are in
   std::map<ConnectionId, Connection> connections_;
   ConnectionId next_local_id_ = kLocalPlayerIds;
+  std::uint64_t joins_ = 0;   // players joined so far (Connection::joined_order)
   // The host's connection; set while players are in.
   std::optional<ConnectionId> host_;
   // The Lobby, by lobby_id (the player key; the name only without one), so a

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <utility>
 
 #include "coop/protocol/join_password.hpp"
@@ -62,6 +64,34 @@ HostStatus HostService::status() const {
 std::uint16_t HostService::port() const { return server_ ? server_->port() : 0; }
 
 const Session* HostService::session() const { return server_ ? &server_->session() : nullptr; }
+
+std::string HostService::admin(const std::string& line) {
+  if (!server_ || stopped_) return "not hosting";
+  return server_->admin(line);
+}
+
+std::vector<std::string> read_ban_file(const std::string& path) {
+  std::vector<std::string> out;
+  if (path.empty()) return out;
+  std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())));
+  std::string line;
+  while (std::getline(in, line) && out.size() < 4096) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    const bool ok = line.size() > 2 && line.size() <= 2 + 64 && line.rfind("k:", 0) == 0 &&
+                    line.find_first_not_of("0123456789abcdef", 2) == std::string::npos;
+    if (ok) out.push_back(line);
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
+void write_ban_file(const std::string& path, const std::vector<std::string>& bans) {
+  std::ofstream out(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary | std::ios::trunc);
+  out << "# Players this host banned (their player key). They stay banned in every game you host.\n"
+         "# Delete a line (or this file) to let that player in again.\n";
+  for (const std::string& id : bans) out << id << "\n";
+}
 
 void HostService::set_ngplus(std::uint8_t level) {
   if (server_) server_->session().set_ngplus(level);
@@ -244,6 +274,19 @@ bool HostService::start(std::string& error) {
           e.version = config_.public_game ? protocol::public_listing_version() : protocol::kProtocolVersion;
           return e;
         };
+        if (config_.public_game && config_.official_key) {
+          const protocol::OfficialSeed key = *config_.official_key;
+          const std::string signed_relay = config_.official_relay;
+          c.proof = [key, signed_relay](const std::string& room,
+                                        const relay::RoomEntry& listed) -> std::optional<relay::RoomProof> {
+            const protocol::OfficialProof p =
+                protocol::official_sign(key, signed_relay, room, listed.version, protocol::official_now_s());
+            relay::RoomProof out;
+            out.time_s = p.time_s;
+            out.signature = p.signature;
+            return out;
+          };
+        }
       }
       c.log = [this](const std::string& text) { say("relay: " + text); };
       const std::string relay_text = config_.relay_via;
