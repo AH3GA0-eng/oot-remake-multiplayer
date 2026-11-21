@@ -61,7 +61,7 @@ inline std::string clamp_build_id(std::string_view id) {
 inline std::string coop_release(std::string_view id) {
   std::size_t at = 0;
   while (at < id.size()) {
-    const std::size_t end = std::min(id.find(' ', at), id.size());
+    const std::size_t end = (std::min)(id.find(' ', at), id.size());   // (parenthesised: windows.h's min macro)
     std::string_view word = id.substr(at, end - at);
     at = end + 1;
     if (word.starts_with('v') || word.starts_with('V')) word.remove_prefix(1);
