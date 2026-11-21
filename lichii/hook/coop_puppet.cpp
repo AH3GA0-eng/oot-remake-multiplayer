@@ -198,7 +198,7 @@ std::vector<Director::DressView> Director::DressTargets() const {
         const bool character = IsCharacterActor(s.actor_name);
         out.push_back({s.number, s.actor, s.block + block::kDress,
                        t != nullptr && character ? static_cast<std::uint32_t>(t->custom & 0xFFFFFFu) : 0u, character,
-                       character && character_apply_ != 0 && character_apply_state_ == 1});
+                       character && character_apply_ != 0 && character_apply_state_ == 1, s.actor_name});
     }
     return out;
 }
@@ -309,6 +309,11 @@ void Director::NewFrame(Guest& guest, std::uint64_t now_ms) {
         pending_ = Pending::none;  // not made: asked again this frame
     }
     first_slot_ = slots_.empty() ? 0 : (first_slot_ + 1) % slots_.size();
+    if (pending_ == Pending::dress && ++dress_not_made_ >= kDressNotMade && character_apply_state_ == 1) {
+        character_apply_state_ = 2;
+        Say("characters: the Character Select mod's colour routine at main+" + Hex(character_apply_) +
+            " could not be called (not a game function of this build): co-op dresses the puppets itself");
+    }
     if (pending_ != Pending::none) {
         // The cave did not make the call (its own limit): undo the phase.
         Slot& slot = SlotFor(pending_slot_);
@@ -774,6 +779,7 @@ void Director::Finish(Guest& guest, std::uint64_t result, std::uint64_t now_ms) 
         CoopPuppetFlame::Finish(slot.flame, result, who, [this](const std::string& line) { Say(line); });
         break;
     case Pending::dress:
+        dress_not_made_ = 0;
         slot.dressed = slot.dress_asked;
         slot.dress_ms = now_ms;
         break;

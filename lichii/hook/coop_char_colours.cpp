@@ -42,7 +42,8 @@ std::array<float, 3> Floats(const std::array<std::uint8_t, 3>& b) {
 
 class Dresser {
 public:
-    Dresser(const Game& g, State& s, Result& r) : g_(g), s_(s), r_(r) {}
+    Dresser(const Game& g, State& s, Result& r, std::size_t max_calls) : g_(g), s_(s), r_(r), max_calls_(max_calls) {}
+    bool Stopped() const { return r_.failed || r_.cut; }
 
     std::uint64_t R64(std::uint64_t a) const {
         std::uint64_t v = 0;
@@ -55,7 +56,11 @@ public:
         return v;
     }
     std::optional<std::uint64_t> Call(std::uint64_t f, std::array<std::uint64_t, 8> x) {
-        if (r_.failed || f == 0) return std::nullopt;
+        if (r_.failed || r_.cut || f == 0) return std::nullopt;
+        if (r_.calls >= max_calls_) {
+            r_.cut = true;
+            return std::nullopt;
+        }
         r_.calls++;
         auto v = g_.call(f, x);
         if (!v) r_.failed = true;
@@ -82,6 +87,7 @@ public:
     }
 
     std::uint64_t MaterialObject(std::uint64_t unit, std::int64_t index) const {
+        if (index < 0) return 0;
         const std::uint64_t ptrs = R64(unit + 0x110);
         if (ptrs != 0) return R64(ptrs + 8 * static_cast<std::uint64_t>(index));
         const std::uint64_t base = R64(unit + 0x108);
@@ -135,19 +141,26 @@ public:
 
     void Unit(State::Unit& u, const Options& o, bool put_back, int iris_shift) {
         if (!u.looked_up) {
-            for (std::size_t i = 0; i < kNames && !r_.failed; i++) {
+            // The unit's material count first: a number the by-name call gives is used only below it.
+            const auto count = Call(Virtual(u.unit, kUnitMaterialCount), {u.unit});
+            if (!count) return;
+            u.materials = std::min<std::uint64_t>(*count & 0xFFFFFFFFu, 256);
+            for (std::size_t i = 0; i < kNames && !Stopped(); i++) {
                 u.material[i] = ByName(u.unit, kUnitMaterialByName, i, std::nullopt);
+                if (u.material[i] >= 0 && static_cast<std::uint64_t>(u.material[i]) >= u.materials) {
+                    u.material[i] = -1;
+                }
                 u.param[i] = {-1, -1, -1};
                 if (u.material[i] < 0) continue;
                 for (std::size_t p = (i == kHairNames.size() ? 2 : 0); p < (i == kHairNames.size() ? 3u : 2u); p++) {
                     u.param[i][p] = ByName(u.unit, kUnitParamByName, kNames + p, u.material[i]);
                 }
             }
-            if (r_.failed) return;
+            if (Stopped()) return;
             u.looked_up = true;
         }
         if (o.hair != 0 || put_back) {
-            for (std::size_t i = 0; i < kHairNames.size() && !r_.failed; i++) {
+            for (std::size_t i = 0; i < kHairNames.size() && !Stopped(); i++) {
                 if (u.material[i] < 0) continue;
                 const std::uint64_t object = MaterialObject(u.unit, u.material[i]);
                 // Mt_Hairs is the name the player's code asks for: a character without hair has a stand-in under it,
@@ -161,15 +174,13 @@ public:
                 PutTexture(object, o.hair, put_back);
             }
         }
-        if ((o.eyes != 0 || put_back) && !r_.failed) {
+        if ((o.eyes != 0 || put_back) && !Stopped()) {
             const std::size_t e = kHairNames.size();
             SetFloats(u.unit, u.material[e], u.param[e][2], EyeColour(o.eyes, iris_shift));
         }
         const bool clothes = o.clothes[0] != 0 || o.clothes[1] != 0 || o.clothes[2] != 0;
-        if ((clothes || put_back) && !r_.failed) {
-            const auto count = Call(Virtual(u.unit, kUnitMaterialCount), {u.unit});
-            const std::uint64_t n = count ? std::min<std::uint64_t>(*count & 0xFFFFFFFFu, 256) : 0;
-            for (std::uint64_t i = 0; i < n && !r_.failed; i++) {
+        if ((clothes || put_back) && !Stopped()) {
+            for (std::uint64_t i = 0; i < u.materials && !Stopped(); i++) {
                 const std::uint64_t object = MaterialObject(u.unit, static_cast<std::int64_t>(i));
                 const std::uint64_t m = R64(object);
                 if (m == 0) continue;
@@ -202,7 +213,7 @@ public:
             s_.names_written = true;
         }
         s_.units.resize(static_cast<std::size_t>(count));
-        for (std::size_t i = 0; i < s_.units.size() && !r_.failed; i++) {
+        for (std::size_t i = 0; i < s_.units.size() && !Stopped(); i++) {
             const std::uint64_t p = R64(list + 8 * i);
             const std::uint64_t unit = p != 0 ? R64(p) : 0;
             if (s_.units[i].unit != unit) {
@@ -219,6 +230,7 @@ private:
     const Game& g_;
     State& s_;
     Result& r_;
+    std::size_t max_calls_;
 };
 
 }  // namespace
@@ -274,10 +286,11 @@ Wardrobe& TheWardrobe() {
     return w;
 }
 
-Result Dress(const Game& game, State& state, std::uint32_t custom, bool put_back, int iris_shift) {
+Result Dress(const Game& game, State& state, std::uint32_t custom, bool put_back, int iris_shift,
+             std::size_t max_calls) {
     Result r;
     if (state.cell == 0 || state.actor == 0 || !game.read || !game.write || !game.call) return r;
-    Dresser(game, state, r).Run(custom, put_back, iris_shift);
+    Dresser(game, state, r, max_calls).Run(custom, put_back, iris_shift);
     return r;
 }
 
@@ -286,23 +299,28 @@ std::size_t Wardrobe::Frame(const Game& game, const std::vector<Target>& targets
     for (auto& k : kept_) k.seen = false;
     const bool viewer_paints = Options::Of(Viewer()).Colours();
     std::size_t calls = 0;
-    for (const Target& t : targets) {
+    // One target further each frame comes first, so a budget that runs out never leaves the same puppets last.
+    first_ = targets.empty() ? 0 : (first_ + 1) % targets.size();
+    for (std::size_t n = 0; n < targets.size(); n++) {
+        const Target& t = targets[(first_ + n) % targets.size()];
         auto it = std::find_if(kept_.begin(), kept_.end(), [&](const Kept& k) { return k.state.actor == t.actor; });
         if (it == kept_.end()) {
             kept_.push_back({});
             it = kept_.end() - 1;
             it->state.actor = t.actor;
+            it->model = t.model;
         }
         Kept& k = *it;
         k.seen = true;
-        if (k.state.cell != t.cell) {
-            k.state = State();
+        // Another block, or another actor made at this address: its model is not the one looked up.
+        if (k.state.cell != t.cell || k.model != t.model) {
+            k = Kept{};
             k.state.actor = t.actor;
             k.state.cell = t.cell;
-            k.dressed.reset();
-            k.ever = false;
+            k.model = t.model;
+            k.seen = true;
         }
-        if (t.mods_routine || calls >= kCallsPerFrame) continue;
+        if (t.mods_routine || calls >= kCallsPerFrame || now_ms < k.retry_ms) continue;
         const bool colours = Options::Of(t.custom).Colours();
         bool due;
         if (viewer_paints) {
@@ -314,15 +332,19 @@ std::size_t Wardrobe::Frame(const Game& game, const std::vector<Target>& targets
         }
         if (!due) continue;
         const bool put_back = viewer_paints || k.ever;
-        const Result r = Dress(game, k.state, t.custom, put_back, t.iris_shift);
+        const Result r = Dress(game, k.state, t.custom, put_back, t.iris_shift, kCallsPerFrame - calls);
         calls += r.calls;
         if (r.failed) {
-            if (say) say("characters: a model call failed while dressing an actor at " + std::to_string(t.actor) +
-                         ": tried again later");
-            k.at_ms = now_ms;
+            // Not again before kAgainMs (a call that cannot be made fails every frame), said once per puppet.
+            if (say && !k.said_failed) {
+                say("characters: a model call failed while dressing an actor at " + std::to_string(t.actor) +
+                    ": tried again every " + std::to_string(kAgainMs / 1000) + " s");
+            }
+            k.said_failed = true;
+            k.retry_ms = now_ms + kAgainMs;
             continue;
         }
-        if (r.units == 0) continue;   // the model is not there yet: asked again next frame
+        if (r.cut || r.units == 0) continue;   // the budget ran out or the model is not there yet: next frame
         if (say && (!k.dressed || *k.dressed != t.custom) && colours) {
             say("characters: Customize options " + std::to_string(t.custom) + " put on the puppet (" +
                 std::to_string(r.units) + " model unit(s), " + std::to_string(r.calls) + " calls)");

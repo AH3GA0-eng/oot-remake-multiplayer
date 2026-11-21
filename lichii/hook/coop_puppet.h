@@ -428,6 +428,7 @@ public:
         character_apply_ = offset;
         character_apply_head_ = head;
         character_apply_state_ = 0;
+        dress_not_made_ = 0;
     }
     // Move each puppet with the game's own setter as well (addr::kSetMatrix),
     // once a frame: for an actor with a physics body, such as the fairy.
@@ -491,6 +492,7 @@ public:
         std::uint32_t custom = 0;
         bool character = false;
         bool mods_routine = false;
+        std::string actor_name;   // (a puppet made again as another actor starts anew)
     };
     std::vector<DressView> DressTargets() const;
     // Any thread: bit n set while puppet n's actor is live in this scene and
@@ -742,7 +744,11 @@ private:
     bool pose_copy_ = false;
     std::uint64_t character_apply_ = 0;
     std::array<std::uint8_t, 16> character_apply_head_{};
-    int character_apply_state_ = 0;   // 0 not checked, 1 the routine is there, 2 it is not
+    int character_apply_state_ = 0;   // 0 not checked, 1 the routine is there, 2 it is not (or cannot be called)
+    // Its calls in a row that the runtime could not make (a routine that is not a game function the build knows):
+    // at kDressNotMade co-op's own dressing takes over (DressTargets).
+    int dress_not_made_ = 0;
+    static constexpr int kDressNotMade = 2;
     bool matrix_call_ = false;
     float tint_ = 0.0f;
     std::atomic<bool> null_reads_zero_{true};

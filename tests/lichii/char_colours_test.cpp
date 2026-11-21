@@ -250,7 +250,7 @@ TEST_CASE("char colours: a puppet gets its player's hair, eyes and clothes throu
     const Result again = Dress(f.AsGame(), s, Custom(2, 3, 0, 4, 1), false);
     CHECK(f.textures.empty());
     CHECK(again.calls == f.calls - before);
-    CHECK(again.calls == 4);   // three parameter sets and the material count
+    CHECK(again.calls == 3);   // three parameter sets (the material count is from the look-up)
 }
 
 TEST_CASE("char colours: an option at 0 is left alone, or put back to the file's own with put_back") {
@@ -292,7 +292,7 @@ TEST_CASE("char colours: the wardrobe dresses on a change, again after kAgainMs,
     const Game g = f.AsGame();
     std::vector<std::string> said;
     const auto say = [&](const std::string& l) { said.push_back(l); };
-    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0}};
+    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, 1}};
     CHECK(w.Frame(g, t, 1000, say) > 0);
     CHECK(said.size() == 1);
     CHECK(w.Frame(g, t, 1100, say) == 0);
@@ -320,4 +320,73 @@ TEST_CASE("char colours: a failed call stops the dressing and is tried again lat
     CHECK(r.failed);
     CHECK(r.calls == 1);
     CHECK_FALSE(s.units[0].looked_up);
+}
+
+TEST_CASE("char colours: a failed call waits kAgainMs and is said once (review M2)") {
+    FakeGame f(Character());
+    Wardrobe w;
+    Game g = f.AsGame();
+    bool fail = true;
+    const auto real = g.call;
+    g.call = [&](std::uint64_t fn, const std::array<std::uint64_t, 8>& x) -> std::optional<std::uint64_t> {
+        if (fail) return std::nullopt;
+        return real(fn, x);
+    };
+    std::vector<std::string> said;
+    const auto say = [&](const std::string& l) { said.push_back(l); };
+    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, 1}};
+    w.SetViewer(Custom(5, 0, 0, 0));   // the viewer paints: due every frame, still held back after a failure
+    CHECK(w.Frame(g, t, 1000, say) == 1);
+    CHECK(w.Frame(g, t, 1016, say) == 0);
+    CHECK(w.Frame(g, t, 1000 + Wardrobe::kAgainMs - 1, say) == 0);
+    CHECK(w.Frame(g, t, 1000 + Wardrobe::kAgainMs, say) == 1);   // tried again, failed again
+    CHECK(said.size() == 1);                                     // said once
+    fail = false;
+    CHECK(w.Frame(g, t, 1000 + 2 * Wardrobe::kAgainMs, say) > 1);
+    CHECK_FALSE(f.sets.empty());
+}
+
+TEST_CASE("char colours: a puppet made again as another actor looks its materials up anew (review M3)") {
+    FakeGame f(Character());
+    Wardrobe w;
+    const Game g = f.AsGame();
+    std::vector<Target> t{{FakeGame::kActor, FakeGame::kCell, Custom(2, 0, 0, 0), false, 0, 1}};
+    w.Frame(g, t, 1000, {});
+    // The same address and block, another character with fewer materials: Mt_Hairs is now number 3 of 4.
+    f.mats = {{"Mt_Skin", 1, 1, {}}, {"Mt_Eye_Inner", 1, 1, {"x", "y", "ns_param_color2"}}, {"Mt_A", 1, 1, {}},
+              {"Mt_Hairs", 2, 11, {"ns_param_color0", "ns_param_color1"}}};
+    FakeGame fresh(f.mats);
+    f.mem = fresh.mem;
+    f.sets.clear();
+    t[0].model = 2;
+    w.Frame(g, t, 1100, {});
+    REQUIRE_FALSE(f.sets.empty());
+    CHECK(f.sets[0].mat == 3);
+}
+
+TEST_CASE("char colours: a material number the unit does not have is never used") {
+    FakeGame f(Character());
+    Game g = f.AsGame();
+    const auto real = g.call;
+    g.call = [&](std::uint64_t fn, const std::array<std::uint64_t, 8>& x) -> std::optional<std::uint64_t> {
+        if (fn == FakeGame::kFnCount) return 1;   // only material 0: the others' numbers are past the list
+        return real(fn, x);
+    };
+    State s = StateFor();
+    Dress(g, s, Custom(2, 3, 0, 4), false);
+    for (const auto& set : f.sets) CHECK(set.mat == 0);
+    for (const auto& tex : f.textures) CHECK(tex.object == FakeGame::Obj(0));
+}
+
+TEST_CASE("char colours: the call budget stops a dressing, the next frame goes on, the first target turns (review S2)") {
+    FakeGame f(Character());
+    State s = StateFor();
+    const Result cut = Dress(f.AsGame(), s, Custom(2, 3, 0, 4), false, 0, 3);
+    CHECK(cut.cut);
+    CHECK(cut.calls == 3);
+    CHECK_FALSE(s.units[0].looked_up);
+    const Result rest = Dress(f.AsGame(), s, Custom(2, 3, 0, 4), false);
+    CHECK_FALSE(rest.cut);
+    CHECK(s.units[0].looked_up);
+    CHECK(f.textures.size() == 3);
 }

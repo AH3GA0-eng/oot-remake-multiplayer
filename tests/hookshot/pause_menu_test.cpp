@@ -1592,9 +1592,9 @@ TEST_CASE("pause tab: Customize Link with a Character Select character picked sa
     REQUIRE(m.page() == Page::kCustomize);
     REQUIRE(Selected(m) == "Kokiri Tunic");
     const std::string own = m.view().help;
-    CHECK(own != Menu::kCharacterNote);
+    CHECK_FALSE(own.empty());
     m.SetCharacter(true);
-    CHECK(m.view().help == Menu::kCharacterNote);
+    CHECK(m.view().help == own + " " + Menu::kCharacterNote);   // after the row's own help
     CHECK(m.view().rows[0].name == "Your name");   // the rows stay as they are
     m.SetCharacter(false);
     CHECK(m.view().help == own);

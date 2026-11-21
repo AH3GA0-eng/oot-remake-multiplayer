@@ -21,6 +21,8 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <climits>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -91,6 +93,7 @@ struct State {
         std::uint64_t unit = 0;
         std::array<std::int16_t, kNames> material{};         // -1 none
         std::array<std::array<std::int16_t, 3>, kNames> param{};
+        std::uint64_t materials = 0;   // the unit's material count (+0xc8) when they were looked up
         bool looked_up = false;
     };
     std::vector<Unit> units;
@@ -99,12 +102,15 @@ struct State {
 struct Result {
     std::size_t calls = 0;
     bool failed = false;   // a call could not be made (the frame stops there)
+    bool cut = false;      // the call budget ran out: not all done (the rest next frame)
     std::size_t units = 0; // model units found (0: the model is not there yet)
 };
 
 // Puts `custom`'s colours on the actor's model. put_back: an option at 0 sets the file's own values again (after
 // another hand changed them: the mod's own per-frame code with the viewer's options). `iris_shift` as EyeColour.
-Result Dress(const Game& game, State& state, std::uint32_t custom, bool put_back, int iris_shift = 0);
+// At most `max_calls` calls are made (Result::cut when it stopped there).
+Result Dress(const Game& game, State& state, std::uint32_t custom, bool put_back, int iris_shift = 0,
+             std::size_t max_calls = SIZE_MAX);
 
 // Which puppets are dressed when, each frame (the calc thread).
 // - The mod's own per-frame code puts the VIEWER's options (the six Ints of this game) on every player-like actor,
@@ -119,6 +125,9 @@ struct Target {
     std::uint32_t custom = 0;
     bool mods_routine = false;
     int iris_shift = 0;
+    // What the puppet is (a hash of its actor's pack name): a puppet made again as another actor at the same
+    // address, or in the same block, starts anew (its old model's material numbers are not this one's).
+    std::uint64_t model = 0;
 };
 
 class Wardrobe {
@@ -139,9 +148,13 @@ private:
         std::optional<std::uint32_t> dressed;   // the options last put on (nothing: never)
         bool ever = false;                      // a colour was ever put on this actor
         std::uint64_t at_ms = 0;
+        std::uint64_t model = 0;
+        std::uint64_t retry_ms = 0;            // after a failed call: not before then (kAgainMs)
+        bool said_failed = false;              // a failure is said once per puppet
         bool seen = false;
     };
     std::vector<Kept> kept_;
+    std::size_t first_ = 0;                    // the target dressed first: one further each frame (the budget)
     std::atomic<std::uint32_t> viewer_{0};
 };
 

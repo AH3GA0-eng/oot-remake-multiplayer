@@ -1859,7 +1859,9 @@ void DressCharacters(void* ctx) {
     g.main_base = CoopRuntime::MainBase();
     std::vector<CoopCharColours::Target> targets;
     targets.reserve(views.size());
-    for (const auto& v : views) targets.push_back({v.actor, v.cell, v.custom, v.mods_routine, 0});
+    for (const auto& v : views) {
+        targets.push_back({v.actor, v.cell, v.custom, v.mods_routine, 0, std::hash<std::string>{}(v.actor_name)});
+    }
     CoopCharColours::TheWardrobe().Frame(g, targets, SteadyMs(),
                                          [](const std::string& line) { LOG_INFO(Core, "coop: {}", line); });
 }
