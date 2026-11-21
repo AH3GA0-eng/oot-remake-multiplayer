@@ -46,8 +46,8 @@ LIST_BUTTONS = 10              # Pa_Button_04..13 (CoopTitleNative::kMaxButtons 
 ROW_STEP_Y = -110.0            # the game's buttons are 110 apart (Title_00: Pa_Button_00..03 at y -65 .. -395)
 HINT = "Pa_CoopHint_00"
 # The rows' live texts (CoopTitle's native pages on the title's own buttons): a placeholder each, written over in the
-# game's memory by the co-op module (as the pause menu's Coop_Live_NN): one per button, then the hint line's.
-LIVE = tuple(("Coop_Live_T%d" % i, "." * 64) for i in range(FIRST_NEW + LIST_BUTTONS)) + (("Coop_Live_Hint", "." * 64),)
+# game's memory by the co-op module (as the pause menu's Coop_Live_NN): one per button, then the hint line's (longer).
+LIVE = tuple(("Coop_Live_T%d" % i, "." * 64) for i in range(FIRST_NEW + LIST_BUTTONS)) + (("Coop_Live_Hint", "." * 160),)
 # The same rows for the languages whose game text is Chinese (the kit's Chinese layer keeps the
 # game's own tables, as its menus and messages do): the pack carries these words in that
 # language's Title_00.msbt, since the module only names the label (CoopTitleMenu::kMenuLabels)
