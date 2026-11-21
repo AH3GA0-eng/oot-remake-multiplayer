@@ -94,6 +94,19 @@ Check (-not (Test-Hint { throw 'no CIM' })) 'a failing query: no hint'
 $fixedList = @(New-Card 'Intel(R) UHD Graphics' 'Intel Corporation')
 Check (Test-Hint ({ $fixedList }.GetNewClosure())) 'a card list read once (play.ps1) works as the query'
 
+# --- Steam Input outside Steam (kit-paths.ps1 Get-KitSteamInputHint, player report 202): a warning, never a stop.
+$steamOn = { $true }
+$steamOff = { $false }
+$h = @(Get-KitSteamInputHint @{} $steamOn)
+Check ($h.Count -eq 2 -and $h[0] -match 'Steam is open' -and $h[0] -match 'Steam Controller' -and $h[1] -match 'from Steam' -and
+    $h[1] -match 'Steam Input off') "Steam running, not started by Steam: the warning [$($h -join ' | ')]"
+foreach ($n in 'SteamGameId', 'SteamAppId', 'SteamClientLaunch', 'SteamOverlayGameId') {
+    Check (-not (Get-KitSteamInputHint @{ $n = '12345' } $steamOn)) "started by Steam ($n set): no warning"
+}
+Check ([bool](Get-KitSteamInputHint @{ SteamGameId = '  ' } $steamOn)) 'a blank SteamGameId is not a Steam start: the warning'
+Check (-not (Get-KitSteamInputHint @{} $steamOff)) 'Steam not running: no warning'
+Check (-not (Get-KitSteamInputHint @{} { throw 'no process list' })) 'a failing check: no warning'
+
 $opt = Join-Path ([System.IO.Path]::GetTempPath()) ('oot-coop-options-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.ini')
 try {
     [System.IO.File]::WriteAllText($opt, "auto_update = ask`r`nLICHII_COOP_PUPPET=1`r`n# EDEN_NX2_GPL=1`r`nEDEN_NX2_GPL = 1`r`nEDEN_OTHER=1`r`n")
