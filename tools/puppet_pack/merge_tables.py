@@ -31,6 +31,10 @@ the size the merged file needs goes into the size table the game reads (fit).
 The pack's menu archives where another mod ships the same file and wins it (merge_members: the Character Select mod's
 Mals and Common layout archives): the pack's changed members go into that mod's copy, the same way, after the rows.
 
+Two mods that share such a file (player report 206, SHARED_NOTE: a randomizer seed and the Character Select mod):
+merge_rows and merge_members take every mod under the winner, not only the pack, and merge_gamedata does the same for
+the game's list of saved values (GameData/GameDataList).
+
 The pack's menu files (build.py --title-rows / --pause-tab: larger copies of files the game reads at boot), last
 (guard_menus): kept out of the pack's romfs, in `<pack>/_coop-menus`, while the table the game reads lacks their sizes;
 else the language archive fails to load and the game crashes at boot.
