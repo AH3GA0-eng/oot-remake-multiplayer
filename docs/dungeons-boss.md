@@ -565,6 +565,7 @@ one turn rule; it now also waits for the boss's own attack edge, read in the own
   reaches an attack end. Each game's boss fights its own Link; the turns bring it to each player.
 - *The stall count goes on (`Table::Hold`)* through the re-choice's own short move, so a boss stuck after a forced
   hand-over reaches 3 re-choices and the server's stall rule frees its fight lock (row 149).
+- Each turn is logged by the server: `boss turns: <actor> of player N: its attack ended: to player M (turn K)`.
 - Solo or idle: no other fit player, no turn; the hook reads attacks only to send them.
 
 **Every boss checked for the edge and for a phase change in a turn.** The edge is the generic read above (the same

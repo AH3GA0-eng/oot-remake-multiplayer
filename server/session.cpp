@@ -2642,6 +2642,14 @@ void Session::run_ownership(std::uint64_t now_us) {
     if (o.boss) {
       if (auto next = next_turn(o, owner, now_us)) {
         ++stats_.boss_turns;
+        // One line per turn (proof runs read it: a turn passes only at "its attack ended").
+        const auto from = connections_.find(owner);
+        const auto to = connections_.find(*next);
+        if (from != connections_.end() && to != connections_.end()) {
+          log("boss turns: " + (o.actor.empty() ? std::string("a boss") : o.actor) + " of player " +
+              std::to_string(from->second.number) + ": its attack ended: to player " +
+              std::to_string(to->second.number) + " (turn " + std::to_string(stats_.boss_turns) + ")");
+        }
         ask_handover(oid, o, *next, now_us);
         continue;
       }

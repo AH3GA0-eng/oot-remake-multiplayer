@@ -3115,7 +3115,10 @@ TEST_CASE("boss-turns-0119: a turn passes only right where the boss's own attack
 }
 
 TEST_CASE("boss-turns-0119: the old owner's attack is never read as the new owner's attack end") {
-  OwnerHarness h(turn_config());
+  std::vector<std::string> lines;
+  SessionConfig config = turn_config();
+  config.log = [&lines](const std::string& line) { lines.push_back(line); };
+  OwnerHarness h(config);
   h.stand(1, 4);
   h.stand(2, 6);
   h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
@@ -3136,6 +3139,12 @@ TEST_CASE("boss-turns-0119: the old owner's attack is never read as the new owne
   attack_ends(h, 2, 1, 11);
   h.run(250'000);
   CHECK(messages_to<HandoverAsk>(h, 2) == std::vector<HandoverAsk>{{placed(7), 1, 1}});
+  // One log line per turn, naming why (the proof runs read it).
+  std::size_t said = 0;
+  for (const std::string& line : lines) {
+    if (line.starts_with("boss turns: ") && line.find(": its attack ended: to player ") != std::string::npos) ++said;
+  }
+  CHECK(said == 2);
 }
 
 TEST_CASE("gohma-sync: by default a boss hit that takes life stays with the owner, a stun hands it over") {
