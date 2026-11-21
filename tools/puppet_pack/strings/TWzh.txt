@@ -3,6 +3,12 @@
 #
 # [file] names a message file of the game's language archives (Mals/TWzh.Product.110.sarc.zs).
 
+[LayoutMsg/MenuOverlay_00.msbt]
+# The - menu's tabs of ours, right of Map (0.11.9): T_Text_00 of the parts Pa_Category_04..06.
+Pa_Category_04-T_Text_00 = 連線
+Pa_Category_05-T_Text_00 = 大廳
+Pa_Category_06-T_Text_00 = 模組
+
 [LayoutMsg/PlusMenu_00.msbt]
 # The Multiplayer page's five rows. The co-op module writes the live words over them while the page
 # shows (the session's state, the room, who asks to join); these are what a pack shows before that.
