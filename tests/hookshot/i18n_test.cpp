@@ -275,12 +275,9 @@ TEST_CASE("coop i18n: the pause menu's Multiplayer tab (the game's own page)") {
     CHECK(CoopI18n::Tr(hant, "Hosting") == "房間已開");
     CHECK(CoopI18n::Tr(hans, "Copy invite code") == "复制邀请码");
     CHECK(CoopI18n::Tr(hans, "Players: just you") == "人数：只有你");
-    CHECK(CoopI18n::Tr(hans, "Let in: nobody asks") == "放行：没人申请");
     CHECK(CoopI18n::Tr(hans, "Stop hosting") == "停止房间");
     CHECK(CoopI18n::Tr(hans, "Host a game") == "创建房间");
     CHECK(CoopI18n::Tr(hans, "Join a game") == "加入房间");
-    CHECK(CoopI18n::Tr(hans, "Auto-rejoin: Off") == "自动重连：关");
-    CHECK(CoopI18n::Tr(hans, "Auto-rejoin: trying...") == "自动重连：重试中…");
     // The rows with a value: the whole row is the shape's line.
     CHECK(CoopI18n::Tr(hans, "Room: 7QK-2") == "房间：7QK-2");
     CHECK(CoopI18n::Tr(hans, "Copy room: 7QK-2") == "复制房间：7QK-2");
@@ -623,4 +620,24 @@ TEST_CASE("coop i18n: 0.11.8's screens (PR #308): the Multiplayer page, co-op's 
     CHECK(CoopI18n::Tr(hant, "Relay") == "中轉");
     CHECK(CoopI18n::Tr(hans, "The game list's server in Co-op Settings (Relay) is not right. Clear it to use the kit's own.")
               .find("中继") == std::string::npos);
+}
+
+TEST_CASE("coop i18n: 0.11.9's - menu screens and Customize (ui-tabs)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    CHECK(CoopI18n::Tr(hans, "Eyes") == "眼睛");
+    CHECK(CoopI18n::Tr(hant, "Hair") == "頭髮");
+    CHECK(CoopI18n::Tr(hans, "Boots and gauntlets") == "靴子与护手");
+    CHECK(CoopI18n::Tr(hans, "Hue") == "色相");
+    CHECK(CoopI18n::Tr(hans, "120 degrees") == "120 度");
+    CHECK(CoopI18n::Tr(hans, "Left and Right: from grey (0%) to the full colour (100%), 5% a press.") ==
+          "左右键：从灰色（0%）到全彩（100%），每按一次 5%。");
+    CHECK(CoopI18n::Tr(hans, "Shields (page 2 of 3)") == "盾牌（第 2/3 页）");
+    CHECK(CoopI18n::Tr(hant, "Swords (page 1 of 2)") == "劍（第 1/2 頁）");
+    CHECK(CoopI18n::Tr(hans, "Your game") == "你的房间");
+    CHECK(CoopI18n::Tr(hans, "Your game: Saria asks") == "你的房间：Saria 申请加入");
+    CHECK(CoopI18n::Tr(hans, "Your game: 3 ask") == "你的房间：3 人申请加入");
+    CHECK(CoopI18n::Tr(hans, "Saria (host)") == "Saria（房主）");
+    CHECK(CoopI18n::Tr(hans, "Find a game") == "找房间");
+    CHECK(CoopI18n::Tr(hant, "Debug") == "偵錯");
 }
