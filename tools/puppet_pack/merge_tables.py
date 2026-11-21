@@ -329,29 +329,47 @@ def merge_rows(root, romfs, say=print):
     size table the game serves, as the pack did for its own copy."""
     order = load_order(root)
     pack_path = next((p for n, p in order if fold(n) == PACK), None)
-    if pack_path is None:
-        return 0, {}   # (no puppet pack on: nothing of ours to carry)
     codec = Codec(romfs)
     failed, fit, marks = 0, {}, {}
-    for fname in rsdb_tables_of(pack_path):
+    for fname in sorted({f for _, p in order for f in rsdb_tables_of(p)}):
         having = [(n, p) for n, p in order if fname in rsdb_tables_of(p)]
-        win_name, win_path = having[-1]
-        if fold(win_name) == PACK:
+        if len(having) < 2:
             continue
-        if fold(win_name).startswith("contents/"):  # (a title's own mod: never rewritten here)
-            say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the puppet pack's rows: the other "
-                "players can't be shown with it on. Turn it off.")
-            failed += 1
+        win_name, win_path = having[-1]
+        pack = pack_path if any(p == pack_path for _, p in having[:-1]) else None
+        # Player report 206: the rows of every other mod under the winner too (SHARED_NOTE).
+        game = os.path.join(romfs, "RSDB", fname) if romfs else ""
+        others = [(n, p) for n, p in having[:-1] if p != pack_path]
+        if others and not os.path.isfile(game):
+            say(f"Actor tables: {win_name} and {', '.join(n for n, _ in others)} both ship RSDB/{fname}; the game "
+                f"reads {win_name}'s. Not merged without the game's own copy (--romfs): the others' rows are "
+                "missing.")
+            others = []
+        if pack is None and not others:
+            continue
+        if fold(win_name).startswith("contents/") and fold(win_name) != PACK:  # (a title's own mod: never rewritten)
+            if pack is not None:
+                say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the puppet pack's rows: the "
+                    "other players can't be shown with it on. Turn it off.")
+                failed += 1
+            else:
+                say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}, without the rows of "
+                    f"{', '.join(n for n, _ in others)}: a mod under contents is not rewritten.")
             continue
         try:
-            line, need = merge_rows_one(root, codec, fname, win_name, win_path, pack_path, say)
+            line, need = merge_rows_one(root, codec, fname, win_name, win_path, pack, say, others, game)
         except (OSError, ValueError, KeyError, IndexError, MergeError) as e:
-            say(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the puppet pack's rows ({e}): the "
-                "other players can't be shown with it on.")
-            failed += 1
-            marks.setdefault(win_path, [])
+            if pack is not None:
+                say(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the puppet pack's rows ({e}): "
+                    "the other players can't be shown with it on.")
+                failed += 1
+                marks.setdefault(win_path, [])
+            else:
+                say(f"Actor tables: {win_name}'s RSDB/{fname} could not be merged with the rows of "
+                    f"{', '.join(n for n, _ in others)} ({e}): their rows are missing.")
             continue
-        marks.setdefault(win_path, []).append(line)
+        if line is not None:
+            marks.setdefault(win_path, []).append(line)
         if need:
             fit[size_key(fname)] = max(fit.get(size_key(fname), 0), need)
     for win_path, lines in marks.items():
@@ -363,23 +381,78 @@ def merge_rows(root, romfs, say=print):
     return failed, fit
 
 
-def rows_stamp(root, table_path, pack_table, out_line=None):
-    return f"{ROWS_HEAD}\nout {out_line or file_line(root, table_path)}\nin {file_line(root, pack_table)}\n"
+def rows_stamp(root, table_path, pack_table, out_line=None, more=()):
+    ins = ([pack_table] if pack_table else []) + list(more)
+    return f"{ROWS_HEAD}\nout {out_line or file_line(root, table_path)}\n" + "".join(
+        f"in {file_line(root, t)}\n" for t in ins)
 
 
-def merge_rows_one(root, codec, fname, win_name, win_path, pack_path, say):
-    """Merges one table. Returns (the mark's line, the size the written file needs or 0)."""
+def stamp_holds(old, head):
+    """A stamp written for exactly these files: the head, then nothing but its fit line."""
+    return old is not None and old.startswith(head) and (old == head or old[len(head):].startswith("fit "))
+
+
+def same(a, b):
+    """Two table entries hold the same (as the bytes they are written as)."""
+    return byml.dumps([a]) == byml.dumps([b])
+
+
+# Player report 206 (0.11.8: a randomizer seed and the Character Select mod, both on). Longshot serves each file from
+# ONE mod, the one indexed last. Two mods that each ship their own copy of a table of entries (an RSDB table's rows,
+# GameDataList's saved values, the members of a message or layout archive) therefore lose the lower mod's entries
+# while its other files and its code patch still load: the seed's item actors and its changed defaults, or the
+# characters' saved picks and the players' own rows. The kit merged such files only for the puppet pack. Now every
+# mod under the winner counts: an entry it changed or added, told from the game's own copy, goes into the winner's
+# copy where the winner left that entry as the game has it. An entry both changed stays the winner's and is named.
+SHARED_NOTE = "player report 206"
+
+
+def changed_entries(theirs, games, mine, skip=()):
+    """theirs / games / mine: {key: entry} of a lower mod's file, the game's own and the winner's own (SHARED_NOTE).
+    Returns ({key: entry} to take, [keys both changed differently: the winner's stay])."""
+    take, both = {}, []
+    for k, e in theirs.items():
+        if k in skip or (k in games and same(e, games[k])):
+            continue
+        if k not in mine or (k in games and same(mine[k], games[k])):
+            take[k] = e
+        elif not same(mine[k], e):
+            both.append(k)
+    return take, both
+
+
+def size_needed(codec, key, new_length, copies):
+    """The size the game needs for a merged file: each mod's size table entry for the copy it sized (copies: [(mod
+    path, that copy's length)]), plus what the merged one is longer than it. 0 when no table names the file."""
+    need = 0
+    for mod_path, length in copies:
+        for t in tables_of(mod_path):
+            try:
+                entry = load_table(codec, mod_path, t).get(key)
+            except (OSError, ValueError, MergeError):
+                entry = None
+            if entry is not None:
+                need = max(need, entry + max(0, new_length - length))
+    return need
+
+
+def merge_rows_one(root, codec, fname, win_name, win_path, pack_path, say, others=(), game=""):
+    """Merges one table: the pack's rows (pack_path, or None) and the changed rows of the other mods under the winner
+    (others [(name, path)] in load order, told from the game's own copy `game`). Returns (the mark's line, or None
+    without the pack; the size the written file needs or 0)."""
     table_path = os.path.join(win_path, *RSDB, fname)
-    pack_table = os.path.join(pack_path, *RSDB, fname)
+    pack_table = os.path.join(pack_path, *RSDB, fname) if pack_path else None
+    more = [os.path.join(p, *RSDB, fname) for _, p in others]
+    whose = " and ".join((["the puppet pack's"] if pack_path else []) + [f"{n}'s" for n, _ in others])
     keep = os.path.join(win_path, ROWS_KEEP)
     orig_path = os.path.join(keep, fname)
     stamp_path = orig_path + ".txt"
     old = read_text(stamp_path)
-    head = rows_stamp(root, table_path, pack_table)
-    if old is not None and old.startswith(head):
+    head = rows_stamp(root, table_path, pack_table, more=more)
+    if stamp_holds(old, head):
         need = next((int(l.split()[2]) for l in old.split("\n") if l.startswith("fit ") and len(l.split()) == 3), 0)
-        say(f"Actor tables: {win_name}'s RSDB/{fname} has the puppet pack's rows already (merged at an earlier start).")
-        return f"table {fname} {fnv64(table_path)[0]} {fnv64(pack_table)[0]}", need
+        say(f"Actor tables: {win_name}'s RSDB/{fname} has {whose} rows already (merged at an earlier start).")
+        return (f"table {fname} {fnv64(table_path)[0]} {fnv64(pack_table)[0]}" if pack_path else None), need
     ours = old is not None and old.split("\n")[1:2] == ["out " + file_line(root, table_path)] \
         and os.path.isfile(orig_path)
     if not ours:  # (the mod's own table: a new seed put there, or the first start with it)
@@ -388,40 +461,53 @@ def merge_rows_one(root, codec, fname, win_name, win_path, pack_path, say):
         os.replace(orig_path + ".tmp", orig_path)
     with open(orig_path, "rb") as f:
         orig_raw = f.read()
-    with open(pack_table, "rb") as f:
-        pack_raw = f.read()
-    orig_data, pack_data = codec.unpack(orig_raw), codec.unpack(pack_raw)
+    pack_raw = pack_data = b""
+    if pack_table:
+        with open(pack_table, "rb") as f:
+            pack_raw = f.read()
+        pack_data = codec.unpack(pack_raw)
+    orig_data = codec.unpack(orig_raw)
     rows = rows_of(orig_data)
     have = {r["__RowId"] for r in rows}
-    added = [r for r in rows_of(pack_data) if r["__RowId"] not in have]
-    if added:
+    added = [r for r in rows_of(pack_data) if r["__RowId"] not in have] if pack_table else []
+    # The other mods' rows (SHARED_NOTE): the mod nearer the winner first, so its row is taken where two changed one.
+    taken, both, lengths = {}, [], []
+    if others:
+        with open(game, "rb") as f:
+            games = {r["__RowId"]: r for r in rows_of(codec.unpack(f.read()))}
+        mine = {r["__RowId"]: r for r in rows}
+        for (_, p), t in reversed(list(zip(others, more))):
+            with open(t, "rb") as f:
+                their_data = codec.unpack(f.read())
+            lengths.append((p, len(their_data)))
+            take, b = changed_entries({r["__RowId"]: r for r in rows_of(their_data)}, games, mine,
+                                      skip={r["__RowId"] for r in added})
+            both += [k for k in b if k not in both]
+            for k, r in take.items():
+                taken.setdefault(k, r)
+    if added or taken:
         by_id = {r["__RowId"]: r for r in rows + added}
+        by_id.update(taken)
         new_data = byml.dumps([by_id[k] for k in sorted(by_id, key=lambda s: s.encode("utf-8"))])
         data = codec.pack(new_data, orig_raw)
     else:
         new_data, data = orig_data, orig_raw
     # The size the game needs for it: as the pack sized its own copy (build.py: the game's entry plus the bytes it
     # grew, plus a margin), plus the bytes this one is longer than the pack's; and as the mod sized its own.
-    need = 0
     key = size_key(fname)
-    for mod_path, length in ((pack_path, len(pack_data)), (win_path, len(orig_data))):
-        for t in tables_of(mod_path):
-            try:
-                entry = load_table(codec, mod_path, t).get(key)
-            except (OSError, ValueError, MergeError):
-                entry = None
-            if entry is not None:
-                need = max(need, entry + max(0, len(new_data) - length))
+    need = size_needed(codec, key, len(new_data),
+                       ([(pack_path, len(pack_data))] if pack_path else []) + [(win_path, len(orig_data))] + lengths)
     rel = os.path.relpath(table_path, root).replace(os.sep, "/")
-    stamp = rows_stamp(root, table_path, pack_table, f"{rel} {len(data)} {fnv64_bytes(data)}")
+    stamp = rows_stamp(root, table_path, pack_table, f"{rel} {len(data)} {fnv64_bytes(data)}", more)
     if need:
         stamp += f"fit {key} {need}\n"
     # The stamp before the table, as merge_one: stopped in between, the original is never a merged table.
     write_atomic(stamp_path, stamp.encode("utf-8"))
     write_atomic(table_path, data)
-    say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}; merged in the puppet pack's rows ({len(added)} "
-        f"added). Its own copy is kept in {win_name}/{ROWS_KEEP} (merge_tables.py --undo puts it back).")
-    return f"table {fname} {fnv64_bytes(data)} {fnv64_bytes(pack_raw)}", need
+    say(f"Actor tables: the game reads {win_name}'s RSDB/{fname}; merged in {whose} rows ({len(added) + len(taken)} "
+        f"added). Its own copy is kept in {win_name}/{ROWS_KEEP} (merge_tables.py --undo puts it back)."
+        + (f" {win_name} changed {', '.join(sorted(both))} too: its own kept." if both else ""))
+    return (f"table {fname} {fnv64_bytes(data)} {fnv64_bytes(pack_raw)}" if pack_path else None), need
 
 
 def _members(data):
