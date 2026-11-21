@@ -233,14 +233,13 @@ TEST_CASE("look menu (0.11.9): the Character page: three pages of six, ZL and ZR
     start[Part::master_hilt] = *CoopColors::Parse("red");   // (a preset: its name shows)
     page.Open(start);
     auto v = page.view();
-    REQUIRE(v.rows.size() == 7);                    // the heading and six parts: one screen
+    REQUIRE(v.rows.size() == 6);                    // the heading and five parts: one screen
     CHECK(v.rows[0].kind == 3);
     CHECK(v.rows[0].name == "Link (page 1 of 4)");
-    CHECK(v.rows[1].name == "Hair Colour");
-    CHECK(v.rows[2].name == "Eye Colour");
-    CHECK(v.rows[3].name == "Kokiri Tunic");
-    CHECK(v.rows[4].name == "Cap Trim");
-    CHECK(v.rows[6].name == "Zora Tunic");
+    CHECK(v.rows[1].name == "Eye Colour");
+    CHECK(v.rows[2].name == "Kokiri Tunic");
+    CHECK(v.rows[3].name == "Cap Trim");
+    CHECK(v.rows[5].name == "Zora Tunic");
     CHECK(v.selected == 1);
     page.Press(Input::kPageNext);
     v = page.view();

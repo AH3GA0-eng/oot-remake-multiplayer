@@ -31,18 +31,17 @@ TEST_CASE("snail customize: his six options show co-op's parts, ZL / ZR step the
     REQUIRE(d.Active());
     auto t = d.Shown();
     CHECK(t.title == "Link (page 1 of 4)   Y: next page");
-    CHECK(t.labels[0] == "Hair Colour");
-    CHECK(t.labels[1] == "Eye Colour");
-    CHECK(t.labels[2] == "Kokiri Tunic");
-    CHECK(t.labels[3] == "Cap Trim");      // (his right column)
-    CHECK(t.labels[5] == "Zora Tunic");
-    CHECK(t.values[5] == "red");
-    CHECK(t.values[2] == "Game's own");
-    // The d-pad is his (his marker moves); co-op follows: right to Cap Trim, down twice to Zora Tunic.
+    CHECK(t.labels[0] == "Eye Colour");
+    CHECK(t.labels[1] == "Kokiri Tunic");
+    CHECK(t.labels[3] == "Goron Tunic");   // (his right column)
+    CHECK(t.labels[4] == "Zora Tunic");
+    CHECK(t.labels[5].empty());
+    CHECK(t.values[4] == "red");
+    CHECK(t.values[1] == "Game's own");
+    // The d-pad is his (his marker moves); co-op follows: right to Goron Tunic, down to Zora Tunic.
     CHECK(d.Pad(kRight) == kRight);
     CHECK(d.Pad(kDown) == kDown);
-    CHECK(d.Pad(kDown) == kDown);
-    CHECK(d.Focus() == 5);
+    CHECK(d.Focus() == 4);
     // ZR: Zora Tunic to the next preset; never his (his option Int stays 0).
     CHECK(d.Pad(kZR) == 0);
     const auto change = d.TakeChange();
