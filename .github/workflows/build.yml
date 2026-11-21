@@ -434,12 +434,12 @@ jobs:
       # the emulator, and the jobs that build those (windows, linux-longshot, linux-emulator)
       # run on main, integrate-*, tags and pull requests only. This step is the one that
       # compiles it on every other push, so a worker branch sees its own compile errors
-      # before the integrator's build. Without -Werror: the hook is held to the emulator's
-      # warnings (lichii/hook/core.cmake), not ours.
+      # before the integrator's build. COOP_HOOK_STRICT=ON gives the lichii/hook files the emulator's
+      # GCC flags (-O3, -Werror=all/extra: hookshot/CMakeLists.txt), so what fails linux-emulator fails here.
       - name: Compile the hook code (the Hookshot module)
         if: matrix.job == 'gcc'
         run: |
-          cmake -S . -B build-hook -DCMAKE_BUILD_TYPE=Release -DCOOP_BUILD_HOOKSHOT=ON -DCOOP_BUILD_TESTS=OFF \
+          cmake -S . -B build-hook -DCMAKE_BUILD_TYPE=Release -DCOOP_BUILD_HOOKSHOT=ON -DCOOP_BUILD_TESTS=OFF -DCOOP_HOOK_STRICT=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DFETCHCONTENT_SOURCE_DIR_ENET="$GITHUB_WORKSPACE/.deps/enet" \
             -DFETCHCONTENT_SOURCE_DIR_MONOCYPHER="$GITHUB_WORKSPACE/.deps/monocypher"

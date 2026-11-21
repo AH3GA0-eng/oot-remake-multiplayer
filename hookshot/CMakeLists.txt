@@ -27,6 +27,22 @@ foreach(line IN LISTS _coop_lines)
 endforeach()
 list(REMOVE_DUPLICATES _coop_sources)
 
+# COOP_HOOK_STRICT (CI's "Compile the hook code" step, GCC only): the lichii/hook files get the
+# flags the emulator's core target gives them on Linux (Fritchii's -O3 and -Werror=all/extra, with
+# the same -Wno-* list and the hook's de-errors from lichii/hook/core.cmake), so a warning that
+# fails the emulator build (0.11.8: -Werror=stringop-truncation, which only shows at -O3) fails
+# linux (gcc) on the branch push instead of at the release gate. Our own hookshot/src files keep coop_warnings.
+option(COOP_HOOK_STRICT "Compile lichii/hook files with the emulator's GCC flags, warnings as errors" OFF)
+if(COOP_HOOK_STRICT AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set_property(SOURCE ${_coop_sources} APPEND PROPERTY COMPILE_OPTIONS
+    -O3 -Werror=all -Werror=extra -Werror=missing-declarations -Werror=shadow -Werror=unused
+    -Wno-attributes -Wno-invalid-offsetof -Wno-unused-parameter -Wno-missing-field-initializers
+    -Wno-error=unused -Wno-error=unused-function
+    -Wno-array-bounds -Wno-stringop-overread -Wno-stringop-overflow
+    -Wno-cast-function-type -Wno-shadow -Wno-implicit-fallthrough
+    -Wno-error=range-loop-construct -Wno-error=maybe-uninitialized)
+endif()
+
 add_library(hookshot_coop MODULE src/coop_hookshot.cpp src/coop_draw.cpp src/coop_map_page.cpp src/coop_dbno_draw.cpp src/coop_png.cpp src/coop_window_brand.cpp src/coop_chatbox.cpp src/coop_cheats_panel.cpp
   src/coop_host_menu.cpp src/coop_title.cpp src/coop_title_menu.cpp src/coop_input.cpp src/coop_pause.cpp
   src/coop_pause_menu.cpp src/coop_original.cpp src/coop_pause_files.cpp src/coop_i18n.cpp src/coop_null_page.cpp
