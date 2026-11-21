@@ -522,6 +522,26 @@ std::span<const Effect> Effects() {
     return kEffects;
 }
 
+namespace {
+// Saria's gift (rows 195/204): the setting and both scenes it plays.
+constexpr std::uint32_t kSariaPlayed[] = {
+    0xd21c4627u,  // HavePlayedEvent.KokiriForest_ArriveLostWood
+    0xd711a296u,  // HavePlayedEvent.Dm_Kokiri_0150
+    0xd78d5af7u,  // HavePlayedEvent.Dm_Kokiri_0155
+};
+constexpr std::uint32_t kOcarinaHeld[] = {
+    0xb7df60f1u,  // PouchData.Item_Ocarina_Fairy.StockNum
+    0x54e2a3d1u,  // PouchData.Item_Ocarina_Time.StockNum
+};
+constexpr Gift kGifts[] = {
+    {kSariaPlayed, 0xb7df60f1u, kOcarinaHeld, "Item_Ocarina_Fairy", "Saria's gift on the bridge"},
+};
+} // namespace
+
+std::span<const Gift> Gifts() {
+    return kGifts;
+}
+
 EffectsGiven::Verdict EffectsGiven::Take(const Effect& due) {
     const auto has = [&](const std::vector<std::uint32_t>& v) {
         return std::find(v.begin(), v.end(), due.flag) != v.end();

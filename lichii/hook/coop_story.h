@@ -238,4 +238,50 @@ std::size_t EffectsDue(ReadBool&& read, std::span<const Effect*> out) {
     return n;
 }
 
+// Rows 195/204 (ocarina-0119, docs/items.md "Saria's gift spent"): a one-time
+// gift whose scene co-op can mark played without the gift ever running here.
+// Read from the romfs: Saria's bridge scene is the setting
+// KokiriForest_ArriveLostWood (flow Goto_HyruleCastle), which plays the
+// timeline Dm_Kokiri_0150 and then Dm_Kokiri_0155, the only one with the
+// pouch get of Item_Ocarina_Fairy. The bridge's trigger zone
+// (Logic/KokiriForest_Child_Level_All_02_ddcd) is deleted once
+// HavePlayedEvent.Dm_Kokiri_0150 is 1, and Saria's village actor
+// (KokiriForest_Child_Level_Npc_Kokiri_Saria_Child_a766, Npc_Kokiri_Saria_Child_ed73)
+// once it is 1 with Get_StoneOfForest after GoToWarpPoint (or the castle
+// quest complete): after that the game offers the ocarina nowhere. All three
+// played flags are shared story flags and Dm_Kokiri_0150 is a co-watched
+// scene, played alone (timeline only, no gift) in a game that joins it. So a
+// game where the flag came in, or was set by a start that never reached
+// Dm_Kokiri_0155 anywhere (a scene started from a leftover name, a starter
+// that left or crashed mid-scene, a host save or join snapshot holding it),
+// had no Saria and no ocarina for good. A spent gift with none of `held`
+// in the pouch is given through the game's own setters, as the gift's get
+// writes it; in a session and alone, so a save stuck that way is mended at its
+// next load.
+struct Gift {
+    std::span<const std::uint32_t> played;  // HavePlayedEvent.<setting>: any one set spends the gift here
+    std::uint32_t count;                    // PouchData.<item>.StockNum, set to 1
+    std::span<const std::uint32_t> held;    // StockNums: any above 0 means the gift (or better) is held
+    const char* item;
+    const char* where;  // for the log
+};
+std::span<const Gift> Gifts();
+inline constexpr std::size_t kGiftsMax = 4;  // Gifts().size() stays under it (story_test)
+// Whether `gift` is due: one of its played flags reads 1 and every held count
+// reads 0. An unread flag or count is never due (a load, the title).
+template <class ReadBool, class ReadInt>
+bool GiftDue(const Gift& gift, ReadBool&& read_bool, ReadInt&& read_int) {
+    bool spent = false;
+    for (const std::uint32_t p : gift.played) {
+        const std::optional<bool> v = read_bool(p);
+        spent = spent || (v && *v);
+    }
+    if (!spent) return false;
+    for (const std::uint32_t h : gift.held) {
+        const std::optional<std::int32_t> n = read_int(h);
+        if (!n || *n > 0) return false;
+    }
+    return true;
+}
+
 } // namespace CoopStory
