@@ -713,6 +713,20 @@ struct Host {
 // accessory (kind 14), not as hand armor (docs/puppet.md).
 inline constexpr std::string_view kChildBraceletPrefix = "Armor_Child_Gauntlet_";
 
+// The only head pieces a puppet wears: the masks, `Armor_Child_Mask_*` (the
+// game's ten; there are no adult masks, and the base `Armor_Mask_Base` is none).
+// PlayerStatus.EquipHeadArmor also names the Lens of Truth once a player has
+// it: `Armor_GlassTruth`, the age-less base actor whose model is the ADULT
+// glasses with no animation or physics for their hanging lenses. The game
+// never draws that name on Link (it wears Armor_Child_/Adult_GlassTruth only
+// while the Lens is in use). Worn and shown on a puppet it drew the adult
+// glasses' unposed mesh as orange spikes from the head and shoulders and a
+// long streak along the ground on every puppet (row 197; 0.11.6 to 0.11.8).
+constexpr bool is_drawn_head(std::string_view name) {
+  constexpr std::string_view kPrefix = "Armor_Child_Mask_";
+  return name.size() > kPrefix.size() && name.starts_with(kPrefix);
+}
+
 // What a player wears and holds (docs/puppet.md, "Equipment"). Each name is
 // the game's actor name of that piece, for example "Weapon_Sword_Kokiri" or
 // "Armor_Adult_Goron"; an empty name is nothing in that slot. A field that is

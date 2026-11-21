@@ -2241,6 +2241,14 @@ Gear GearOf(const coop::protocol::Equipment& e) {
     if (e.weapon_slot && !e.weapon_slot->empty()) {
         gear[0] = e.weapon_slot;
     }
+    // Only a mask is worn on the head (row 197): a 0.11.8 player still sends
+    // the Lens of Truth's base `Armor_GlassTruth` from its flag, whose adult,
+    // unposed glasses drew spikes and a ground streak on the puppet. Nothing
+    // worn there, so a puppet that wears it takes it off.
+    if (gear[kGearHead] && !gear[kGearHead]->empty() &&
+        !coop::protocol::is_drawn_head(*gear[kGearHead])) {
+        gear[kGearHead] = std::string{};
+    }
     return gear;
 }
 
