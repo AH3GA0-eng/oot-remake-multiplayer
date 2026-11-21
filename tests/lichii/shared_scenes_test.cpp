@@ -551,3 +551,28 @@ TEST_CASE("no story cutscene shared in 0.11.3 stops being shared unless the game
     }
     CHECK(dropped == allowed.size());
 }
+
+TEST_CASE("report 200: the Gerudo cells' own scenes are not shared, and a joiner on another level waits") {
+    // The catch (the caught player thrown into the prison) and the carpenter freed by the player who opened the
+    // cell warp the Player to that player's own place: never sent or joined (the rescue comes by its flags).
+    CHECK_FALSE(CoopSharedScenes::IsStory("Dm_Gerudo_0010"));
+    CHECK_FALSE(CoopSharedScenes::IsStory("Dm_Gerudo_0020"));
+    for (const char* setting : {"Dm_Gerudo_0021", "Dm_Gerudo_0022", "Dm_Gerudo_0023"}) {
+        CHECK_FALSE(CoopSharedScenes::IsStory(setting));
+        CHECK_FALSE(CoopSharedScenes::StoryOfRequest(setting).has_value());
+    }
+    CHECK(CoopSharedScenes::IsShared("Dm_Gerudo_0025"));  // the card: still everyone's
+
+    // A shared scene started in cell 4's room (floor 110); we stand on the roof over it, 18 m away and 12 m up.
+    const Vec3 cell{14.7f, 110.0f, -76.6f};
+    Joiner roof;
+    roof.Started(1, "Dm_Gerudo_0000", "GerudoFortress_Adult", cell, 0);
+    CHECK_FALSE(roof.Next(Free(100, Vec3{14.0f, 122.0f, -90.0f}, "GerudoFortress_Adult"), kNotPlayed));
+    // On its floor, as near: joined.
+    Joiner floor;
+    floor.Started(1, "Dm_Gerudo_0000", "GerudoFortress_Adult", cell, 0);
+    const auto got = floor.Next(Free(100, Vec3{16.0f, 110.5f, -80.0f}, "GerudoFortress_Adult"), kNotPlayed);
+    REQUIRE(got);
+    CHECK(*got == "Dm_Gerudo_0000");
+    CHECK(CoopSharedScenes::NotNearYet("too far: 12 m above them"));
+}

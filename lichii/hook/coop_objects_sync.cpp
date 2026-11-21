@@ -667,13 +667,8 @@ bool IsLateEncounter(std::string_view name) {
     return name != "Enemy_KotakeKoumeBattleManager";
 }
 
-bool OutOfItsFight(bool dungeon, const std::optional<coop::protocol::Vec3>& link, const coop::protocol::Vec3& enemy) {
-    if (dungeon || !link) {
-        return false;  // (a dungeon's rooms count their own kills; our Link's place not known: as before)
-    }
-    const float across = std::hypot(enemy[0] - (*link)[0], enemy[2] - (*link)[2]);
-    const float rise = std::fabs(enemy[1] - (*link)[1]);
-    return across > kFightReachM || rise > kFightRiseM;
+bool CopyGoesWithoutDeath(std::string_view name, bool dungeon) {
+    return !dungeon && IsLateEncounter(name);  // (a dungeon's rooms count their own kills: as before)
 }
 
 std::string_view AnimationBase(std::string_view name) {
@@ -1281,25 +1276,20 @@ bool Sync::GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us) {
     if (const auto own = owners_.find(o.id); own != owners_.end() && own->second.player == self_) {
         return false;  // handed to us: ours to fight and to die here
     }
-    if (!OutOfItsFight(CoopDungeon::IsDungeonScene(scene_), player_, o.position)) {
+    if (!CopyGoesWithoutDeath(o.name, CoopDungeon::IsDungeonScene(scene_))) {
         return false;
     }
+    // Its look follows its owner's own death until the owner's OBJECT_REMOVE dead deletes it (dead_now there);
+    // kDeadGraceUs from now it goes anyway.
     o.quiet_gone = true;
-    o.dead_now = true;
     if (o.dead_at == 0) {
         o.dead_at = now_us;
     }
     o.hit_sum = 0;
     o.hit_place.reset();
     o.hit_record.reset();
-    o.place_seen.reset();
-    dead_.insert(address);  // (Removes, before the next walk lists it again)
-    char where[96];
-    std::snprintf(where, sizeof where, "%.0f m across, %.0f m up/down",
-                  std::hypot(o.position[0] - (*player_)[0], o.position[2] - (*player_)[2]),
-                  std::fabs(o.position[1] - (*player_)[1]));
-    notes_.emplace_back("report 200: its owner killed it away from our Link's fight (" + std::string(where) +
-                        "): our copy goes without a death (its own defeat event would take our Link): " + o.name);
+    notes_.emplace_back("report 200: its owner killed it: our copy of their encounter goes without a death here (its "
+                        "death would run our game's own defeat event with our Link): " + o.name);
     return true;
 }
 
@@ -3657,8 +3647,10 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     // Row 175: it died here first (our hit, sent to its owner): its own death runs here and ends
                     // it (the room logic goes on from it); no write and no delete.
                     notes_.emplace_back("dead in its owner's game after our kill: ours runs its own death: " + o->name);
-                } else if (o != nullptr && o->dead_at == 0 && GoesWithoutDeath(o->address, now_us)) {
-                    // Report 200: killed by its owner away from our Link's fight: deleted, no death here. Not a
+                } else if (o != nullptr && (o->quiet_gone || (o->dead_at == 0 && GoesWithoutDeath(o->address, now_us)))) {
+                    o->dead_now = true;
+                    o->place_seen.reset();
+                    // Report 200: a copy of their encounter, killed by its owner: deleted now, no death here. Not a
                     // copy killed here either: an own one of ours that turns up later is not killed by our game
                     // (that would run the same defeat event; the shared Destroy flag keeps our logic from making it).
                     copy_killed_.erase(remove->id);

@@ -411,18 +411,22 @@ bool IsAnnounced(std::string_view name);
 bool IsLateEncounter(std::string_view name);
 inline constexpr float kEncounterNearM = 40.0f;
 inline constexpr std::uint64_t kEncounterWaitUs = 1'500'000;
-// Player report 200 (Gerudo Fortress): a copy of another game's late encounter is not our Link's fight when its
-// owner kills it far from our Link. The jail guard (Enemy_MiddleBoss_GerudoThief*) is the case: its death in a game
-// runs that game's own defeat event (SageOfSpirit_RescueCarpenter GerudoFortress_DestroyGerudoThief0N: Player_Event
-// EventPlayerWarpToTargetActor, the key drop, the cell), and the owner's killing blow was replayed in every game that
-// had a copy (row 177: with our Link as the attacker). A player in the outdoor prison had their Link warped by that
-// event into the cell's room below: under the map. Such a copy goes without a death (deleted, as one its owner
-// deleted); the encounter's result comes by the shared flags (DestroyGerudoThief_*, the cell key, the rescue:
-// report 99). In our Link's fight: within kFightReachM across and kFightRiseM up or down of it, our Link's place
-// known. In a dungeon nothing changes (its rooms keep their own kill counters and shutters).
-inline constexpr float kFightReachM = 20.0f;
-inline constexpr float kFightRiseM = 6.0f;
-bool OutOfItsFight(bool dungeon, const std::optional<coop::protocol::Vec3>& link, const coop::protocol::Vec3& enemy);
+// Player report 200 (Gerudo Fortress): an encounter is the game's whose logic made it. A copy of it in another game
+// stands for the owner's enemy; its death there runs that game's own consequences of an encounter that game never
+// began. The jail guard (Enemy_MiddleBoss_GerudoThief*) is the case: the cell's logic
+// (GerudoFortress_Common_Level_CarpenterSet_0N, its Dead and Logic_Alive plugs) answers the guard's death with the
+// defeat event (SageOfSpirit_RescueCarpenter GerudoFortress_DestroyGerudoThief0N: Player_Event
+// EventPlayerWarpToTargetActor, GerudoThiefDropKey, the cell's camera), with the Player of that game as its
+// performer. The owner's killing blow was replayed on every copy (row 177: with that game's Link as the attacker), so
+// a player in the outdoor prison had their Link warped into the cell's room below (under the map), and a player
+// standing in the room was warped to the defeat spot too. So outside a dungeon such a copy never dies by its own
+// death (CopyGoesWithoutDeath): when its owner says it died it is deleted, as a copy its owner deleted, and the
+// encounter's result comes by the shared flags (DestroyGerudoThief_*, the cell key, the rescue: report 99); its look
+// follows the owner's own death animation until then. Of every event flow in the romfs, the defeat and rescue
+// entries that warp the Player are the Gerudo rescue's (above, its appear, lose and prison entries) and the boss
+// fights' (Get_Stone*_DefeatBoss, SageOf*_DefeatBoss, Defeat_Ganon: the boss sync's). In a dungeon nothing changes:
+// its rooms keep their own kill counters and shutters, which may count a copy's death (not checked).
+bool CopyGoesWithoutDeath(std::string_view name, bool dungeon);
 inline constexpr std::uint64_t kEncounterStaleUs = 5'000'000;
 
 // An enemy animation that plays as it dies ("Die", "Dead_Fall",
@@ -1165,7 +1169,7 @@ public:
     // ObjectRemove dead (one boss death for everyone: the copy's Life step lets it die then).
     bool OwnerSaysDead(std::uint64_t address) const;
     // Report 200: the copy at `address` (a director's copy of another player's late encounter) is to die now, and
-    // its owner killed it away from our Link's fight (OutOfItsFight): it goes without a death from now on (deleted
+    // it is one that never dies by its own death here (CopyGoesWithoutDeath): it goes so from now on (deleted
     // with the dead ones, never given its killing life, left out of the boss sync). True for one that goes so.
     bool GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us);
     bool GoneWithoutDeath(std::uint64_t address) const;

@@ -2061,7 +2061,7 @@ public:
                 if (owner && *owner != 0 && *owner != self &&
                     (sync_.GoneWithoutDeath(s.address) ||
                      (sync_.OwnerSaysDead(s.address) && sync_.GoesWithoutDeath(s.address, share_now_us_)))) {
-                    continue;  // report 200: its owner killed it away from our fight: no death run here, it goes
+                    continue;  // report 200: its owner killed our copy of their encounter: no death run here, it goes
                 }
                 if (owner && *owner != 0) {
                     const bool owner_dead = sync_.OwnerSaysDead(s.address);
@@ -4824,9 +4824,9 @@ private:
             return;
         }
         const s32 old = r.Get<s32>(value->first + 8).value_or(-1);
-        // Report 200: another player's kill of our copy of their encounter, away from our Link's fight (the Gerudo
-        // jail guard's death runs our game's own defeat event, which warps our Link to the cell): never given, the
-        // copy goes without a death (CoopObjects::OutOfItsFight).
+        // Report 200: another player's kill of our copy of their encounter (the Gerudo jail guard's death runs our
+        // game's own defeat event, which warps our Link to the cell): never given, the copy goes without a death
+        // (CoopObjects::CopyGoesWithoutDeath).
         const bool lethal = !w.heal && !w.test_kill && (w.life <= 0 || (w.hurt > 0 && old >= 0 && w.hurt >= old));
         if (lethal && sync_.GoesWithoutDeath(w.address, share_now_us_)) {
             return;

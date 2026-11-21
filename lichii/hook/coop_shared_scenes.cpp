@@ -30,7 +30,7 @@ constexpr std::string_view kNames[] = {
     "Dm_ForestTemple_0015", "Dm_ForestTemple_0016", "Dm_ForestTemple_0017", "Dm_ForestTemple_0020",
     "Dm_ForestTemple_0021", "Dm_ForestTemple_0022", "Dm_ForestTemple_0031", "Dm_ForestTemple_0032",
     "Dm_GanonCastle_0000", "Dm_GerudoValley_0000", "Dm_GerudoValley_0010", "Dm_GerudoValley_0020",
-    "Dm_Gerudo_0000", "Dm_Gerudo_0010", "Dm_Gerudo_0020", "Dm_Gerudo_0025",
+    "Dm_Gerudo_0000", "Dm_Gerudo_0025",  // (not 0010, 0020: player report 200, coop_shared_scenes.h)
     "Dm_Gerudo_0030", "Dm_Goron_0000", "Dm_Goron_0010", "Dm_Goron_0020",
     "Dm_Goron_0025", "Dm_Goron_0028", "Dm_Goron_0030", "Dm_Goron_0040",
     "Dm_Goron_0045", "Dm_Graveyard_0000", "Dm_Graveyard_0010", "Dm_Graveyard_0030",
@@ -230,6 +230,12 @@ std::string Joiner::Why(const Pending& p, const Here& here, bool played) const {
         if (d > kRoomM) {
             char text[64];
             std::snprintf(text, sizeof text, "too far: %.0f m from them", d);
+            return text;
+        }
+        if (!here.dungeon && std::fabs(dy) > kJoinRiseM) {
+            // Report 200: on another level (a floor between us): its warp would move our Link through it.
+            char text[64];
+            std::snprintf(text, sizeof text, "too far: %.0f m %s them", std::fabs(dy), dy > 0 ? "above" : "below");
             return text;
         }
         if (here.dungeon) {
