@@ -551,6 +551,23 @@ TEST_CASE("testinput: setenum hands the hook an Enum flag (name or 0x hash) and 
     CHECK(requests[1].start == "Bow");
 }
 
+TEST_CASE("testinput: drop hands the hook a boss name and its metres (row 178, test only)") {
+    std::string error;
+    CHECK_FALSE(Parse("drop\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon 0\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon 501\n", error));
+    CHECK_FALSE(Parse("drop Enemy_DungeonBoss_PhantomGanon 6x\n", error));
+    Runner r(Must("drop Enemy_DungeonBoss_PhantomGanon 60\n"));
+    std::vector<std::string> log;
+    r.Advance(0.0, std::nullopt, log);
+    const auto requests = r.TakeRequests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == Kind::drop);
+    CHECK(requests[0].name == "Enemy_DungeonBoss_PhantomGanon");
+    CHECK(requests[0].start == "60");
+}
+
 TEST_CASE("testinput: nofairy empties every bottle (five setenum requests), as hookshot.py does") {
     // A bottled fairy makes a lethal hit the game's own death and revive, never down-but-out (3 VOID runs).
     std::string error;

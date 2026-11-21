@@ -651,6 +651,7 @@ public:
     // we first saw it (CoopBossNative::Table::kFallBelowStart, the owner's fall guard): it keeps its last place
     // in the room until the owner's are back up.
     static constexpr float kBossFallBelowStartM = 40.0f;
+    mutable std::uint64_t boss_copies_kept_ = 0;  // (BossCopiesKept: counted where Poses skips one)
     static constexpr std::uint64_t kHurtWaitUs = 400'000;     // then write life directly
     // Protocol 14: how long the owner's samples carry its newest hit (a few samples: one may be lost).
     static constexpr std::uint64_t kHitShowUs = 500'000;
@@ -1118,6 +1119,8 @@ public:
     // The player who owns the object at `address` (0: the server, none: not
     // known). For coop_enemy_shots.
     std::optional<std::uint8_t> OwnerOf(std::uint64_t address) const;
+    // Row 178: boss copies' places not taken so far because the owner's was kBossFallBelowStartM below (Poses).
+    std::uint64_t BossCopiesKept() const { return boss_copies_kept_; }
     // Our own player number (0: not known yet).
     std::uint8_t Self() const { return self_; }
     // review-dc-0118: the owner of the object at `address`, or, once its owner's dead ObjectRemove forgot that, the

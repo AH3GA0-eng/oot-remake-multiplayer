@@ -157,6 +157,10 @@ void QueueTestHit(std::string name, std::int32_t amount);
 void QueueTestAim(float x, float y, float z);
 // Test only ("stun NAME"): our copy of the nearest boss of that name says its owner a stun (Sync::TestStun).
 void QueueTestStun(std::string name);
+// Test only ("drop NAME METRES", row 178): the nearest boss of that name that our game owns is put `metres` straight
+// down at the next placing (the set-matrix call the copies are placed with), so the fall guard and the copies' fall
+// line run in a game. A copy (or none here) is not moved. Logs "coop: test drop ...". Any thread.
+void QueueTestDrop(std::string name, float metres);
 
 // Present thread: the actors of the shared things this game owns now (for
 // coop_drops: a drop beside one of them is its owner's to decide).
