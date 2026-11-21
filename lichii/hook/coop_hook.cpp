@@ -108,6 +108,7 @@
 #include "coop_objects.h"
 #include "coop_link_sound.h"
 #include "coop_char_colours.h"
+#include "coop_charsel_tidy.h"
 #include "coop_look_share.h"
 #include "coop_ocarina_sound.h"
 #include "coop_pose.h"
@@ -1640,6 +1641,28 @@ public:
                                     ? std::optional<std::string>(reading->animation->name)
                                     : std::nullopt,
                                 report.connected ? session_.get() : nullptr);
+        // Character Select's page flags left set after his page closed mid-swap (row 202, coop_charsel_tidy.h): put
+        // back to 0 once no menu has been up for half a second. Without the mod the flags do not exist: nothing.
+        if (view.game) {
+            static CoopCharselTidy::Tidy charsel_tidy;
+            EmulatorMemory tidy_memory(system.ApplicationMemory(), base_);
+            const auto lines = charsel_tidy.Frame(
+                reading ? reading->in_menu : std::nullopt,
+                [&](const CoopCharselTidy::Flag& f) -> std::optional<std::int32_t> {
+                    const std::uint32_t hash = coop::host::flag_hash(f.name);
+                    if (f.is_bool) {
+                        const auto b = coop::host::GameFlags(tidy_memory).get_bool(hash);
+                        return b ? std::optional<std::int32_t>(*b ? 1 : 0) : std::nullopt;
+                    }
+                    return coop::host::GameFlags(tidy_memory).get_int(hash);
+                },
+                [&](const CoopCharselTidy::Flag& f, std::int32_t v) {
+                    const std::uint32_t hash = coop::host::flag_hash(f.name);
+                    return f.is_bool ? coop::host::GameFlags::set_bool(tidy_memory, hash, v != 0)
+                                     : coop::host::GameFlags::set_int(tidy_memory, hash, v);
+                });
+            for (const auto& line : lines) LOG_INFO(Core, "coop: {}", line);
+        }
         // The character picked in the Character Select mod, when that mod is installed (coop_look_share.h): its
         // saved Int, read twice a second while a game runs. No such flag (no mod): Link.
         static std::uint32_t character_tick = 0;
