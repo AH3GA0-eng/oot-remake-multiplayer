@@ -1374,7 +1374,7 @@ public:
         for (const auto& k : session_->take_one_way_left()) {  // row 140 (flag-oneway-c)
             const auto* item = coop::host::find_item(k.hash);
             LOG_INFO(Core,
-                     "coop: flags: {} ({:#010x}): the game lowered it again right after our put-back ({} times): its "
+                     "coop: flags: {} ({:#010x}): the game lowered it again after our put-back ({} times): its "
                      "own value until the next load, not put back or sent (row 140)",
                      item != nullptr ? item->name : std::string_view("?"), k.hash,
                      coop::host::FlagWatcher::kMaxQuickUndos);
@@ -1655,15 +1655,27 @@ public:
                 }
                 return out;
             }();
-            std::uint32_t custom = 0;
+            // 0.11.9 (the owner: ONE customizer, co-op's own): the mod's own Customize options are held at 0, the
+            // model's own colours, so its code never paints over ours (its per-frame dresser changes only what an
+            // option sets; at 0 it reads and goes on; its Customize screen puts the model's own back for an option at 0).
+            std::array<std::optional<std::int32_t>, CoopLookShare::kCustomFlags.size()> values{};
             for (std::size_t i = 0; i < custom_hashes.size(); ++i) {
-                const auto v = coop::host::GameFlags(flag_memory).get_int(custom_hashes[i]);
-                if (v && *v > 0 && *v <= 15) {
-                    custom |= static_cast<std::uint32_t>(*v) << (4 * i);
-                }
+                values[i] = coop::host::GameFlags(flag_memory).get_int(custom_hashes[i]);
             }
+            std::size_t cleared = 0;
+            for (const std::size_t i : CoopLookShare::OptionsToHold(values)) {
+                if (coop::host::GameFlags::set_int(flag_memory, custom_hashes[i], 0)) ++cleared;
+            }
+            static bool said_held = false;
+            if (cleared != 0 && !said_held) {
+                said_held = true;
+                LOG_INFO(Core, "coop: characters: Character Select's own Customize options set back to the model's own "
+                               "({} of them): co-op's look is the one customizer", cleared);
+            }
+            const std::uint32_t custom = 0;   // (none of the mod's own: nothing of them goes to the others either)
             // What the mod's own code puts on every player-like model, puppets too (coop_char_colours.h Wardrobe).
             CoopCharColours::TheWardrobe().SetViewer(custom);
+            CoopCharColours::SetModPresent(picked.has_value());   // (row 207: its saved Int is there)
             CoopCharColours::SetShownCharacter(picked && *picked > 0 && *picked <= CoopLookShare::kCharacterMax
                                                    ? static_cast<std::uint16_t>(*picked)
                                                    : std::uint16_t{0});
@@ -3312,7 +3324,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     const coop::host::MapDropBecause because("the solo keeper (minimap-b)");
     const auto restored = keeper.frame(flags, in_play, coop::host::view_of(scene));
     if (keeper.take_save_load()) coop::host::map_drop_log().note("save load (no scene for a while: the title)");
-    if (!restored.empty() && StartMapRefresh()) CoopMapRefresh::TheRefresher().WantNow(SteadyMs());  // row 140
+    if (keeper.take_hud_refresh() && StartMapRefresh()) CoopMapRefresh::TheRefresher().WantNow(SteadyMs());  // rows 140, 183
     for (const auto key : restored) {
         const auto* item = coop::host::find_item(key.hash);
         LOG_INFO(Core, "coop: items: {} went back to 0 with no session: written back (minimap-b guard; restores {})",
@@ -3320,7 +3332,7 @@ void KeepMapsAlone(EmulatorMemory& memory, bool in_play, const std::optional<std
     }
     for (const auto key : keeper.take_left()) {  // row 140 (flag-oneway-c)
         const auto* item = coop::host::find_item(key.hash);
-        LOG_INFO(Core, "coop: items: {} went back to 0 right after each of {} write-backs with no session: left to the game "
+        LOG_INFO(Core, "coop: items: {} went back to 0 after each of {} write-backs with no session: left to the game "
                        "until it gives it again (row 140)",
                  item != nullptr ? item->name : std::string_view("?"), coop::host::OneWayKeeper::kMaxQuickUndos);
     }

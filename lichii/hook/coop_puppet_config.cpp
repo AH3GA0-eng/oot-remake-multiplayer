@@ -61,6 +61,7 @@ CoopPuppet::PlannerSettings Settings(const EnvFn& env, const std::function<bool(
         auto look = pack_look();
         settings.look_items = std::move(look.actors);
         settings.look_copies = settings.look_items.empty() ? 0 : look.copies;
+        settings.look_neutral = settings.look_items.empty() ? 0 : look.neutral;
         if (log != nullptr && settings.look_copies > 0) {
             log->push_back("coop: the puppet pack has " + std::to_string(settings.look_items.size()) +
                            " coloured items in " + std::to_string(settings.look_copies) +

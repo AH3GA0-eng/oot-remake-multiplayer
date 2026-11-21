@@ -7,6 +7,13 @@
 
 namespace CoopDbno::Body {
 
+namespace {
+// "Crawl (234)" for the log (the offline graders match these).
+std::string Named(std::int32_t v) {
+    return std::string(VerbName(v)) + " (" + std::to_string(v) + ")";
+}
+}  // namespace
+
 // --- Raising ---
 
 void Raising::Start(std::int32_t to, std::uint64_t now_us) noexcept {
@@ -94,21 +101,51 @@ bool Crawl::Skip(std::uint64_t bsa, const CoopBossNative::Request& request, bool
         flags_ = a->flags;
         learnt_ = true;
     }
-    if (!want_.lying || want_.event || a->verb == verb::kCrawl) {
+    // Our ask's slot: a request the game takes on it now keeps it busy
+    // until the BSA's next update (ours would get kSlotBusy).
+    const bool our_slot = learnt_ && a->slot == slot_;
+    if (!want_.lying || want_.event || a->verb == DownVerb(want_.adult)) {
+        slot_taken_ = slot_taken_ || our_slot;  // (the frame our Link goes down or gets up, too)
         return false;
     }
     if (!crawling_) {
-        // Not in our crawl (refused: a ladder, water, mid-air; or the world
-        // took our Link out of it): the game's own runs. Back on the ground,
-        // the crawl is asked again at once.
+        if (Passes(a->verb)) {
+            airborne_ = true;  // the world moves our Link: its own runs, the crawl waits for the ground
+            moved_ = true;
+            slot_taken_ = slot_taken_ || our_slot;
+            return false;
+        }
         if (ground) {
-            asks_ = 0;
-            next_ask_ms_ = 0;
+            airborne_ = false;
+            ground_seen_ = true;  // (Next starts a new round when one is due)
+        }
+        if (our_slot && Trying()) {
+            // A crawl round is on: the game takes one request per slot a
+            // frame, so its own (asked before our caller runs) would take
+            // the slot and ours would get kSlotBusy. (Its requests on other
+            // slots have their own records: they run.)
+            ++counts_.cleared;
+            if (!std::exchange(cleared_noted_, true)) {
+                Note("our downed Link: the game's own action verb " + std::to_string(a->verb) +
+                     " skipped so our " + VerbName(DownVerb(want_.adult)) + " gets the slot");
+            }
+            return true;
+        }
+        // Not in our crawl and no round on (really refused, or out of asks),
+        // or another slot's: the game's own runs. On our slot it takes the
+        // slot for this frame, and anything but Walk / Wait is a move of our
+        // Link (a ladder, an item, a reaction): a new round after it.
+        if (our_slot) {
+            slot_taken_ = true;
+            moved_ = moved_ || !ground;
         }
         return false;
     }
     if (Passes(a->verb)) {
         crawling_ = false;  // the world moves our Link (a fall, water, the void): asked again after it
+        airborne_ = true;
+        moved_ = true;
+        slot_taken_ = slot_taken_ || our_slot;
         ++counts_.passed;
         Note("our downed Link: the game's action verb " + std::to_string(a->verb) + " let through; crawl again after");
         return false;
@@ -141,6 +178,7 @@ std::optional<CoopPuppet::Call> Crawl::Ask(CoopPuppet::Guest& guest, std::int32_
     c.x[1] = block_;
     c.x[2] = 1;
     pending_ = v == verb::kCrawl ? Pending::crawl : Pending::stand;
+    asked_verb_ = v;
     ++counts_.asked;
     return c;
 }
@@ -229,6 +267,7 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
                                             std::uint64_t now_ms, std::uint64_t main_base) {
     std::lock_guard lock(mutex_);
     if (!after_call) {
+        held_back_ = std::exchange(slot_taken_, false);
         shield_.tried = false;
         unseen_.tried = false;
         for (auto& [n, h] : puppets_) {
@@ -265,24 +304,42 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
         case Pending::crawl:
         case Pending::stand: {
             const bool taken = result == CoopBossNative::addr::kActionTaken;
-            if (!taken) {
+            if (result == kSlotBusy) {
+                ++counts_.busy;
+            } else if (!taken) {
                 ++counts_.refused;
             }
             if (was == Pending::crawl) {
                 crawling_ = taken;
                 if (taken) {
                     asks_ = 0;  // (a later fall or water may need a fresh round)
-                }
-                // A refusal repeats while the game keeps our Link busy (60 lines in a boss fight's
-                // log): the first three are noted, the rest only counted (counts_.refused).
-                if (taken) {
-                    Note("our downed Link: Crawl (234) asked and taken");
-                } else if (++refusals_noted_ <= 3) {
-                    Note("our downed Link: Crawl (234) refused (" + std::to_string(result) + ")" +
-                         (refusals_noted_ == 3 ? "; more refusals while down are not noted" : ""));
+                    spot_rounds_ = 0;
+                    moved_ = false;
+                    Note("our downed Link: " + Named(asked_verb_) + " asked and taken");
+                } else if (result == kSlotBusy) {
+                    // Not a refusal of the crawl: the slot took another
+                    // request this frame. Skipping is on now: next frame.
+                    next_ask_ms_ = 0;
+                    if (++refusals_noted_ <= 3) {   // (as the refusals below: a boss fight's events start many rounds)
+                        Note("our downed Link: " + Named(asked_verb_) +
+                             " waits: the slot took a request this frame (3); asked next frame" +
+                             (refusals_noted_ == 3 ? "; more while down are not noted" : ""));
+                    }
+                } else {
+                    blocked_ = true;  // a real refusal: the game's own runs
+                    // A refusal repeats while the game keeps our Link busy (60 lines in a boss fight's
+                    // log): the first three are noted, the rest only counted (counts_.refused).
+                    if (++refusals_noted_ <= 3) {
+                        Note("our downed Link: " + Named(asked_verb_) + " refused (" + std::to_string(result) + ")" +
+                             (refusals_noted_ == 3 ? "; more refusals while down are not noted" : ""));
+                    }
                 }
             } else {
-                Note(taken ? "our Link up: Wait (40) asked and taken" : "our Link up: Wait (40) refused");
+                // (kSlotBusy: the game's own Walk or Wait, no longer skipped, took the slot first this frame.)
+                Note("our Link up: " + Named(asked_verb_) +
+                     (taken                 ? " asked and taken"
+                      : result == kSlotBusy ? " not needed: the game's own request took the slot this frame (3) and stands our Link up"
+                                            : " refused (" + std::to_string(result) + ")"));
             }
             return std::nullopt;  // (one action ask a frame)
         }
@@ -324,31 +381,80 @@ std::optional<CoopPuppet::Call> Crawl::Next(CoopPuppet::Guest& guest, bool after
     }
 
     // The crawl.
+    const auto new_round = [this] {
+        ++counts_.rounds;
+        asks_ = 0;
+        next_ask_ms_ = 0;
+        blocked_ = false;
+        moved_ = false;
+        cleared_noted_ = false;
+    };
     if (want_.lying != was_lying_) {
         was_lying_ = want_.lying;
-        asks_ = 0;
-        refusals_noted_ = 0;
-        next_ask_ms_ = 0;
+        refusals_noted_ = 0;  // (the first few misses noted again each time our Link goes down, not each round)
+        new_round();
+        spot_rounds_ = 0;
+        airborne_ = false;
+        ground_seen_ = false;
         stand_due_ = !want_.lying && crawling_;
         crawling_ = false;
     }
     if (want_.event) {
         crawling_ = false;  // the event moves our Link; asked again after it
-        asks_ = 0;
-        next_ask_ms_ = 0;
+        if (asks_ != 0 || blocked_ || moved_) {
+            new_round();
+        }
+        spot_rounds_ = 0;
+        airborne_ = false;
         return std::nullopt;
+    }
+    if (std::exchange(ground_seen_, false) && !crawling_ && !airborne_) {
+        // Back on the ground. After a move of our Link: a new round (never
+        // more than one each kAskEveryMs: a slope that slides our Link off
+        // every frame). A round that ended on the spot: only kRetryMs after
+        // its last ask, kSpotRounds times; then our Link has to move first.
+        const bool over = blocked_ || asks_ >= kMaxAsks;
+        if (moved_) {
+            if (asks_ == 0 && !blocked_) {
+                moved_ = false;  // (this round asked nothing yet: it is the new one)
+                spot_rounds_ = 0;
+            } else if (now_ms >= last_ask_ms_ + kAskEveryMs) {
+                spot_rounds_ = 0;
+                new_round();
+            } else {
+                ground_seen_ = true;  // (looked at again next frame)
+            }
+        } else if (over && spot_rounds_ < kSpotRounds && now_ms >= last_ask_ms_ + kRetryMs) {
+            ++spot_rounds_;
+            new_round();
+        }
     }
     if (want_.bsa == 0 || !learnt_) {
         return std::nullopt;
     }
     if (stand_due_) {
         stand_due_ = false;
-        return Ask(guest, verb::kWait, main_base);
+        if (held_back_) {
+            // The game's own Walk or Wait (skipped while down, asked every
+            // frame) ran on the slot this frame: that stands our Link up,
+            // and ours on top would only get kSlotBusy.
+            Note("our Link up: the game's own request stands it up (no " + Named(UpVerb(want_.adult)) + " of ours needed)");
+            return std::nullopt;
+        }
+        return Ask(guest, UpVerb(want_.adult), main_base);
     }
-    if (want_.lying && !crawling_ && asks_ < kMaxAsks && now_ms >= next_ask_ms_) {
+    if (want_.lying && !crawling_ && !airborne_ && !blocked_ && asks_ < kMaxAsks && now_ms >= next_ask_ms_) {
+        if (held_back_) {
+            // The game's own request ran on our slot this frame (a round
+            // that starts now, or a kPassVerbs verb): the slot is busy.
+            // Not an ask: the next frame's is skipped for ours.
+            ++counts_.held_back;
+            return std::nullopt;
+        }
         ++asks_;
         next_ask_ms_ = now_ms + kAskEveryMs;
-        return Ask(guest, verb::kCrawl, main_base);
+        last_ask_ms_ = now_ms;
+        return Ask(guest, DownVerb(want_.adult), main_base);
     }
     return std::nullopt;
 }

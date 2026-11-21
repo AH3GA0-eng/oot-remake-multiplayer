@@ -42,6 +42,15 @@ check 'pin_get reads key=value lines (a value may hold =)' bash -c '. "$1"; [ "$
 check 'kit_offline: 1 offline, 0 online; behind a proxy (https_proxy, ALL_PROXY) online with no probe' bash -c '. "$1"
     kit_offline 1 && ! kit_offline 0 && ! https_proxy=http://127.0.0.1:9 kit_offline "" && ! ALL_PROXY=socks5://127.0.0.1:9 kit_offline ""' _ "$lib"
 
+check 'kit_steam_input_hint: Steam running, not started by Steam: the warning' bash -c '. "$1"
+    out=$(env -u SteamGameId -u SteamAppId -u SteamClientLaunch -u SteamOverlayGameId bash -c ". \"\$1\"; kit_steam_input_hint true" _ "$1")
+    [[ $out == *"Steam is open"* && $out == *"Steam Controller"* && $out == *"Steam Input off"* ]]' _ "$lib"
+check 'kit_steam_input_hint: started by Steam (any of its four names), Steam not running, or a failing check: nothing, never a stop' bash -c '. "$1"
+    for n in SteamGameId SteamAppId SteamClientLaunch SteamOverlayGameId; do
+        [[ -z $(env "$n=1" bash -c ". \"\$1\"; kit_steam_input_hint true" _ "$1") ]] || exit 1
+    done
+    [[ -z $(kit_steam_input_hint false) ]] && kit_steam_input_hint false && kit_steam_input_hint true >/dev/null' _ "$lib"
+
 # --- A kit, as make_kit_linux.sh lays it out ----------------------------------------------------
 # The stand-in builder: what --appimage-extract unpacks.
 payload=$tmp/payload

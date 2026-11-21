@@ -55,8 +55,9 @@ const std::vector<GearTexture>& Gear() {
 }
 
 namespace {
-// The parts the gear wardrobe paints (the tunic and the Cap trim are the tunic wardrobe's).
-bool IsGear(Part p) { return p != Part::tunic && p != Part::cap_trim; }
+// The parts the gear wardrobe paints (the tunic and the Cap trim are the tunic wardrobe's; the eyes are no texture:
+// the model's own parameter, CoopCharColours).
+bool IsGear(Part p) { return p != Part::tunic && p != Part::cap_trim && p != Part::eyes && p != Part::hair; }
 }  // namespace
 
 bool AnyGear(const CoopLook::Look& look) {
@@ -519,6 +520,53 @@ CoopLookTunic::Texels BootsTexels(const CoopLookTunic::Texels& gear, const Weare
         for (CoopLookTunic::Texture& t : own) {
             t.name = BootsName(t.name, l.letter);
             Mark(t.texels, static_cast<unsigned char>(l.letter));
+            out.push_back(std::move(t));
+        }
+    }
+    return out;
+}
+
+std::string PuppetTunicsName(const TunicPaints& paints) {
+    if (paints.empty()) return kPuppetTunicsBase;
+    std::string name = kPuppetTunicsBase;
+    char hex[8];
+    for (const auto& [colour, paint] : paints) {
+        std::snprintf(hex, sizeof hex, "%06X", static_cast<unsigned>(paint.tunic.value_or(0x30D040u) & 0xFFFFFFu));
+        name += "|" + colour + "=" + hex;
+        if (paint.cap) {
+            std::snprintf(hex, sizeof hex, "%06X", static_cast<unsigned>(*paint.cap & 0xFFFFFFu));
+            name += std::string("+cap") + hex;
+        }
+    }
+    return name;
+}
+
+CoopLookTunic::Texels PuppetTunicsTexels(const std::vector<std::pair<std::string, CoopLookTunic::Texels>>& copies,
+                                         const CoopLookTunic::Texels& green, const TunicPaints& paints, const Cap* cap) {
+    CoopLookTunic::Texels out;
+    for (const auto& [colour, texels] : copies) {
+        const auto paint = paints.find(colour);
+        if (paint == paints.end()) {
+            out.insert(out.end(), texels.begin(), texels.end());
+            continue;
+        }
+        const CoopLookTunic::Texels painted = TunicPainted(green, paint->second, cap);   // (the trim too)
+        std::optional<CoopLookTunic::Texels> darker;   // (the dark tile's: the main tile in the darker colour)
+        for (std::size_t i = 0; i < texels.size(); ++i) {
+            CoopLookTunic::Texture t = texels[i];   // (its name and offset: the copy's)
+            if (i < painted.size() && painted[i].texels.size() == t.texels.size()) {
+                t.texels = painted[i].texels;
+            } else if (t.name.find("_Dark_") != std::string::npos && !painted.empty() &&   // (by its name: any order)
+                       texels[0].texels.size() == t.texels.size()) {
+                if (!darker) {
+                    const std::uint32_t c = paint->second.tunic.value_or(0x30D040u);
+                    const auto scaled = [](std::uint32_t v) {
+                        return static_cast<std::uint32_t>(static_cast<float>(v & 0xFF) * kDarkScale + 0.5f);
+                    };
+                    darker = TunicPainted(green, scaled(c >> 16) << 16 | scaled(c >> 8) << 8 | scaled(c));
+                }
+                if (!darker->empty() && (*darker)[0].texels.size() == t.texels.size()) t.texels = (*darker)[0].texels;
+            }
             out.push_back(std::move(t));
         }
     }

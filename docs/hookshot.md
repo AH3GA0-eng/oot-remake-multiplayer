@@ -165,6 +165,32 @@ Checked on the game's own files, in memory: each layout's 40 panes become 41 and
 - Seen in a run (2026-11-18, the probe): both screens update once a frame, on several of the game's threads; R on Items asks 5, the page follows after the slide; the strip's mode is 1 in the Plus menu.
 
 
+### The - menu's tabs and Character Select's Customize (0.11.9)
+
+One home per thing (the owner, 0.11.9): the - menu holds Character Select's **Characters** page (its picker, shipped
+with the kit), then co-op's **Multiplayer**, **Lobby** (the online Find / Host / Join) and **Mods** tabs; Customize is
+Character Select's own Customize screen showing co-op's customization. Not run in a game yet (the lanes' rc.7 has no
+patch 0030); the check list is in coord's reports/ui-tabs-0119.md.
+
+- **The pack** (`pause_menu.py add_tab`): `MenuOverlay_00` gets `Pa_Category_04..06`, copies of the fourth tab one game
+  step apart after it, stored hidden, their words in `LayoutMsg/MenuOverlay_00` ("Multiplayer", "Lobby", "Mods"). The
+  strip's set-up counts its `Pa_Category_%02d` parts up to the first missing, so it makes tab objects for them.
+- **The tabs** (`Page`, `coop_pause_tab.cpp`): R on Map (the - menu's last game tab) goes to Multiplayer, R / L step
+  among ours, L off the first is Map again, each with the game's tab sound (`mc_TabToRight` / `mc_TabToLeft`, played by
+  the module on the strip); while one shows, its page has the pad but B, + and -. The module fills ours as - tabs
+  (`kTabFill`), lights them (`kTabLight`) and keeps them one step after the - menu's last shown tab through the strip's
+  animation (`FollowMinus`: slot 3 with Character Select's header, else slot 2). Off unless `COOP_TEST_MINUS_TABS=1`
+  until the R1 probe (`COOP_TEST_SCREEN_PROBE=1`, autotest scenario `ui-minus-probe`) shows which screen can draw their
+  pages.
+- **Customize** (`coop_snail_custom.h`): X on the Characters page opens his `CharacterCustomize_00` screen as he made
+  it; co-op writes its rows into it (the six options a page of co-op's look: Link, Shields, Swords, Boots and
+  gauntlets; ZL / ZR step a colour, A the any-colour mixer, Y the next page) through placeholder messages the kit adds
+  to his message file at its start (`merge_tables.py`, `Coop_Custom_00..12`). His own options are held at 0 and his
+  colour code is not used.
+- **Co-op's HUD under the menus** (row 199): the minimap marks and the other players' blocks wait while the tab strip
+  is open (`CoopPauseTab::GameMenuUp`), any page of either menu, a mod's page too; before, they hid only when patch
+  0018 saw a screen with the mouse, which Character Select's Characters page never has.
+
 ### Customize Link (a button on System)
 
 System's third button of ours (the pack's `Pa_Button_07`, above Multiplayer) opens the Multiplayer page straight on Settings and look's Customize page, Link beside it (`Page::OpenedFrom` 2, `TakeCustomizeOpen`). B goes back step by step (a colour's editor, the list, the rows), and from the rows to System, the cursor on Customize Link again (`LeaveToButton`). An older pack has no such button: the module logs "Customize Link not in the pack" and the page is reached through Multiplayer as before.

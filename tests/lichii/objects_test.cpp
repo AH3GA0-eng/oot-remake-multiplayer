@@ -4352,7 +4352,8 @@ TEST_CASE("objects: a boss off the walk reads by its last life and its delete re
     CHECK(BossAliveKept({}, kGanon, last) == std::optional<bool>(true));
     // Back on the walk (a new reading): as read.
     CoopObjects::NoteBossLives({boss}, last);
-    CHECK_FALSE(last.at("Enemy_DungeonBoss_PhantomGanon").removed);
+    REQUIRE(last.at("Enemy_DungeonBoss_PhantomGanon").size() == 1);
+    CHECK_FALSE(last.at("Enemy_DungeonBoss_PhantomGanon").front().removed);
     // His death is read at life 0 while it runs; deleted after it: dead, before and after its delete request.
     boss.life = coop::protocol::ObjectLife{0, 42};
     CoopObjects::NoteBossLives({boss}, last);
@@ -4364,6 +4365,46 @@ TEST_CASE("objects: a boss off the walk reads by its last life and its delete re
     Seen unread = boss;
     unread.life.reset();
     CHECK_FALSE(BossAliveKept({unread}, kGanon, last).has_value());
+}
+
+TEST_CASE("objects: row 191: bodies of one name are read each by its own address (Gohma's eggs)") {
+    // Geno's four-player run: egg 0x1065043e00 at life 0 beside a new egg at life 1 logged its death on four
+    // walks, because both took turns in the one reading kept for their name.
+    using CoopObjects::BossLifeOf;
+    CoopObjects::BossLives last;
+    Seen dead = Chest(0x3e00, 0);
+    dead.name = "Enemy_DungeonBoss_Gohma_Egg";
+    dead.life = coop::protocol::ObjectLife{1, 1};
+    Seen fresh = Chest(0x9d98, 0);
+    fresh.name = dead.name;
+    fresh.life = coop::protocol::ObjectLife{1, 1};
+    CoopObjects::NoteBossLives({dead, fresh}, last);
+    dead.life = coop::protocol::ObjectLife{0, 1};
+    int deaths = 0;
+    for (int walk = 0; walk < 4; ++walk) {
+        for (const Seen* s : {&dead, &fresh}) {  // NoteBosses' death line: by the body's own last reading
+            const auto* was = BossLifeOf(last, s->name, s->address);
+            deaths += s->life->life <= 0 && (was == nullptr || was->life > 0) ? 1 : 0;
+        }
+        CoopObjects::NoteBossLives({dead, fresh}, last);
+    }
+    CHECK(deaths == 1);
+    REQUIRE(BossLifeOf(last, dead.name, 0x9d98));
+    CHECK(BossLifeOf(last, dead.name, 0x9d98)->life == 1);
+    CHECK(BossLifeOf(last, dead.name, 0x1) == nullptr);
+    CHECK(BossLifeOf(last, "Enemy_DungeonBoss_Gohma", 0x3e00) == nullptr);
+    // A deleted body's reading ends with the next new body of its name; a live one's stays.
+    CoopObjects::NoteBossRemoved(0x3e00, last);
+    Seen third = fresh;
+    third.address = 0x5948;
+    CoopObjects::NoteBossLives({fresh, third}, last);
+    CHECK(BossLifeOf(last, dead.name, 0x3e00) == nullptr);
+    CHECK(last.at(dead.name).size() == 2);
+    // A boss of one body made again at another address after its delete: the new body is the reading.
+    constexpr std::array<std::string_view, 1> kEgg{"Enemy_DungeonBoss_Gohma_Egg"};
+    CoopObjects::NoteBossRemoved(0x9d98, last);
+    CoopObjects::NoteBossRemoved(0x5948, last);
+    CHECK(CoopObjects::BossAliveKept({}, kEgg, last) == std::optional<bool>(true));  // removed alive
 }
 
 TEST_CASE("objects: a boss's death is read only at life 0, never from a body not read here (G2 review)") {
@@ -6904,6 +6945,36 @@ TEST_CASE("objects: the real hit goes everywhere: copy's DAMAGE, the owner's rep
     CHECK(step.writes[0].record == std::optional<proto::HitRecord>(rec));
 }
 
+TEST_CASE("objects: a boss copy's stand-in hit shows again after the owner's life went back up (a refill)") {
+    // Review of 1e000584 (m1): the mark of the last stand-in hit was never dropped, so after a boss's refill no hit
+    // showed on the copy until the owner's life fell below the life before the refill.
+    const std::string kBoss = "Enemy_DungeonBoss_Gohma";
+    Sync copy;
+    copy.SetHurt(true);
+    Tick(copy, 0, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)});
+    const proto::ObjectId id = *copy.IdOf(0x100);
+    Own(copy, id, 2, 1);
+    proto::ObjectSample s;
+    s.player_number = 2;
+    s.id = id;
+    s.epoch = 1;
+    s.state.life = proto::ObjectLife{9, 21};
+    copy.Receive(s);
+    REQUIRE(Tick(copy, 100 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}).writes.size() == 1);
+    s.state.life = proto::ObjectLife{21, 21};  // the owner's boss refilled
+    copy.Receive(s);
+    CHECK(Tick(copy, 13000 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}).writes.empty());
+    s.state.life = proto::ObjectLife{17, 21};  // its first hit after: above the old mark of 9, shown all the same
+    copy.Receive(s);
+    CHECK(Tick(copy, 26000 * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}).writes.size() == 1);
+    int again = 0;
+    for (int i = 1; i <= 5; ++i) {  // and once only, as before
+        copy.Receive(s);
+        again += static_cast<int>(Tick(copy, (26000 + 600 * i) * kMs, {Enemy(0x100, 0x11, 21, 0.0f, kBoss)}).writes.size());
+    }
+    CHECK(again == 0);
+}
+
 TEST_CASE("objects: a boss copy replays the owner's stand-in hit once per drop of its life, not every sample") {
     // Four players, 2026-11-20: her game refused the replay, every later sample asked again, and a copy of Gohma
     // took about 690 refused hits in one fight, reacting to each.
@@ -7498,4 +7569,107 @@ TEST_CASE("objects: row 178, the copies' fall line is the owner's fall guard's")
     CHECK(CoopObjects::IsBoss("Enemy_DungeonBoss_PhantomGanon"));
     CHECK(CoopObjects::IsBoss("Enemy_MiddleBoss_Poe_Meg"));
     CHECK_FALSE(CoopObjects::IsBoss("Enemy_DungeonBoss_BongoBongo_LeftHand"));  // a part follows its root
+}
+
+// Player report 200 (Gerudo Fortress): the other player beat the jail guard while we were in the outdoor prison;
+// our copy of their guard died with them and our game ran its own defeat event, which warped our Link into the
+// cell's room below (under the map). A copy of another game's encounter now never dies by its own death here, near
+// or far: its owner's kill deletes it (outside a dungeon).
+TEST_CASE("objects: report 200, a copy of another game's encounter goes without a death when its owner kills it") {
+    using CoopObjects::CopyGoesWithoutDeath;
+    CHECK(CopyGoesWithoutDeath("Enemy_MiddleBoss_GerudoThief", false));
+    CHECK(CopyGoesWithoutDeath("Enemy_MiddleBoss_GerudoThief_04", false));
+    CHECK(CopyGoesWithoutDeath("Enemy_Wolfos", false));
+    CHECK_FALSE(CopyGoesWithoutDeath("Enemy_MiddleBoss_GerudoThief", true));  // a dungeon: as before
+    CHECK_FALSE(CopyGoesWithoutDeath("Enemy_DungeonBoss_Gohma", false));      // a boss: the boss sync's
+    CHECK_FALSE(CopyGoesWithoutDeath("Enemy_Skulltula_Gold", false));         // announced, not an encounter
+
+    constexpr const char* kGuard = "Enemy_MiddleBoss_GerudoThief";
+    const proto::ObjectId id{proto::ObjectKind::placed, 0, 0x5a17c0de0b1e0200ULL};
+    proto::ObjectSpawn relayed;
+    relayed.player_number = 1;
+    relayed.id = id;
+    relayed.actor = kGuard;
+    relayed.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+    const auto copy_of_theirs = [&](Sync& s, const std::string& scene) {
+        s.SetDeleteEvents(true);
+        s.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(s, 0, {}, 2, scene);
+        s.Receive(relayed);
+        Tick(s, 100 * kMs, {}, 2, scene);
+        Tick(s, 100 * kMs + kEncounterWaitUs, {}, 2, scene);
+        Tick(s, 100 * kMs + 2 * kEncounterWaitUs, {}, 2, scene);
+        const auto creates = s.Creates();
+        REQUIRE(creates.size() == 1);
+        s.Bind({{creates[0].key, 0x900}});
+        Tick(s, 200 * kMs + 2 * kEncounterWaitUs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2, scene);
+        REQUIRE(s.IdOf(0x900));
+        return creates[0].key;
+    };
+    const auto lethal_for = [](const Step& st, std::uint64_t address) {
+        return std::any_of(st.writes.begin(), st.writes.end(),
+                           [&](const LifeWrite& w) { return w.address == address && (w.life <= 0 || w.hurt > 0); });
+    };
+    const auto removed = [](const Sync& s, std::uint64_t address) {
+        const auto r = s.Removes();
+        return std::find(r.begin(), r.end(), address) != r.end();
+    };
+    const std::uint64_t t = 300 * kMs + 2 * kEncounterWaitUs;
+
+    // We stand right at it (in the fight): its owner's kill still gives our game no death; the copy goes.
+    for (const proto::Vec3 we : {proto::Vec3{0.0f, 0.0f, 0.0f}, proto::Vec3{1.0f, 20.0f, 0.0f}}) {
+        Sync b;
+        const auto key = copy_of_theirs(b, kScene);
+        b.SetPlayer(we);
+        b.Bind({{key, 0x900}});
+        Tick(b, t, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+        // The killing blow, as the life path asks before it gives one: not given.
+        CHECK(b.GoesWithoutDeath(0x900, t + 5 * kMs));
+        CHECK(b.GoneWithoutDeath(0x900));
+        b.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+        b.Bind({{key, 0x900}});
+        const Step gone = Tick(b, t + 10 * kMs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+        CHECK_FALSE(lethal_for(gone, 0x900));
+        CHECK(removed(b, 0x900));
+    }
+
+    // The owner's remove alone (no life asked first): deleted at once, no death.
+    {
+        Sync b;
+        const auto key = copy_of_theirs(b, kScene);
+        b.Bind({{key, 0x900}});
+        Tick(b, t, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+        b.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+        b.Bind({{key, 0x900}});
+        const Step gone = Tick(b, t + 10 * kMs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2);
+        CHECK(b.GoneWithoutDeath(0x900));
+        CHECK_FALSE(lethal_for(gone, 0x900));
+        CHECK(removed(b, 0x900));
+    }
+
+    // In a dungeon: as before (our game kills it itself; its room counts it).
+    {
+        Sync b;
+        const std::string dungeon = "ForestTemple";
+        const auto key = copy_of_theirs(b, dungeon);
+        b.Bind({{key, 0x900}});
+        Tick(b, t, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2, dungeon);
+        CHECK_FALSE(b.GoesWithoutDeath(0x900, t + 5 * kMs));
+        b.Receive(proto::ObjectRemove{1, id, 0, proto::RemoveReason::dead, {}});
+        b.Bind({{key, 0x900}});
+        Tick(b, t + 10 * kMs, {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2, dungeon);
+        CHECK_FALSE(b.GoneWithoutDeath(0x900));
+    }
+
+    // Our own enemy (no director copy) never goes so.
+    Sync own;
+    Tick(own, 0, {Enemy(0x700, 0x1234, 8, 1.0f, kGuard)}, 2);
+    CHECK_FALSE(own.GoesWithoutDeath(0x700, 10 * kMs));
+}
+
+TEST_CASE("boss turns: a sample's attack bits: read and attacking, read and between moves, not read (nothing)") {
+    using CoopObjects::AttackBits;
+    CHECK(AttackBits(true) == (proto::object_state::attack_read | proto::object_state::attacking));
+    CHECK(AttackBits(false) == proto::object_state::attack_read);
+    CHECK(AttackBits(std::nullopt) == 0);
 }

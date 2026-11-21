@@ -1674,6 +1674,7 @@ void Session::on_object_message(ConnectionId id, Connection& c, std::uint8_t cha
     const bool says_fight =
         sample->state.state && (*sample->state.state & object_state::in_fight) != 0;
     note_hold(o, sample->state, now_us);
+    note_attack(o, sample->epoch, sample->state, now_us);
     if (life_changed || says_fight) mark_fight(o, now_us);
     // The owner's own hit: its life fell with no DAMAGE from another player
     // just before (issue 150, boss_owner_hit_hold_us).
@@ -2153,6 +2154,23 @@ bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
   return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
 }
 
+void Session::note_attack(Object& o, std::uint16_t epoch, const ObjectState& sample, std::uint64_t now_us) {
+  const std::uint8_t bits = sample.state.value_or(0);
+  const bool read = (bits & object_state::attack_read) != 0;
+  const bool attacking = read && (bits & object_state::attacking) != 0;
+  if (epoch != o.attack_epoch) {
+    // A new owner (or its epoch): what the old one said is not this game's attack; no edge across the change.
+    o.attack_epoch = epoch;
+    o.attacking = attacking;
+    o.attack_read = read;
+    o.attack_ended_at = 0;
+    return;
+  }
+  if (read && o.attack_read && o.attacking && !attacking) o.attack_ended_at = stamp(now_us);
+  o.attacking = attacking;
+  o.attack_read = read;
+}
+
 std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, std::uint64_t now_us) {
   if (config_.boss_turn_us == 0 || o.root) return std::nullopt;
   if (!in_fight(o, now_us)) {
@@ -2162,13 +2180,21 @@ std::optional<ConnectionId> Session::next_turn(Object& o, ConnectionId owner, st
   if (o.fight_began == 0) o.fight_began = stamp(now_us);
   const std::uint64_t turn_began = std::max(o.fight_began, o.changed_at);
   if (now_us - turn_began < config_.boss_turn_us) return std::nullopt;
+  // Only right where its own attack ended in its owner's game (boss_turn_edge_us): never in an attack or in a
+  // reaction's tail (Phantom Ganon's SmallDamage into 'Run'), never in a phase with no attack, and never for an
+  // owner that reads no attacks. An edge older than the turn (the old owner's) does not count.
+  if (!o.attack_read || o.attacking || o.attack_ended_at == 0 || o.attack_ended_at < turn_began ||
+      now_us - o.attack_ended_at > config_.boss_turn_edge_us) {
+    return std::nullopt;
+  }
   // A calm moment: nobody hit it lately, and it is not dying or in a cutscene.
   if (owner_hit_lately(o, now_us)) return std::nullopt;
   if (o.hit_at != 0 && now_us - o.hit_at < config_.boss_turn_quiet_us) return std::nullopt;
   if (o.last_state) {
     if (o.last_state->life && o.last_state->life->life <= 0) return std::nullopt;
     if (const auto& a = o.last_state->animation;
-        a && (coop::protocol::anim::IsDeath(a->name) || coop::protocol::anim::IsEvent(a->name))) {
+        a && (coop::protocol::anim::IsDeath(a->name) || coop::protocol::anim::IsEvent(a->name) ||
+              coop::protocol::anim::IsStun(a->name))) {  // nor in its stun (its chance time: a phase's own)
       return std::nullopt;
     }
   }
@@ -2243,7 +2269,10 @@ void Session::note_hold(Object& o, const ObjectState& sample, std::uint64_t now_
   // lock there could hand a dying boss over mid-death (boss-die-0116; the game's own stall check has the same rule,
   // CoopBossNative::StallJudged).
   const bool judged = animation && life && life->life > 0 && !coop::protocol::anim::IsDeath(animation->name) &&
-                      !coop::protocol::anim::IsEvent(animation->name);
+                      !coop::protocol::anim::IsEvent(animation->name) &&
+                      // Row 189: nor its wait before the fight, as the hook's check (StallJudged's 'Sleep', and
+                      // Table::SetNotBegun: its owner's game has not begun the fight).
+                      animation->name != "Sleep" && !(o.owner && o.unready.contains(*o.owner));
   if (key != o.hold_key || !judged) {
     o.hold_key = std::move(key);
     o.hold_since = now_us;
@@ -2575,7 +2604,14 @@ void Session::run_ownership(std::uint64_t now_us) {
       if (o.fish) {
         fish_owner(oid, o, owner, true, now_us);  // a hooked fish waits for it
       } else if (auto next = best_other(o, owner, true, now_us)) {
-        ask_handover(oid, o, *next, now_us);
+        // Row 189: a boss in its fight (its owner's game ready) never goes to a game whose boss has not begun
+        // it (unready: every game's boss would go back to its wait before the fight). It waits for its owner,
+        // or for a ready game; an owner that leaves still gives it on (next_owner: nobody else has it).
+        if (o.boss && !o.unready.contains(owner) && o.unready.contains(*next)) {
+          ++stats_.boss_kept_from_unready;
+        } else {
+          ask_handover(oid, o, *next, now_us);
+        }
       }
       continue;
     }
@@ -2606,6 +2642,14 @@ void Session::run_ownership(std::uint64_t now_us) {
     if (o.boss) {
       if (auto next = next_turn(o, owner, now_us)) {
         ++stats_.boss_turns;
+        // One line per turn (proof runs read it: a turn passes only at "its attack ended").
+        const auto from = connections_.find(owner);
+        const auto to = connections_.find(*next);
+        if (from != connections_.end() && to != connections_.end()) {
+          log("boss turns: " + (o.actor.empty() ? std::string("a boss") : o.actor) + " of player " +
+              std::to_string(from->second.number) + ": its attack ended: to player " +
+              std::to_string(to->second.number) + " (turn " + std::to_string(stats_.boss_turns) + ")");
+        }
         ask_handover(oid, o, *next, now_us);
         continue;
       }

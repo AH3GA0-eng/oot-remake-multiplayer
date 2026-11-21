@@ -3,6 +3,7 @@
 #include "coop/protocol/animation_words.hpp"
 #include "coop_sensor_claim.h"
 #include "coop_bomb_share.h"
+#include "coop_dungeon.h"
 #include "coop_enemy_shots.h"
 #include "coop_guard.h"
 #include "coop_world.h"
@@ -132,13 +133,35 @@ std::optional<bool> BossAlive(const std::vector<Seen>& seen, std::span<const std
 
 void NoteBossLives(const std::vector<Seen>& walk, BossLives& last) {
     for (const Seen& s : walk) {
-        if (s.life) last[s.name] = BossLifeSeen{s.address, s.life->life, false};
+        if (!s.life) continue;
+        auto& bodies = last[s.name];
+        const auto it = std::find_if(bodies.begin(), bodies.end(),
+                                     [&](const BossLifeSeen& b) { return b.address == s.address; });
+        if (it != bodies.end()) {
+            *it = BossLifeSeen{s.address, s.life->life, false};
+        } else {
+            // A new body of that name: the readings of deleted ones are over (the newest body speaks for the
+            // name, as one reading per name did).
+            std::erase_if(bodies, [](const BossLifeSeen& b) { return b.removed; });
+            bodies.push_back(BossLifeSeen{s.address, s.life->life, false});
+        }
     }
 }
 
+const BossLifeSeen* BossLifeOf(const BossLives& last, std::string_view name, std::uint64_t address) {
+    const auto it = last.find(name);
+    if (it == last.end()) return nullptr;
+    for (const BossLifeSeen& b : it->second) {
+        if (b.address == address) return &b;
+    }
+    return nullptr;
+}
+
 void NoteBossRemoved(std::uint64_t address, BossLives& last) {
-    for (auto& [name, seen] : last) {
-        if (address != 0 && seen.address == address) seen.removed = true;
+    for (auto& [name, bodies] : last) {
+        for (BossLifeSeen& seen : bodies) {
+            if (address != 0 && seen.address == address) seen.removed = true;
+        }
     }
 }
 
@@ -155,12 +178,14 @@ std::optional<bool> BossAliveKept(const std::vector<Seen>& walk, std::span<const
     for (const std::string_view body : bodies) {
         const auto it = last.find(body);
         if (it == last.end()) continue;  // never read here
-        if (it->second.life <= 0) {
-            died = true;
-        } else if (!it->second.removed) {
-            return true;  // away: alive
-        } else {
-            removed_alive = true;
+        for (const BossLifeSeen& seen : it->second) {  // (each body of that name)
+            if (seen.life <= 0) {
+                died = true;
+            } else if (!seen.removed) {
+                return true;  // away: alive
+            } else {
+                removed_alive = true;
+            }
         }
     }
     if (died) return false;
@@ -178,7 +203,8 @@ bool BossReadDead(const std::vector<Seen>& walk, std::span<const std::string_vie
     }
     for (const std::string_view body : bodies) {
         const auto it = last.find(body);
-        if (it != last.end() && it->second.life <= 0) {
+        if (it != last.end() && std::any_of(it->second.begin(), it->second.end(),
+                                            [](const BossLifeSeen& seen) { return seen.life <= 0; })) {
             return true;
         }
     }
@@ -206,7 +232,7 @@ std::optional<bool> BossOurs(const std::vector<Seen>& walk, std::span<const std:
 }
 
 bool IsPreBattleAnimation(std::string_view name) {
-    return name == "Sleep" || name.starts_with("Pre_Battle_");
+    return coop::protocol::anim::IsPreBattle(name);
 }
 
 std::optional<bool> BossPreBattle(const std::vector<Seen>& seen, std::span<const std::string_view> bodies) {
@@ -492,6 +518,14 @@ bool EnemyBrainSwitch(std::string_view value) {
     return !value.empty() && value != "0";
 }
 
+std::uint8_t AttackBits(std::optional<bool> attacking) {
+    if (!attacking) {
+        return 0;
+    }
+    return static_cast<std::uint8_t>(proto::object_state::attack_read |
+                                     (*attacking ? proto::object_state::attacking : 0));
+}
+
 bool IsBossOrPart(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -664,6 +698,10 @@ bool IsLateEncounter(std::string_view name) {
     }
     // Twinrova's battle manager belongs to the boss fight (the boss sync).
     return name != "Enemy_KotakeKoumeBattleManager";
+}
+
+bool CopyGoesWithoutDeath(std::string_view name, bool dungeon) {
+    return !dungeon && IsLateEncounter(name);  // (a dungeon's rooms count their own kills: as before)
 }
 
 std::string_view AnimationBase(std::string_view name) {
@@ -1256,6 +1294,43 @@ bool Sync::OwnerSaysDead(std::uint64_t address) const {
     return it != objects_.end() && (it->second.dead_at != 0 || it->second.owner_life_zero);
 }
 
+bool Sync::GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us) {
+    const auto it = objects_.find(address);
+    if (it == objects_.end()) {
+        return false;
+    }
+    Object& o = it->second;
+    if (o.quiet_gone) {
+        return true;
+    }
+    if (!bound_.contains(address) || !IsLateEncounter(o.name)) {
+        return false;  // only a director's copy of another game's encounter (our own game made the others)
+    }
+    if (const auto own = owners_.find(o.id); own != owners_.end() && own->second.player == self_) {
+        return false;  // handed to us: ours to fight and to die here
+    }
+    if (!CopyGoesWithoutDeath(o.name, CoopDungeon::IsDungeonScene(scene_))) {
+        return false;
+    }
+    // Its look follows its owner's own death until the owner's OBJECT_REMOVE dead deletes it (dead_now there);
+    // kDeadGraceUs from now it goes anyway.
+    o.quiet_gone = true;
+    if (o.dead_at == 0) {
+        o.dead_at = now_us;
+    }
+    o.hit_sum = 0;
+    o.hit_place.reset();
+    o.hit_record.reset();
+    notes_.emplace_back("report 200: its owner killed it: our copy of their encounter goes without a death here (its "
+                        "death would run our game's own defeat event with our Link): " + o.name);
+    return true;
+}
+
+bool Sync::GoneWithoutDeath(std::uint64_t address) const {
+    const auto it = objects_.find(address);
+    return it != objects_.end() && it->second.quiet_gone;
+}
+
 std::vector<std::pair<std::uint64_t, std::string>> Sync::Owned() const {
     std::vector<std::pair<std::uint64_t, std::string>> out;
     for (const auto& [address, o] : objects_) {
@@ -1414,8 +1489,12 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
+    state.state = AttackBits(o.attacking);  // boss turns: its game's own Attack attribute
     if (o.own_event_until > now_us) {
-        state.state = proto::object_state::in_event;  // S2: our Link's event binds it
+        state.state = static_cast<std::uint8_t>(state.state.value_or(0) | proto::object_state::in_event);  // S2
+    }
+    if (state.state && *state.state == 0) {
+        state.state.reset();
     }
     return state;
 }
@@ -2073,6 +2152,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         o.slots = s.slots;
         o.bsa = s.bsa;
+        o.attacking = s.attacking;
         o.event_member = s.event_member;  // row 97
         o.sensor_in_area = s.sensor_in_area;  // row 138(8)
         if (s.hit_at) {
@@ -2460,6 +2540,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         o.animation = s->animation;
         o.slots = s->slots;
         o.bsa = s->bsa;
+        o.attacking = s->attacking;
         o.seen_at = now_us;
         o.name = s->name;
         o.breakable = CoopWorld::IsBreakable(s->name);
@@ -2660,7 +2741,7 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
     // life goes to its own Life step once (direct, never a write), which CoopBossNative lets end it
     // (review-boss-0114, at every boss; Gohma's own clamp may still hold her at 1).
     for (auto& [address, o] : objects_) {
-        if (o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBossOrPart(o.name) ||
+        if (o.quiet_gone || o.death_given || o.hurt_until != 0 || !o.life || *o.life <= 0 || !IsBossOrPart(o.name) ||
             !(o.dead_at != 0 || o.owner_life_zero) ||
             std::find(dying_.begin(), dying_.end(), o.name) == dying_.end()) {
             continue;
@@ -3605,6 +3686,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
                     // Row 175: it died here first (our hit, sent to its owner): its own death runs here and ends
                     // it (the room logic goes on from it); no write and no delete.
                     notes_.emplace_back("dead in its owner's game after our kill: ours runs its own death: " + o->name);
+                } else if (o != nullptr && (o->quiet_gone || (o->dead_at == 0 && GoesWithoutDeath(o->address, now_us)))) {
+                    o->dead_now = true;
+                    o->place_seen.reset();
+                    // Report 200: a copy of their encounter, killed by its owner: deleted now, no death here. Its kill
+                    // stays remembered (copy_killed_, above): an own one our logic makes later, when our Link walks
+                    // into that encounter itself, is that enemy already dead and dies there in our game (report 99).
                 } else if (o != nullptr && o->reacts && o->dead_at == 0) {
                     // Our game kills it itself (life 0 through the game), so
                     // its own kill counts: a room's enemy counter and shutter,
@@ -3735,6 +3822,12 @@ void Sync::Apply(std::uint8_t self, std::uint64_t now_us, std::vector<proto::Mes
             }
             const std::int32_t life = sample->state.life->life;
             o->owner_life_zero = life <= 0;
+            if (o->owner_life && life > *o->owner_life) {
+                // The owner's life went back up (a boss's refill for its next phase, Ganondorf's or Twinrova's; a
+                // new owner's higher count): the drops from here are new hits, each shown by its stand-in again.
+                // Kept, the old mark hid every hit of the refilled life down to the life before the refill.
+                o->boss_stand_in_life = 0;
+            }
             o->owner_life = life;
             const std::int32_t have = o->hurt_until != 0 ? o->hurt_target : *o->life;
             const bool holding =

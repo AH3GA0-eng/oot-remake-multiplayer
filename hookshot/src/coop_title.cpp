@@ -26,6 +26,7 @@
 #include "coop_pause.h"
 #include "coop_pause_files.h"
 #include "coop_pause_tab.h"
+#include "coop_problem_ask.h"
 #include "coop_runtime.h"
 #include "coop_save.h"
 #include "coop_title_menu.h"
@@ -630,8 +631,118 @@ void StepNative(void* ctx, std::uint64_t screen) {
     }
 }
 
+// After a crash, the ask to send /bugreport (coop_problem_ask.h): looked for once a run, at the first title the menu
+// steps (LICHII_COOP_PROBLEM_ASK=0: never); then one page on the title's own four buttons in the pack's live texts, as
+// co-op's pages are, until any press. Never in the way: co-op's own page on the title or the host's save loading by
+// itself shuts it, and an older pack (no live texts) never shows it.
+std::atomic<bool> g_ask{false};
+bool g_ask_looked = false;                 // (g_mutex)
+std::vector<std::string> g_ask_pending;    // (g_mutex) the game folder's records when it was looked for
+std::uint64_t g_ask_since = 0;             // (g_mutex) when it came up
+bool g_ask_focused = false;                // (g_mutex) OK has the title's cursor
+constexpr std::uint64_t kAskQuietMs = 700;   // presses this soon after it came up are the ones that brought the title
+
+std::filesystem::path AskFolder() {
+    return CoopIni().parent_path();   // (the game folder: Longshot's bug-reports beside longshot.exe)
+}
+
+void LookForAsk() {
+    {
+        std::lock_guard lock(g_mutex);
+        if (std::exchange(g_ask_looked, true)) return;
+    }
+    if (Env("LICHII_COOP_PROBLEM_ASK") == "0") return;
+    const std::filesystem::path folder = AskFolder();
+    std::vector<std::string> pending = CoopProblemAsk::PendingNames(folder);
+    const std::int64_t now_s =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto due = CoopProblemAsk::Due(pending, CoopProblemAsk::ReadAsked(folder), now_s);
+    if (!due) return;
+    {
+        std::lock_guard lock(g_mutex);
+        g_ask_pending = std::move(pending);
+        g_ask_since = NowMs(), g_ask_focused = false;
+    }
+    g_ask = true;
+    LOG_INFO(Core, "coop: title: the game crashed last time ({}): the title asks for /bugreport once", *due);
+}
+
+// `seen`: the player pressed on it (it is not asked again for these records); else co-op's page or a host save's load
+// took the title (asked again at the next start).
+void CloseAsk(bool seen) {
+    if (!g_ask.exchange(false)) return;
+    std::vector<std::string> pending;
+    {
+        std::lock_guard lock(g_mutex);
+        pending = std::move(g_ask_pending);
+        g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;   // (the title's own texts back on its buttons)
+        if (seen) g_sound = "button_decide";
+    }
+    if (seen && !CoopProblemAsk::WriteAsked(AskFolder(), CoopProblemAsk::AskedAfter(pending))) {
+        LOG_WARNING(Core, "coop: title: bug-reports\\coop-asked.txt could not be written: the ask may come again");
+    }
+    LOG_INFO(Core, "coop: title: the /bugreport ask {}", seen ? "seen and closed" : "shut (the title went to co-op)");
+}
+
+void StepAsk(void* ctx, std::uint64_t screen) {
+    const std::uint64_t layout = Read64(screen + kTitleLayout);
+    if (layout == 0) return;
+    bool apply = false, focus = false;
+    const char* sound = nullptr;
+    {
+        std::lock_guard lock(g_mutex);
+        const std::uint64_t now = NowMs();
+        if (now >= g_apply_next) apply = true, g_apply_next = now + 250;
+        focus = !std::exchange(g_ask_focused, true);
+        std::swap(sound, g_sound);
+    }
+    if (apply) StopBtnNum(ctx, layout, static_cast<float>(CoopTitleNative::kButtons));
+    bool ok = true;
+    for (int i = 0; i < CoopTitleNative::kButtons; ++i) {
+        ok = SetLiveText(ctx, layout, i, CoopI18n::Tr(CoopProblemAsk::kWords[static_cast<std::size_t>(i)])) && ok;
+    }
+    if (!ok) {   // (an older pack: no page of ours on the title, so no ask)
+        CloseAsk(false);
+        return;
+    }
+    if (focus) {
+        if (const std::uint64_t button = TitleButton(screen, CoopTitleNative::kButtons - 1); button != 0) {
+            GameCall3(ctx, Main(kSetFocus), screen, button, 0);
+        }
+    }
+    if (sound != nullptr) {
+        if (const std::uint64_t at = g_api->scratch(ctx, sound, std::strlen(sound) + 1); at != 0) {
+            GameCall3(ctx, Main(kScreenSound), screen, at);
+        }
+    }
+}
+
+// The pad while the ask shows: the title gets none of it; A, B or + (a mouse click is an A) closes it.
+std::uint64_t g_ask_last = 0;   // (g_mutex)
+std::uint64_t AskPad(std::uint64_t buttons) {
+    constexpr std::uint64_t kPlus = 1ull << 10;
+    bool close = false;
+    {
+        std::lock_guard lock(g_mutex);
+        const std::uint64_t down = buttons & ~g_ask_last;
+        g_ask_last = buttons;
+        close = (down & (kA | kB | kPlus)) != 0 && NowMs() - g_ask_since >= kAskQuietMs;
+    }
+    if (close) CloseAsk(true);
+    return 0;
+}
+
 void StepMenu(void* ctx, std::uint64_t screen) {
     if (!g_menu.load() || ctx == nullptr || !HasScratch()) return;
+    if (g_native_page.load() < 0 && g_auto_load_until.load() == 0) LookForAsk();
+    if (g_ask.load()) {
+        if (g_native_page.load() >= 0 || g_auto_load_until.load() != 0 || g_auto_press_ms.load() != 0) {
+            CloseAsk(false);
+        } else {
+            StepAsk(ctx, screen);
+            return;
+        }
+    }
     if (g_native_page.load() >= 0) {
         StepNative(ctx, screen);
         return;
@@ -926,6 +1037,7 @@ void OnTitle(void* ctx, std::uint64_t screen, int event) {
 // Multiplayer and the submenu's, whose first is Host in the game's Continue place. g_mutex.
 bool OnCoopRow(int focused) {
     if (g_native_page.load() >= 0) return true;   // (co-op's page on the title's buttons: every button is a co-op row)
+    if (g_ask.load()) return true;                // (the /bugreport ask on them: its OK is not the player's file pick)
     if (g_menu.load()) {
         const CoopTitleMenu::TitleMenuLook look = CoopTitleMenu::MenuFor(g_any_save, g_sub, g_one_start);
         return focused < 0 || static_cast<std::size_t>(focused) >= look.count ||
@@ -1232,6 +1344,9 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) {
         CoopPause::CloseNative();
         LOG_INFO(Core, "coop: title: the host's save is in: co-op's page closed for its Continue");
         return 0;
+    }
+    if (g_ask.load() && g_menu.load() && g_native_page.load() < 0) {   // (after a crash: the /bugreport ask)
+        if (TitleUp()) return AskPad(buttons);
     }
     if (g_native_page.load() >= 0 && g_menu.load()) {
         if (TitleUp()) return NativePad(buttons, stick);

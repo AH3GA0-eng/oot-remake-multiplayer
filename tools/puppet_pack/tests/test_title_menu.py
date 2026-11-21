@@ -208,5 +208,18 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(sizes, before)
 
 
+class LanguageTest(unittest.TestCase):
+    def test_chinese_rows_and_the_live_placeholders(self):
+        # (#307's rows per language, with #308's live texts in every language's file)
+        cn = dict(tm.rows_for("Mals/CNzh.Product.110.sarc.zs"))
+        self.assertEqual(cn["0100"], "创建房间")
+        self.assertEqual(dict(tm.rows_for("Mals/TWzh.Product.110.sarc.zs"))["0104"], "連線")
+        en = dict(tm.rows_for("Mals/USen.Product.110.sarc.zs"))
+        self.assertEqual(en["0100"], "Host")
+        for rows in (cn, en):
+            for label, _ in tm.LIVE:
+                self.assertIn(label, rows)
+
+
 if __name__ == "__main__":
     unittest.main()

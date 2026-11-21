@@ -388,6 +388,24 @@ function Get-GpuSpeedHint([scriptblock]$Query = { Get-CimInstance Win32_VideoCon
     return "Only built-in graphics found ($($builtIn -join ', ')). If the game runs slowly, click the 60 FPS button at the bottom of the emulator window to switch to 30 FPS (SETUP.md, `"Low frame rate`")."
 }
 
+# Steam Input outside Steam (player report 202, docs/setup.md "If something goes wrong"): with Steam open and the game
+# not started by Steam, Steam gives a Steam Controller (or any pad Steam Input runs) its Desktop layout, a mouse and
+# keyboard, so the menus seem to work and play does not. Steam sets SteamGameId, SteamAppId, SteamClientLaunch or
+# SteamOverlayGameId for what it starts, a non-Steam game too, and Start Squadala.bat's windows inherit them. Returns
+# the warning lines, or nothing (started by Steam, Steam not running, or a check that fails). Never blocks.
+# $Env: the environment's names (tests); $SteamRunning: $true while Steam runs (tests).
+function Get-KitSteamInputHint([hashtable]$Env = $null, [scriptblock]$SteamRunning = {
+        [bool](Get-Process -Name 'steam' -ErrorAction SilentlyContinue) }) {
+    foreach ($n in 'SteamGameId', 'SteamAppId', 'SteamClientLaunch', 'SteamOverlayGameId') {
+        $v = if ($null -ne $Env) { $Env[$n] } else { [Environment]::GetEnvironmentVariable($n) }
+        if ("$v".Trim()) { return }
+    }
+    try { if (-not (& $SteamRunning)) { return } } catch { return }
+    return @(
+        'Steam is open, but this game was not started from Steam. A Steam Controller (or a pad Steam Input runs) then works as a mouse and keyboard, not as a controller.',
+        '  To play with it: start Start Squadala.bat from Steam (add it as a non-Steam game) with a gamepad controller layout, or turn Steam Input off for that pad (SETUP.md, "If something goes wrong").')
+}
+
 # The pack tool's own hash, as tools\puppet_pack\build.py (tool_hash) writes it into
 # coop_puppet.json: SHA-256 over "<name>:<sha256 of the file>`n" for each *.py in the folder
 # (not tests\), names in ordinal order. Nothing when the folder is not there.
@@ -1202,7 +1220,7 @@ function Install-KitOotrr([string]$Kit, [string]$ExeDir, [string]$Downloads = ''
         if (-not $why) {
             if (Test-Path -LiteralPath $new) { Remove-Item -LiteralPath $new -Recurse -Force -ErrorAction Stop }
             New-Item -ItemType Directory -Force -Path $new | Out-Null
-            # (the zip holds one folder, OOTRR-<version>-windows-x64\: ootrr.exe, LICENSE, NOTICE, README.md)
+            # (the zip holds one folder, OOTRR-<version>-windows-x64\, since 0.8.1 ...-windows-x64-portable\: ootrr.exe, LICENSE, NOTICE, README.md)
             & "$env:SystemRoot\System32\tar.exe" -x -f $zip -C $new --strip-components=1 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) { $why = "unpacking $($op.windows) failed (tar $LASTEXITCODE)" }
             else { $why = Test-KitOotrrRuns (Join-Path $new 'ootrr.exe') }

@@ -30,7 +30,7 @@ constexpr std::string_view kNames[] = {
     "Dm_ForestTemple_0015", "Dm_ForestTemple_0016", "Dm_ForestTemple_0017", "Dm_ForestTemple_0020",
     "Dm_ForestTemple_0021", "Dm_ForestTemple_0022", "Dm_ForestTemple_0031", "Dm_ForestTemple_0032",
     "Dm_GanonCastle_0000", "Dm_GerudoValley_0000", "Dm_GerudoValley_0010", "Dm_GerudoValley_0020",
-    "Dm_Gerudo_0000", "Dm_Gerudo_0010", "Dm_Gerudo_0020", "Dm_Gerudo_0025",
+    "Dm_Gerudo_0000", "Dm_Gerudo_0025",  // (not 0010, 0020: player report 200, coop_shared_scenes.h)
     "Dm_Gerudo_0030", "Dm_Goron_0000", "Dm_Goron_0010", "Dm_Goron_0020",
     "Dm_Goron_0025", "Dm_Goron_0028", "Dm_Goron_0030", "Dm_Goron_0040",
     "Dm_Goron_0045", "Dm_Graveyard_0000", "Dm_Graveyard_0010", "Dm_Graveyard_0030",
@@ -179,6 +179,10 @@ bool Joiner::StarterStays(const Pending& p, const Here& here) {
            std::find(here.in_scene.begin(), here.in_scene.end(), p.player) != here.in_scene.end();
 }
 
+bool StackedScene(std::string_view scene) {
+    return scene.starts_with("GerudoFortress");
+}
+
 bool NotNearYet(std::string_view why) {
     return why == "we are in another scene" || why.starts_with("too far") ||
            why == "they are in another room of this dungeon" || why.starts_with("their room in this dungeon");
@@ -230,6 +234,13 @@ std::string Joiner::Why(const Pending& p, const Here& here, bool played) const {
         if (d > kRoomM) {
             char text[64];
             std::snprintf(text, sizeof text, "too far: %.0f m from them", d);
+            return text;
+        }
+        if (!here.dungeon && StackedScene(here.scene) && std::fabs(dy) > kJoinRiseM) {
+            // Report 200: on another level of the fortress (a floor between us): its warp would move our Link
+            // through it.
+            char text[64];
+            std::snprintf(text, sizeof text, "too far: %.0f m %s them", std::fabs(dy), dy > 0 ? "above" : "below");
             return text;
         }
         if (here.dungeon) {

@@ -713,6 +713,20 @@ struct Host {
 // accessory (kind 14), not as hand armor (docs/puppet.md).
 inline constexpr std::string_view kChildBraceletPrefix = "Armor_Child_Gauntlet_";
 
+// The only head pieces a puppet wears: the masks, `Armor_Child_Mask_*` (the
+// game's ten; there are no adult masks, and the base `Armor_Mask_Base` is none).
+// PlayerStatus.EquipHeadArmor also names the Lens of Truth once a player has
+// it: `Armor_GlassTruth`, the age-less base actor whose model is the ADULT
+// glasses with no animation or physics for their hanging lenses. The game
+// never draws that name on Link (it wears Armor_Child_/Adult_GlassTruth only
+// while the Lens is in use). Worn and shown on a puppet it drew the adult
+// glasses' unposed mesh as orange spikes from the head and shoulders and a
+// long streak along the ground on every puppet (row 197; 0.11.6 to 0.11.8).
+constexpr bool is_drawn_head(std::string_view name) {
+  constexpr std::string_view kPrefix = "Armor_Child_Mask_";
+  return name.size() > kPrefix.size() && name.starts_with(kPrefix);
+}
+
 // What a player wears and holds (docs/puppet.md, "Equipment"). Each name is
 // the game's actor name of that piece, for example "Weapon_Sword_Kokiri" or
 // "Armor_Adult_Goron"; an empty name is nothing in that slot. A field that is
@@ -857,6 +871,13 @@ inline constexpr std::uint8_t asleep = 1u << 2;
 // game logic (an Enemy_: a Deku Scrub) then keeps that logic; only the
 // event's result reaches it (its flags). An older build ignores the bit.
 inline constexpr std::uint8_t in_event = 1u << 3;
+// Boss turns (0.11.8): the owner's enemy is in an attack, read from its game's own action verb attribute Attack
+// (the attributes of its BSA's current action verbs, as the game's own method main+0x507be0 reads them). The server
+// hands the enemy to the next player at an attack end (Session::next_turn). An older build ignores the bit.
+inline constexpr std::uint8_t attacking = 1u << 4;
+// The sender reads attacks (the bit above means something): set on every sample of an enemy whose BSA it reads.
+// Turns only for enemies whose owner sets it, so an older owner's boss keeps its one owner.
+inline constexpr std::uint8_t attack_read = 1u << 5;
 }  // namespace object_state
 
 // Issue 150 (protocol 10): one more AS slot of the owner's actor than slot 0

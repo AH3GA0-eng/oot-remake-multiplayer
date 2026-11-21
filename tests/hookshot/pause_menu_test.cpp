@@ -1646,19 +1646,6 @@ TEST_CASE("pause tab: Browse games: Refresh asks for the list again and empties 
     CHECK(Names(m).back() == "Looking for games...");
 }
 
-TEST_CASE("pause tab: Settings: Original game, A flips it and asks for a save") {
-    Menu m;
-    m.Show(CoopTitleMenu::Options{});
-    m.Open(Page::kSettings);
-    SelectRow(m, "Original game");
-    CHECK_FALSE(m.options().original_game);
-    m.Press(Input::kDecide);
-    CHECK(m.options().original_game);
-    const auto r = m.TakeRequest();
-    REQUIRE(r.has_value());
-    CHECK(r->kind == Request::Kind::kSave);
-}
-
 TEST_CASE("pause tab: Customize Link with a Character Select character picked says Link's colours wait for Link") {
     Menu m;
     CoopTitleMenu::Options o;
@@ -1674,4 +1661,54 @@ TEST_CASE("pause tab: Customize Link with a Character Select character picked sa
     CHECK(m.view().rows[0].name == "Your name");   // the rows stay as they are
     m.SetCharacter(false);
     CHECK(m.view().help == own);
+}
+
+TEST_CASE("pause tab: Settings: A, Left and Right on Original game and Player list (d501ce95: A did nothing on Original)") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    REQUIRE(RowNamed(m.view(), "Original game") != nullptr);
+    CHECK(RowNamed(m.view(), "Original game")->kind == RowKind::kToggle);
+    CHECK_FALSE(RowNamed(m.view(), "Original game")->on);   // (off unless turned on)
+    SelectRow(m, "Original game");
+    CHECK(m.view().help.find("as it came") != std::string::npos);
+    m.Press(Input::kDecide);   // A flips it, as Left and Right set it
+    CHECK(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    CHECK(RowNamed(m.view(), "Original game")->on);
+    m.Press(Input::kDecide);
+    CHECK_FALSE(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kRight);
+    CHECK(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+    m.Press(Input::kLeft);
+    CHECK_FALSE(m.options().original_game);
+    CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+
+    SelectRow(m, "Player list");
+    CHECK(RowNamed(m.view(), "Player list")->value == "Auto");   // (the default)
+    for (const char* next : {"Full", "Compact", "Off", "Auto"}) {   // A steps on, round
+        m.Press(Input::kDecide);
+        CHECK(m.TakeRequest()->kind == Request::Kind::kSave);
+        CHECK(RowNamed(m.view(), "Player list")->value == next);
+    }
+    m.Press(Input::kLeft);   // Left steps back
+    CHECK(RowNamed(m.view(), "Player list")->value == "Off");
+    CHECK(m.options().hud_size == "off");
+    m.Press(Input::kRight);
+    CHECK(m.options().hud_size == "auto");
+}
+
+TEST_CASE("pause tab: Settings: Original game, A flips it and asks for a save") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.Open(Page::kSettings);
+    SelectRow(m, "Original game");
+    CHECK_FALSE(m.options().original_game);
+    m.Press(Input::kDecide);
+    CHECK(m.options().original_game);
+    const auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kSave);
 }
