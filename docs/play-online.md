@@ -64,6 +64,9 @@ everyone with the kit, and they join with one press, no password. Your choice is
 `coop-options.ini`, which Host.bat uses too). While you host, the Host page says which kind of game it is; a change
 applies at your next Host.
 
+**The official public game.** On the kit's own relay, **Official public game** is always first in Public
+games: an always-on server with no host game (the first player in hosts its progress). See docs/official-game.md.
+
 **Join a public game.** Open **Browse games** (the Join page) or the **Lobby** tab while you are not in a game: **Public
 games** lists the games on the game list (the kit's relay). A public game says *Public game, Players 2/8*: press it to
 join. A private one says *Needs the host's password*: pressing it opens Join with the room typed in and the password

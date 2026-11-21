@@ -6,6 +6,7 @@
 #include <string>
 
 #include "coop_lobby_tab.h"
+#include "coop_room_list.h"
 
 using namespace CoopLobbyTab;
 using coop::protocol::LobbyActionKind;
@@ -363,4 +364,31 @@ TEST_CASE("lobby tab: Resync from host is a guest's row only, and asks once per 
     solo.can_resync = true;
     t.Set(solo);
     CHECK_FALSE(Has(t.view(), "Resync from host"));
+}
+
+TEST_CASE("public games: the official game (room squadala, public, on the kit's own relay) is first and marked") {
+    using CoopRoomList::Room;
+    const auto room = [](const char* name, bool pub) {
+        Room r;
+        r.room = name;
+        r.is_public = pub;
+        return r;
+    };
+    std::vector<Room> rooms{room("kokiri", false), room("forest-4821", true), room("squadala", true),
+                            room("zora", true)};
+    CoopRoomList::Order(rooms, true);
+    REQUIRE(rooms.size() == 4);
+    CHECK(rooms[0].room == "squadala");
+    CHECK(rooms[0].official);
+    CHECK(rooms[1].room == "forest-4821");   // (then public games, in the relay's order)
+    CHECK(rooms[2].room == "zora");
+    CHECK(rooms[3].room == "kokiri");
+    CHECK_FALSE(rooms[1].official);
+    // Another relay (a player's own Relay setting): the name is an ordinary room there.
+    std::vector<Room> other{room("forest-4821", true), room("squadala", true)};
+    CoopRoomList::Order(other, false);
+    CHECK(other[0].room == "forest-4821");
+    CHECK_FALSE(other[1].official);
+    // A private room with the name is never official.
+    CHECK_FALSE(CoopRoomList::IsOfficial(room("squadala", false), true));
 }

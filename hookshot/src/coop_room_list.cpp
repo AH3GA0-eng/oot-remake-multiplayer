@@ -36,7 +36,7 @@ bool Joinable(const Room& r, int my_protocol) {
 }
 
 Room FromListing(std::string room, std::string host, int players, int max, int version) {
-    Room r{std::move(room), std::move(host), players, max, version & ~int{coop::protocol::kPublicListingBit}, false};
+    Room r{std::move(room), std::move(host), players, max, version & ~int{coop::protocol::kPublicListingBit}, false, false};
     r.is_public = (version & coop::protocol::kPublicListingBit) != 0;
     return r;
 }
@@ -46,7 +46,9 @@ std::string DetailText(const Room& r, int my_protocol) {
     using CoopI18n::Tr;
     if (r.protocol > my_protocol) return Tr("Needs an update: this game is newer than yours");
     if (r.protocol != my_protocol) return Tr("Another version: the host needs to update");
-    std::string out = r.is_public ? Tr("Public game") : Tr("Needs the host's password");
+    std::string out = r.official    ? Tr("Official public game")
+                      : r.is_public ? Tr("Public game")
+                                    : Tr("Needs the host's password");
     if (r.max > 0) {
         out += Tr(", ") + (r.players >= r.max ? Tr("Full")
                                               : Tr("Players") + " " + std::to_string(r.players) + "/" +
@@ -87,8 +89,8 @@ void Ask(std::string relay) {
                 for (const auto& e : list->rooms) {
                     s.rooms.push_back(FromListing(e.room, e.host, e.players, e.max_players, e.version));
                 }
-                // (public games first, as the Lobby and Find a game show them; the relay's order kept otherwise)
-                std::stable_partition(s.rooms.begin(), s.rooms.end(), [](const Room& r) { return r.is_public; });
+                // (the official game, then public games, as every viewer shows them; the relay's order kept)
+                Order(s.rooms, relay == CoopTitleMenu::kDefaultRelay);
                 if (s.rooms.empty()) s.state = kNoGames;
             } else {
                 s.state = kCantReach;   // (no answer: no internet, the server down, or one from before the list)

@@ -5,6 +5,7 @@
 // never carries a password, a join code or an address: a room is joined by its name and the password its host gives.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -18,7 +19,23 @@ struct Room {
     std::string room, host;
     int players = 0, max = 0, protocol = 0;   // protocol: the host's version, the public bit off
     bool is_public = false;   // a public game (coop::protocol::kPublicListingBit): joined with no password
+    bool official = false;    // the official public game (IsOfficial): shown first, named so
 };
+
+// The official always-on public game (docs/official-game.md) holds this room on the kit's own relay. A relay gives
+// a room name to one host at a time, so on the kit's relay only that server is shown as official; the same name on
+// another relay (a player's own Relay setting) is an ordinary room.
+inline constexpr const char* kOfficialRoom = "squadala";
+inline bool IsOfficial(const Room& r, bool kits_own_relay) {
+    return kits_own_relay && r.is_public && r.room == kOfficialRoom;
+}
+// The list's order, the same in every viewer: the official game first, then public games, then the rest (the
+// relay's order kept within each); marks each room's `official`.
+inline void Order(std::vector<Room>& rooms, bool kits_own_relay) {
+    for (Room& r : rooms) r.official = IsOfficial(r, kits_own_relay);
+    const auto rank = [](const Room& r) { return r.official ? 0 : r.is_public ? 1 : 2; };
+    std::stable_sort(rooms.begin(), rooms.end(), [&](const Room& a, const Room& b) { return rank(a) < rank(b); });
+}
 // A listing's version as a Room has it (the public bit taken off into is_public).
 Room FromListing(std::string room, std::string host, int players, int max, int version);
 
