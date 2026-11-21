@@ -4546,7 +4546,7 @@ private:
         // caller that asks the game.
         const auto bsa = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentBsa) : std::nullopt;
         const auto emitter = table ? r.Ptr(*table + CoopDbno::Body::addr::kComponentEmitter) : std::nullopt;
-        CoopDbno::SetOurComponents(bsa.value_or(0), emitter.value_or(0), adult);
+        CoopDbno::SetOurComponents(bsa.value_or(0), emitter.value_or(0), adult, link);
         static const bool body_caller = [] {
             // A downed teammate's puppet (issue 150): its actor, from the puppet director's slots (the same
             // calc-thread caller chain, so its slots are not changing meanwhile).
