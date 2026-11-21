@@ -706,6 +706,89 @@ class MergeRowsTest(unittest.TestCase):
 
 
 @unittest.skipIf(zstandard is None, "needs zstandard")
+class MergeRowsBetweenModsTest(MergeRowsTest):
+    """Player report 206: a randomizer seed and the Character Select mod each ship RSDB/ActorInfo; the game read one
+    mod's whole table and the other's rows were gone. Every lower mod's changed rows go into the winner's copy."""
+
+    CS = "OoT Character Select"
+    HAND = "OoT_Randomizer_0123456789abcdef"   # (a seed put in by hand: sorts after the Character Select mod, wins)
+
+    def put_game(self):
+        p = os.path.join(self.romfs, "RSDB", AI)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(zstandard.ZstdCompressor(write_content_size=True).compress(byml.dumps(self.game_rows())))
+
+    def both_mods(self):
+        self.put_game()
+        cs = self.put_rows(self.CS, [{"__RowId": "Npc_Mido", "Heap": 1}, {"__RowId": "Player_Child", "Heap": 22}])
+        seed = self.put_rows(self.HAND, self.game_rows() + [{"__RowId": "Rando_Item", "Heap": 5}])
+        return read(cs), read(seed)
+
+    def heaps(self, mod):
+        return {r["__RowId"]: r["Heap"] for r in self.rows(mod)}
+
+    def test_the_winning_seed_gets_the_row_the_character_mod_changed(self):
+        cs, seed = self.both_mods()
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(self.heaps(self.HAND), {"Npc_Mido": 1, "Player_Child": 22, "Rando_Item": 5})
+        self.assertEqual(read(self.path(self.CS, "romfs", "RSDB", AI)), cs)   # the lower mod is not written
+        self.assertFalse(os.path.exists(self.path(self.HAND, mt.ROWS_MARK)))  # no puppet pack: no mark for the module
+        before = read(self.path(self.HAND, "romfs", "RSDB", AI))
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertTrue(any("already" in line for line in self.lines))
+        self.assertEqual(read(self.path(self.HAND, "romfs", "RSDB", AI)), before)
+        mt.undo(self.mods, self.say)
+        self.assertEqual(read(self.path(self.HAND, "romfs", "RSDB", AI)), seed)
+
+    def test_the_other_order_gives_the_same_rows(self):
+        self.both_mods()
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"coop-mods 1\non {self.CS}\non {self.HAND}\n")   # the first row wins
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(self.heaps(self.CS), {"Npc_Mido": 1, "Player_Child": 22, "Rando_Item": 5})
+
+    def test_with_the_pack_all_three_are_in_the_table_the_game_reads(self):
+        self.both_mods()
+        self.put_rows(PACK, self.pack_rows())
+        self.put_sizes(PACK, 5000)
+        self.put_sizes(self.HAND, 4000)
+        failed, fit = self.run_all()
+        self.assertEqual(failed, 0)
+        self.assertEqual(self.heaps(self.HAND), {"Npc_Mido": 1, "Player_Child": 22, "Rando_Item": 5,
+                                                 "CoopPuppet_Child": 3, "CoopShot_Seed": 4})
+        self.assertGreater(fit[AI_KEY], 5000)
+        mark = read(self.path(self.HAND, mt.ROWS_MARK)).decode("utf-8")
+        self.assertTrue(mark.startswith(f"coop-rows 1\ntable {AI} "))
+        # The Character Select mod taken out: merged again from the seed's kept copy, without its row.
+        shutil.rmtree(self.path(self.CS))
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(self.heaps(self.HAND)["Player_Child"], 2)
+        self.assertIn("CoopPuppet_Child", self.heaps(self.HAND))
+
+    def test_a_row_both_changed_stays_the_winners_and_is_named(self):
+        self.put_game()
+        self.put_rows(self.CS, [{"__RowId": "Npc_Mido", "Heap": 7}, {"__RowId": "Player_Child", "Heap": 22}])
+        self.put_rows(self.HAND, [{"__RowId": "Npc_Mido", "Heap": 9}, {"__RowId": "Player_Child", "Heap": 2}])
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(self.heaps(self.HAND), {"Npc_Mido": 9, "Player_Child": 22})
+        self.assertTrue(any("changed Npc_Mido too" in line for line in self.lines))
+
+    def test_without_the_games_own_table_nothing_is_written_and_it_is_said(self):
+        cs, seed = self.both_mods()
+        os.remove(os.path.join(self.romfs, "RSDB", AI))
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(read(self.path(self.HAND, "romfs", "RSDB", AI)), seed)
+        self.assertTrue(any("Not merged without the game's own copy" in line for line in self.lines))
+
+    def test_a_mod_switched_off_gives_no_rows(self):
+        cs, seed = self.both_mods()
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
+            f.write(f"coop-mods 1\non {self.HAND}\noff {self.CS}\n")
+        self.assertEqual(self.run_all()[0], 0)
+        self.assertEqual(read(self.path(self.HAND, "romfs", "RSDB", AI)), seed)
+
+
 class MergeMembersTest(unittest.TestCase):
     """merge_members: the pack's menu archives into another mod's copy that wins them (the Character Select mod ships
     Mals/USen and the Common layout archive too; the game read the mod's whole file and the co-op menus lost theirs)."""
