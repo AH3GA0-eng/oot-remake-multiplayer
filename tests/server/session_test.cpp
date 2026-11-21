@@ -3281,9 +3281,10 @@ TEST_CASE("review-geno-0119-3: a stun right after a boss turn still hands the bo
 
 TEST_CASE("enemy turns: a plain enemy in a fight takes turns among the players near it") {
   SessionConfig config = turn_config();
+  config.enemy_turns = true;  // (off by default: review-geno-0119-4, its own case)
   config.boss_turn_us = SessionConfig{}.boss_turn_us;  // 4 s: a plain enemy's fight lasts 12 s after a hit
   {  // both players at it: player 2's turn at its attack's end
-    OwnerHarness h(config);
+    TurnHarness h(config);
     h.stand(1, 3);
     h.stand(2, 5);
     h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);  // a fight
@@ -3296,7 +3297,7 @@ TEST_CASE("enemy turns: a plain enemy in a fight takes turns among the players n
     CHECK(h.session.stats().boss_turns == 0);
   }
   {  // player 2 is 20 m off: not fighting it, no turn (a boss would take 40 m)
-    OwnerHarness h(config);
+    TurnHarness h(config);
     h.stand(1, 3);
     h.stand(2, 20);
     h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
@@ -3309,7 +3310,7 @@ TEST_CASE("enemy turns: a plain enemy in a fight takes turns among the players n
   {  // the switch
     SessionConfig off = config;
     off.enemy_turns = false;
-    OwnerHarness h(off);
+    TurnHarness h(off);
     h.stand(1, 3);
     h.stand(2, 5);
     h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
@@ -3318,6 +3319,40 @@ TEST_CASE("enemy turns: a plain enemy in a fight takes turns among the players n
     attack_ends(h, 1, 0, 11);
     h.run(250'000);
     CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("review-geno-0119-4: by default a plain enemy keeps the player it fights, a boss still takes turns") {
+  // A plain enemy's AI chases only its owner's Link: a turn at each attack's end walked it to the other player and
+  // back (report 138's shuttle). enemy_turns is off by default; the same fight on a boss passes the turn.
+  SessionConfig config = turn_config();
+  config.boss_turn_us = SessionConfig{}.boss_turn_us;
+  REQUIRE_FALSE(config.enemy_turns);
+  {  // a plain enemy, both players at it, both on a build that takes turns: no turn
+    TurnHarness h(config);
+    h.stand(1, 3);
+    h.stand(2, 5);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(h.asks() == 0);
+    CHECK(h.session.stats().enemy_turns == 0);
+    CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  }
+  {  // the same as a boss: player 2's turn
+    TurnHarness h(config);
+    h.stand(1, 3);
+    h.stand(2, 5);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    CHECK(h.session.stats().boss_turns == 1);
   }
 }
 

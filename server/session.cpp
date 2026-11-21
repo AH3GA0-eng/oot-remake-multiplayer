@@ -2701,7 +2701,7 @@ void Session::run_ownership(std::uint64_t now_us) {
     // A boss in a fight takes turns: its AI fights only its owner's Link, so
     // every player gets it for a while (Phantom Ganon's ball, a charge, a
     // breath aimed at each in turn). Every other enemy too, among the players
-    // near it (enemy_turns): the baseline for every mob.
+    // near it, when enemy_turns is on (off by default: a mob would shuttle between Links, report 138).
     if (o.boss || (config_.enemy_turns && !o.fish)) {
       if (auto next = next_turn(o, owner, now_us)) {
         ++(o.boss ? stats_.boss_turns : stats_.enemy_turns);

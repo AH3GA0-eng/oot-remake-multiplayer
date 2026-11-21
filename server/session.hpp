@@ -263,9 +263,11 @@ struct SessionConfig {
   std::uint64_t boss_turn_us = 4'000'000;
   std::uint64_t boss_turn_quiet_us = 3'000'000;
   float boss_turn_m = 40.0f;
-  // Every enemy takes turns too (2026-11-21: the baseline for every mob, not bosses alone): the same rule, among
-  // the players near it (enemy_turn_m: the ones fighting it, not one across the field). Off: bosses only.
-  bool enemy_turns = true;
+  // Every enemy takes turns too (#308): the same rule, among the players near it (enemy_turn_m). OFF by default
+  // (review-geno-0119-4, owner): a plain enemy's AI chases only its owner's Link, so a turn at each attack's end
+  // walks it to the other player and back (report 138's shuttle; the turn skips the sticky/hand-back rules), where
+  // solo it keeps the Link it fights. The chase, near and sticky rules already give it to the player it fights.
+  bool enemy_turns = false;
   float enemy_turn_m = 12.0f;
   // ...and only right at the end of the boss's own attack (boss-turns-0119): its owner's samples say an attack
   // ran (object_state::attacking, the hook's addr::InAttackSequence: after a reaction it stays on until the
