@@ -52,9 +52,9 @@ import sys
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from puppet_pack import byml, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs  # noqa: E402
+    from puppet_pack import byml, msbt, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 else:
-    from . import byml, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs
+    from . import byml, msbt, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs
 
 LIST_FILE = "coop-mods.list"
 KEEP_DIR = "_coop-size-table"
@@ -601,10 +601,17 @@ def merge_members(root, romfs, say=print):
             put_back_stale(root, MEMBERS_KEEP, lambda path, rel: os.path.join(path, "romfs", rel), touched,
                            say, "Menus")
         for rel in files:
-            having = [(n, p) for n, p in order if os.path.isfile(os.path.join(p, "romfs", *rel.split("/")))]
+            real = [(n, p) for n, p in order if os.path.isfile(os.path.join(p, "romfs", *rel.split("/")))]
+            if not real:
+                continue
+            win_name, win_path = real[-1]
+            # Row 224: a mod that ships this language's messages only in English (Character Select: USen and EUen)
+            # gives its English messages to every other language (stand_in), so its labels are not lost there.
+            # (in load order, the winner last: a mod above it without this file is the nearest)
+            having = [(n, p) for n, p in order if p != win_path and (
+                (n, p) in real or (p != pack_path and stand_in(p, rel, romfs)))] + [(win_name, win_path)]
             if len(having) < 2:
                 continue
-            win_name, win_path = having[-1]
             pack = pack_path if any(p == pack_path for _, p in having[:-1]) else None
             others = [(n, p) for n, p in having[:-1] if p != pack_path]
             names = ", ".join(n for n, _ in others)
@@ -715,13 +722,148 @@ def archives_of(path):
     return out
 
 
+# Row 224 (Character Select's - menu tab read 'msgnotfound', and his page crashed): two ways a mod's messages were lost.
+# (1) He ships Mals only for USen and EUen; in every other language the game reads another mod's archive (the pack's,
+# a seed's) or its own, without his labels and message files. stand_in / english_stand_in: such a mod gives its English
+# messages for the languages it has none of, as the game itself has a text in each language.
+# (2) A message file two mods change was taken whole from the nearer one, the other's labels lost (and a member a mod
+# under the winner gave was not looked at again for the pack's: the - menu's co-op tab labels). merge_msbt: per label.
+ENGLISH = (("US", ("USen", "EUen")), ("", ("EUen", "USen")))   # (language prefix, English archives in that order)
+
+
+def stand_in(path, rel, romfs=None):
+    """The English message archive ("Mals/USen..." or "Mals/EUen...") a mod gives for `rel`, a Mals archive of a language
+    it ships none of; None when it ships `rel`, no English one, or the game has no English copy to tell its changes."""
+    if not rel.startswith("Mals/") or not romfs or os.path.isfile(os.path.join(path, "romfs", *rel.split("/"))):
+        return None
+    lang = ui_pack.language_of(rel)
+    tail = rel.split("/", 1)[1][len(lang):]
+    for prefix, names in ENGLISH:
+        if lang.startswith(prefix):
+            for en in names:
+                cand = "Mals/" + en + tail
+                if (cand != rel and os.path.isfile(os.path.join(path, "romfs", *cand.split("/")))
+                        and os.path.isfile(os.path.join(romfs, *cand.split("/")))):
+                    return cand
+            return None
+    return None
+
+
+def _msbt_attrs(sects):
+    """(ATR1 entry size, [entry bytes]) of read_msbt's sections; (0, None) without ATR1 or with empty entries."""
+    for magic, data in sects:
+        if magic == b"ATR1":
+            n, size = struct.unpack_from("<II", data, 0)
+            if not size:
+                return 0, None
+            if len(data) != 8 + n * size:   # (attribute strings after the entries: not written here)
+                raise ui_pack.UiPackError("the message file's attributes have strings, which are not merged here")
+            return size, [data[8 + i * size:8 + (i + 1) * size] for i in range(n)]
+    return 0, None
+
+
+def merge_msbt(base, game, theirs, only_new=False):
+    """A message file (MSBT bytes) `base` with another mod's labels: each label `theirs` adds or changes from the
+    game's (`game`, or None when the game has no such file) is put in, unless `base` changed that label as well (then
+    base's stays; named). only_new: only the labels the game does not have (english_stand_in). Every other label and
+    text of base is kept as it is. Returns (bytes, [labels both changed]). Raises ui_pack.UiPackError when one of them
+    is not a message file written here (then the caller keeps base whole)."""
+    for d in (base, theirs):
+        names = msbt.read(d).section_names()
+        if "LBL1" not in names or "TXT2" not in names or any(s not in ui_pack._GROWN for s in names):
+            raise ui_pack.UiPackError("a message file with sections not merged here")
+    header, sects, have, texts = ui_pack.read_msbt(base)
+    t_header, t_sects, t_have, t_texts = ui_pack.read_msbt(theirs)
+    if game is not None:
+        _, _, g_have, g_texts = ui_pack.read_msbt(game)
+    else:
+        g_have, g_texts = {}, []
+    if header[0x0c] != t_header[0x0c]:
+        raise ui_pack.UiPackError("the two message files are not in the same encoding")
+    size, attrs = _msbt_attrs(sects)
+    t_size, t_attrs = _msbt_attrs(t_sects)
+    have, texts = dict(have), list(texts)
+    attrs = list(attrs) if attrs is not None else None
+    clash, changed = [], False
+    for label, i in t_have.items():
+        mine = t_texts[i]
+        g = g_texts[g_have[label]] if label in g_have else None
+        if mine == g or (only_new and g is not None):
+            continue
+        attr = t_attrs[i] if attrs is not None and t_attrs is not None and t_size == size else b"\0" * size
+        if label in have:
+            w = texts[have[label]]
+            if w == mine:
+                continue
+            if w != g:
+                clash.append(label)   # (both changed it: base's stays)
+                continue
+            texts[have[label]] = mine
+            if attrs is not None:
+                attrs[have[label]] = attr
+            changed = True
+        else:
+            have[label] = len(texts)
+            texts.append(mine)
+            if attrs is not None:
+                attrs.append(attr)
+            changed = True
+    if not changed:
+        return base, clash
+    if attrs is not None:
+        sects = [(m, struct.pack("<II", len(attrs), size) + b"".join(attrs) if m == b"ATR1" else d) for m, d in sects]
+    return ui_pack.write_msbt(header, sects, have, texts), clash
+
+
+def english_stand_in(codec, mod_file, game_en_file, game_file):
+    """The archive (bytes) a mod with English messages only (stand_in) gives for another language: the game's own
+    archive of that language, with every message file the mod adds and every label it adds to one of the game's, in
+    the mod's English words (the game's labels keep their words in that language)."""
+    def members(path):
+        with open(path, "rb") as f:
+            return _members(codec.unpack(f.read()))
+    mine, _ = members(mod_file)
+    en, _ = members(game_en_file)
+    games, entries = members(game_file)
+    out, added = [], {}
+    for name, datas in mine.items():
+        if datas == en.get(name):
+            continue
+        if name not in en and name not in games:
+            added[name] = datas
+        elif (name.endswith(".msbt") and name in en and name in games
+              and len(datas) == len(en[name]) == len(games[name]) == 1):
+            try:
+                added[name] = [merge_msbt(games[name][0], en[name][0], datas[0], only_new=True)[0]]
+            except (ValueError, KeyError, IndexError, struct.error):
+                pass   # (not a message file written here: the game's words in this language stay)
+    for n, d in entries:
+        out.append((n, added.pop(n)[0] if n in added else d))
+    out.extend((n, x) for n in sorted(added) for x in added[n])
+    return sarc.write(out, data_align=16)
+
+
 def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say, others=()):
     """Merges one archive: the pack's members (pack_path, or None) and those of the other mods under the winner
     (others [(name, path)] in load order). Returns the size the written file needs, or 0."""
     path = os.path.join(win_path, "romfs", *rel.split("/"))
     pack_file = os.path.join(pack_path, "romfs", *rel.split("/")) if pack_path else None
-    more = [os.path.join(p, "romfs", *rel.split("/")) for _, p in others]
-    ins = "".join(f"in {file_line(root, t)}\n" for t in ([pack_file] if pack_file else []) + more)
+    game_romfs = game
+    for _ in rel.split("/"):
+        game_romfs = os.path.dirname(game_romfs)
+    more, english = [], {}   # (english: a mod's English archive standing in for this language -> the game's English)
+    for _, p in others:
+        t = os.path.join(p, "romfs", *rel.split("/"))
+        if not os.path.isfile(t):
+            en = stand_in(p, rel, game_romfs)   # (row 224; merge_members took the mod for it)
+            if en is None:
+                raise MergeError(f"{t} is gone")
+            t = os.path.join(p, "romfs", *en.split("/"))
+            english[t] = os.path.join(game_romfs, *en.split("/"))
+        more.append(t)
+    ins = "".join(f"in {file_line(root, t)}" + (f" for {ui_pack.language_of(rel)}" if t in english else "") + "\n"
+                  for t in ([pack_file] if pack_file else []) + more)
+    gave_english = [n for (n, _), t in zip(others, more) if t in english]
     whose = " and ".join((["the puppet pack's"] if pack_path else []) + [f"{n}'s" for n, _ in others])
     keep = os.path.join(win_path, MEMBERS_KEEP)
     orig_path = os.path.join(keep, *rel.split("/"))
@@ -745,15 +887,36 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
     games, _ = _members(game_data)
     # The other mods, the one nearer the winner first (SHARED_NOTE), then the pack (under the mods the list names):
     # a member two of them changed is the nearer one's, as it was when that mod won the file.
-    take, both, lengths, ontop = {}, [], [], []
+    take, both, lengths, ontop, labels_kept, labelled = {}, [], [], [], [], []
     for mod_path, file in list(reversed([(p, t) for (_, p), t in zip(others, more)])) + (
             [(pack_path, pack_file)] if pack_file else []):
-        with open(file, "rb") as f:
-            their_data = codec.unpack(f.read())
-        lengths.append((mod_path, len(their_data)))
+        if file in english:   # (its size table sized its English copy, not this one: no length of it)
+            their_data = english_stand_in(codec, file, english[file], game)
+        else:
+            with open(file, "rb") as f:
+                their_data = codec.unpack(f.read())
+            lengths.append((mod_path, len(their_data)))
         for name, datas in _members(their_data)[0].items():
-            if datas == games.get(name) or datas == theirs.get(name) or name in take:
-                continue   # (left as the game has it, or the winner has the same, or a mod before gave it)
+            if datas == games.get(name) or datas == theirs.get(name):
+                continue   # (left as the game has it, or the winner has the same)
+            base = take.get(name, theirs.get(name, games.get(name)))
+            if (rel.startswith("Mals/") and name.endswith(".msbt") and base is not None and len(base) == 1
+                    and len(datas) == 1 and len(games.get(name) or [b""]) == 1):
+                # A message file: label by label (row 224), a label two changed stays the nearer one's (or the
+                # winner's). Not a message file written here: the member as below.
+                try:
+                    made, clash = merge_msbt(base[0], (games.get(name) or [None])[0], datas[0])
+                except (ValueError, KeyError, IndexError, struct.error):
+                    made = None
+                if made is not None:
+                    if made != base[0]:
+                        if theirs.get(name, games.get(name)) != games.get(name) or name in take:
+                            labelled.append(name)   # (both kept: the labels of each)
+                        take[name] = [made]
+                    labels_kept.extend(f"{name} {label}" for label in clash)
+                    continue
+            if name in take:
+                continue   # (a mod before gave it)
             if theirs.get(name, games.get(name)) == games.get(name):
                 take[name] = datas   # (the winner left it as the game has it, or has none)
             elif name not in both:
@@ -798,6 +961,10 @@ def merge_members_one(root, codec, rel, win_name, win_path, pack_path, game, say
            if ontop else "")
         + (f" Both changed {', '.join(sorted(both))}: {win_name}'s kept (the co-op part of it is missing)."
            if both else "")
+        + (f" More than one changed {', '.join(sorted(set(labelled)))}: the labels of each kept." if labelled else "")
+        + (f" A label both changed, the nearer mod's kept: {', '.join(labels_kept)}." if labels_kept else "")
+        + (f" {', '.join(gave_english)}: no archive in this language, its English messages taken."
+           if gave_english else "")
         + (" Its Customize screen's messages got co-op's placeholders (co-op's customization in it)."
            if placeholders else ""))
     return need

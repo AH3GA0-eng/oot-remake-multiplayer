@@ -7,6 +7,7 @@ import io
 import os
 import random
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -1191,6 +1192,127 @@ class SnailCustomizeTest(MergeMembersTest):
         failed, _ = self.merge()
         self.assertEqual(failed, 0)
         self.assertNotIn(mt.SNAIL_MSG, self.served())
+
+
+class MessageLabelsTest(unittest.TestCase):
+    """Row 224: Character Select's - menu tab read 'msgnotfound' (and his page crashed). His messages are only in USen
+    and EUen: every other language's archive the game reads (the pack's, a seed's) lacked them. And a message file two
+    mods change was taken whole from one, the other's labels lost (the pack's - menu labels too, when he gave it)."""
+
+    MOD = "OoT Character Select"
+    SEED = "OoT_Randomizer_0123456789abcdef"   # (sorts after him: it wins)
+    US = "Mals/USen.Product.110.sarc.zs"
+    FR = "Mals/EUfr.Product.110.sarc.zs"
+    OV = "LayoutMsg/MenuOverlay_00.msbt"
+    PM = "LayoutMsg/PlusMenu_00.msbt"
+    CM = "LayoutMsg/CharacterMenu_00.msbt"
+
+    def setUp(self):
+        from test_ui_pack import make_msbt
+        self.msbt = make_msbt
+        self.dir = tempfile.mkdtemp(prefix="merge_tables_labels_")
+        self.mods = os.path.join(self.dir, "mods")
+        self.romfs = os.path.join(self.dir, "romfs")
+        self.pack = os.path.join(self.mods, *PACK.split("/"))
+        self.mod = os.path.join(self.mods, self.MOD)
+        self.words = {self.US: ("Items", "Save"), self.FR: ("Objets", "Sauvegarder")}
+        for rel, (cat, save) in self.words.items():
+            self.put(os.path.join(self.romfs, *rel.split("/")), self.archive(self.game(rel)))
+            self.put(os.path.join(self.pack, "romfs", *rel.split("/")), self.archive({
+                self.OV: make_msbt([("Pa_Category_00", cat), ("Coop_Minus_00", "Co-op")], encoding=1),
+                self.PM: make_msbt([("Save", save), ("Coop_Live_00", "....")], encoding=1)}))
+        self.put(os.path.join(self.pack, "coop_puppet.json"),
+                 ('{"pause_menu": ["%s", "%s"]}' % (self.US, self.FR)).encode())
+        self.put(os.path.join(self.mod, "romfs", *self.US.split("/")), self.archive({
+            self.OV: make_msbt([("Pa_Category_00", "Items"), ("Characters", "Characters")], encoding=1),
+            self.PM: make_msbt([("Save", "Save")], encoding=1),
+            self.CM: make_msbt([("T_Title_00", "Characters")], encoding=1)}))
+        self.lines = []
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def game(self, rel):
+        cat, save = self.words[rel]
+        return {self.OV: self.msbt([("Pa_Category_00", cat)], encoding=1),
+                self.PM: self.msbt([("Save", save)], encoding=1)}
+
+    put = staticmethod(MergeMembersTest.put)
+    archive = staticmethod(MergeMembersTest.archive)
+
+    def served(self, mod_path, rel):
+        from puppet_pack import msbt
+        raw = read(os.path.join(mod_path, "romfs", *rel.split("/")))
+        files = sarc.read(zstandard.ZstdDecompressor().decompressobj().decompress(raw))
+        return {n: dict((k, "".join(x for x in v if isinstance(x, str))) for k, v in msbt.read(d).rows())
+                for n, d in files.items()}
+
+    def merge(self):
+        self.lines = []
+        return mt.merge_members(self.mods, self.romfs, self.lines.append)
+
+    def test_a_language_he_does_not_ship_gets_his_english_messages(self):
+        fr_own = read(os.path.join(self.pack, "romfs", *self.FR.split("/")))
+        self.assertEqual(self.merge()[0], 0)
+        fr = self.served(self.pack, self.FR)   # (the pack's EUfr: the one the game reads in French)
+        self.assertEqual(fr[self.OV]["Pa_Category_00"], "Objets")    # the game's French words stay
+        self.assertEqual(fr[self.OV]["Characters"], "Characters")    # his tab's label, in his English
+        self.assertEqual(fr[self.OV]["Coop_Minus_00"], "Co-op")      # the pack's own
+        self.assertEqual(fr[self.CM]["T_Title_00"], "Characters")    # his page's message file
+        self.assertEqual(fr[self.PM]["Save"], "Sauvegarder")
+        line = next(l for l in self.lines if self.FR in l)
+        self.assertIn("OoT Character Select: no archive in this language, its English messages taken", line)
+        us = self.served(self.mod, self.US)    # (his USen wins: the pack's labels in it, his kept)
+        self.assertEqual((us[self.OV]["Characters"], us[self.OV]["Coop_Minus_00"], us[self.PM]["Coop_Live_00"]),
+                         ("Characters", "Co-op", "...."))
+        self.merge()                                                 # the next start: nothing new
+        self.assertTrue(all("already" in l for l in self.lines if "Menus:" in l))
+        mt.undo(self.mods, say=self.lines.append)
+        self.assertEqual(read(os.path.join(self.pack, "romfs", *self.FR.split("/"))), fr_own)
+
+    def test_a_message_file_three_mods_change_keeps_each_ones_labels(self):
+        for rel in (self.US, self.FR):     # a seed: every language, a label of its own in the pause menu's file
+            cat, save = self.words[rel]
+            self.put(os.path.join(self.mods, self.SEED, "romfs", *rel.split("/")), self.archive({
+                self.OV: self.msbt([("Pa_Category_00", cat)], encoding=1),
+                self.PM: self.msbt([("Save", save), ("Warp", "Warp")], encoding=1)}))
+        self.assertEqual(self.merge()[0], 0)
+        for rel in (self.US, self.FR):
+            got = self.served(os.path.join(self.mods, self.SEED), rel)
+            self.assertEqual(got[self.OV]["Characters"], "Characters")   # his (given before the pack's: kept)
+            self.assertEqual(got[self.OV]["Coop_Minus_00"], "Co-op")     # the pack's: was lost after his
+            self.assertEqual((got[self.PM]["Warp"], got[self.PM]["Coop_Live_00"]), ("Warp", "...."))
+            self.assertEqual(got[self.CM]["T_Title_00"], "Characters")
+        self.assertEqual(self.served(os.path.join(self.mods, self.SEED), self.FR)[self.OV]["Pa_Category_00"], "Objets")
+
+    def test_a_label_two_mods_changed_stays_the_nearer_ones_and_is_named(self):
+        self.put(os.path.join(self.mods, self.SEED, "romfs", *self.US.split("/")), self.archive({
+            self.OV: self.msbt([("Pa_Category_00", "Seed items")], encoding=1),
+            self.PM: self.msbt([("Save", "Save")], encoding=1)}))
+        self.put(os.path.join(self.mod, "romfs", *self.US.split("/")), self.archive({
+            self.OV: self.msbt([("Pa_Category_00", "His items"), ("Characters", "Characters")], encoding=1),
+            self.PM: self.msbt([("Save", "Save")], encoding=1)}))
+        self.merge()
+        got = self.served(os.path.join(self.mods, self.SEED), self.US)
+        self.assertEqual((got[self.OV]["Pa_Category_00"], got[self.OV]["Characters"]), ("Seed items", "Characters"))
+        self.assertTrue(any("A label both changed, the nearer mod's kept: " + self.OV + " Pa_Category_00" in l
+                            for l in self.lines))
+
+    def test_attributes_travel_with_the_labels(self):
+        size = 4
+        def atr(*xs):
+            return (b"ATR1", struct.pack("<II", len(xs), size) + b"".join(xs))
+        game = self.msbt([("A", "a")], encoding=1, extra=[atr(b"\1\0\0\0")])
+        base = self.msbt([("A", "a"), ("B", "b")], encoding=1, extra=[atr(b"\1\0\0\0", b"\2\0\0\0")])
+        theirs = self.msbt([("A", "a"), ("C", "c")], encoding=1, extra=[atr(b"\1\0\0\0", b"\3\0\0\0")])
+        out, clash = mt.merge_msbt(base, game, theirs)
+        self.assertEqual(clash, [])
+        header, sects, have, texts = mt.ui_pack.read_msbt(out)
+        self.assertEqual(sorted(have), ["A", "B", "C"])
+        self.assertEqual(mt._msbt_attrs(sects)[1][have["C"]], b"\3\0\0\0")
+        self.assertEqual(mt.merge_msbt(base, game, base)[0], base)   # nothing to add: the same bytes
+        with self.assertRaises(ValueError):
+            mt.merge_msbt(b"not a message file", game, theirs)
 
 
 class SelfModelsTest(unittest.TestCase):
