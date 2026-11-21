@@ -192,12 +192,24 @@ double TunicDistance(std::uint32_t a, std::uint32_t b) {
 }
 }  // namespace
 
-std::map<std::uint8_t, TunicCopy> AssignTunicCopies(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& players) {
+std::map<std::uint8_t, TunicCopy> AssignTunicCopies(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& players,
+                                                   const std::map<std::uint8_t, TunicCopy>& before) {
     auto sorted = players;
     std::sort(sorted.begin(), sorted.end());
     std::map<std::uint8_t, TunicCopy> out;
     std::vector<std::string_view> taken;
+    // (first, the players who stay keep the exact copy they had)
     for (const auto& [number, rgb] : sorted) {
+        const auto it = before.find(number);
+        if (it == before.end() || !it->second.exact || it->second.suffix.empty()) continue;
+        const auto known = std::find_if(std::begin(kTunics), std::end(kTunics),
+                                        [&](const Tunic& t) { return !t.suffix.empty() && t.suffix == it->second.suffix; });
+        if (known == std::end(kTunics) || std::find(taken.begin(), taken.end(), known->suffix) != taken.end()) continue;
+        taken.push_back(known->suffix);
+        out[number] = TunicCopy{std::string(known->suffix), true};
+    }
+    for (const auto& [number, rgb] : sorted) {
+        if (out.count(number) != 0) continue;
         std::string_view best;
         double best_d = -1.0;
         for (const auto& t : kTunics) {

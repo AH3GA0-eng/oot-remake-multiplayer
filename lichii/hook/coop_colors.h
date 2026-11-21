@@ -75,7 +75,11 @@ struct TunicCopy {
     std::string suffix;   // "Red".."Black", or "" for the plain puppet
     bool exact = false;
 };
-std::map<std::uint8_t, TunicCopy> AssignTunicCopies(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& players);
+// `before`: the last round's (review round 2): a player who stays keeps the exact copy they had (a join, a rejoin or
+// another player's colour change never moves them, so their puppet is not made again); only players without one get
+// one from those still free.
+std::map<std::uint8_t, TunicCopy> AssignTunicCopies(const std::vector<std::pair<std::uint8_t, std::uint32_t>>& players,
+                                                   const std::map<std::uint8_t, TunicCopy>& before = {});
 
 // The actor's model, or 0 when the actor has none (yet).
 std::uint64_t ModelOf(CoopPuppet::Guest& guest, std::uint64_t actor);

@@ -1762,4 +1762,19 @@ TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact
         CHECK(painted[red.size() + i].name == blue[i].name);
     }
     CHECK(painted.back().texels == blue.back().texels);   // (another size: as written)
+
+    // The dark tile (review round 2): in the copies it is the main tile darker (BC3, the main tile's size); green's is
+    // another size (ASTC): painted from green's main tile in the colour scaled by kDarkScale.
+    REQUIRE(green.size() >= 2);
+    auto green2 = green;   // (its dark tile another size than the tile, as the game's ASTC one is)
+    const std::vector<std::uint8_t> block(green2[1].texels.begin(), green2[1].texels.begin() + 16);
+    green2[1].texels.insert(green2[1].texels.end(), block.begin(), block.end());
+    auto red2 = green2;
+    red2[1].name = "Angin_Tile_R_Dark_Alb";
+    red2[1].texels = red2[0].texels;   // (as long as the main tile)
+    REQUIRE(red2[1].texels.size() != green2[1].texels.size());
+    const auto dark = CoopLookParts::PuppetTunicsTexels({{"red", red2}}, green2, {{"red", 0xC86432}});
+    const auto darker = CoopLookParts::TunicPainted(green2, 0x804020u);   // (0xC8, 0x64, 0x32 times 0.64, rounded)
+    CHECK(dark[1].texels == darker[0].texels);
+    CHECK(dark[0].texels == CoopLookParts::TunicPainted(green2, 0xC86432u)[0].texels);
 }

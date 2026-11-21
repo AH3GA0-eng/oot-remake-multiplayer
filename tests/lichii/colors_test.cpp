@@ -327,6 +327,20 @@ TEST_CASE("colors (0.11.9): each other player gets a tunic copy of their own, ne
     CHECK(std::adjacent_find(suffixes.begin(), suffixes.end()) == suffixes.end());   // all different
     CHECK_FALSE(a[10].exact);
     CHECK(a[10].suffix == std::string(CoopColors::TunicOf(0x123456)));
+    // Sticky (review round 2): P3 joins in a colour nearer P2's copy: P2 keeps it, P3 gets a free one; P2 changing
+    // colour keeps its copy (repainted); P2 leaving frees it for the next.
+    const auto first = AssignTunicCopies({{2, 0xFF7020}});
+    REQUIRE(first.at(2).suffix == "Orange");
+    auto next = AssignTunicCopies({{2, 0xFF7020}, {1, 0xFF8020}}, first);   // (P1 sorts before P2, and is nearer Orange)
+    CHECK(next.at(2).suffix == "Orange");
+    CHECK(next.at(1).suffix != "Orange");
+    CHECK(next.at(1).exact);
+    auto changed = AssignTunicCopies({{2, 0x2040FF}, {1, 0xFF8020}}, next);
+    CHECK(changed.at(2).suffix == "Orange");                 // (its copy kept, repainted blue)
+    CHECK(changed.at(1).suffix == next.at(1).suffix);
+    auto left = AssignTunicCopies({{1, 0xFF8020}, {4, 0xFF8020}}, changed);
+    CHECK(left.at(1).suffix == next.at(1).suffix);
+    CHECK(left.at(4).suffix == "Orange");                    // (P2 left: its copy free again)
     CHECK(CoopColors::TunicColour("Red") == 0xFF3030u);
     CHECK_FALSE(CoopColors::TunicColour(""));
     CHECK_FALSE(CoopColors::TunicColour("Mauve"));

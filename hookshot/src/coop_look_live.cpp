@@ -396,7 +396,9 @@ std::map<std::uint8_t, CoopColors::TunicCopy> FollowTunics() {
         players.emplace_back(row.number,
                              CoopPuppet::PlayerColor(row.number).value_or(coop::protocol::slot_color(row.number)));
     }
-    const auto copies = CoopColors::AssignTunicCopies(players);
+    static std::map<std::uint8_t, CoopColors::TunicCopy> before;   // (the worker's: copies stay with their players)
+    const auto copies = CoopColors::AssignTunicCopies(players, before);
+    before = copies;
     if (!g_ptunics) return copies;   // (a pack without the copies' files: the nearest copy, as before)
     std::map<std::uint8_t, std::string> given;
     CoopLookParts::TunicPaints paints;
