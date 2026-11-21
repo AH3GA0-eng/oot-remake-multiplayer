@@ -125,10 +125,10 @@ TEST_CASE("look menu: a part with no colour mixes from the game's own, Game's ow
     page.Select(static_cast<std::size_t>(RowOf(page, "Boots", "Leather")));
     page.Press(Input::kDecide);
     // (the sliders start at the boots' own brown: a hue press keeps its saturation and brightness)
-    const CoopLookMenu::Hsv own = CoopLookMenu::ToHsv(CoopLookMenu::Shown(Look{}, Part::boots));
+    const CoopLookMenu::Hsv brown = CoopLookMenu::ToHsv(CoopLookMenu::Shown(Look{}, Part::boots));
     page.Press(Input::kLeft);
     REQUIRE(page.look()[Part::boots]);
-    CHECK(*page.look()[Part::boots] == CoopLookMenu::ToRgb({(own.h + 350) % 360, own.s, own.v}));
+    CHECK(*page.look()[Part::boots] == CoopLookMenu::ToRgb({(brown.h + 350) % 360, brown.s, brown.v}));
     auto v = page.view();
     int own = -1, done = -1;
     for (std::size_t i = 0; i < v.rows.size(); ++i) {
