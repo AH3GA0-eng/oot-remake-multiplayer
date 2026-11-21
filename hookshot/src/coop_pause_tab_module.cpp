@@ -411,10 +411,16 @@ std::map<std::uint64_t, SnailLayout> g_snail_layouts;   // a layout: his Customi
 std::array<LiveSlot, kSnailSlots> g_snail_live{};
 CoopSnailCustom::Texts g_snail_shown;
 std::string g_snail_failed_said;   // (the panes last named as not set: said once per list)
+bool g_snail_wait = false;   // his screen open, his panes not found in its layout: co-op waits (keys kept from his rows)
+std::size_t CountOf(const std::string& text, const char* what) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+    return n;
+}
 
 void SnailClose(const char* why) {
     if (!g_snail_open) return;
-    g_snail_open = false;
+    g_snail_open = false, g_snail_wait = false;
     const bool driven = g_snail.Active();
     g_snail.Close();
     if (driven) CoopLook::ApplyOnUnpause();   // (Link wears the look chosen, as when co-op's Customize closes)
@@ -500,11 +506,25 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
         g_snail_shown = {};
         g_snail_failed_said.clear();
         for (auto& l : g_snail_live) l.shown.clear();
+        // (every opening looks at his panes again, the open edge itself: lane 061445, 0.11.9, Saria's 4th opening
+        // came with the same screen and layout as the three before and none of his panes could be found in it, so a
+        // check keyed on a changed address never ran. Not there: co-op waits, his keys kept from his rows meanwhile,
+        // and looks again at each update)
+        g_snail_wait = !his_panes();
+        if (!g_snail_wait) g_snail.Open(CoopLook::Shown(), CoopCharColours::ShownCharacter());
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened (screen {:#x}, layout {:#x}): {}",
+                 screen, layout, g_snail_wait ? "his panes are not in its layout yet: co-op waits for them (his keys "
+                                                "kept from his rows)" : "co-op's customization in it");
+    } else if (g_snail_wait && his_panes()) {
+        g_snail_wait = false, ++g_snail_gen;
+        g_snail_shown = {};
+        g_snail_failed_said.clear();
+        for (auto& l : g_snail_live) l.shown.clear();
         g_snail.Open(CoopLook::Shown(), CoopCharColours::ShownCharacter());
-        LOG_INFO(Core, "coop: characters: Character Select's Customize screen opened (screen {:#x}, layout {:#x}): "
-                       "co-op's customization in it", screen, layout);
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: his panes are there now: co-op's "
+                       "customization in it");
     }
-    if (!g_snail.Active()) return;
+    if (g_snail_wait || !g_snail.Active()) return;
     if (auto look = g_snail.TakeChange()) CoopLook::SetPending(*look);   // (your Link wears it at once, a preview)
     const auto t = g_snail.Shown();
     if (t == g_snail_shown) return;
@@ -515,6 +535,15 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
         g_snail_fallback = true;
         LOG_INFO(Core, "coop: characters: Character Select's Customize screen: {} is not in its messages (start the "
                        "game from the kit, which adds co-op's placeholders): its keys are kept from it", failed);
+        return;
+    }
+    if (w == SnailWritten::kSome && CountOf(failed, "(pane not found)") + CountOf(failed, "(path not in the layout)") ==
+                                           static_cast<std::size_t>(kSnailSlots) && !his_panes()) {
+        // (every pane gone from under co-op while open: wait for them as at an opening, his keys kept from his rows)
+        g_snail.Close();
+        g_snail_wait = true;
+        LOG_INFO(Core, "coop: characters: Character Select's Customize screen: none of his panes is in its layout now: "
+                       "co-op waits for them (his keys kept from his rows)");
         return;
     }
     if (w == SnailWritten::kSome) {
