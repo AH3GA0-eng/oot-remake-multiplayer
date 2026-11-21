@@ -2668,9 +2668,11 @@ public:
     std::map<u64, u64> land_wait_since_;    // address -> since when its landing kill waits for our key to come out
     // Run 20261120-145142: a kept kill landed (the killing blow replayed) and the owner's dead ObjectRemove, waiting
     // since, deleted the actor in the same walk, before its death ran: our room never counted it and never asked its
-    // event. After a kept kill lands, removes of its actor wait kLandedHoldUs (its own death deletes it first).
+    // event. Every kill that lands here on a kill actor of an event our game has not played (another game's kill, a
+    // kept one landing, a redo) holds other games' removes of that actor until its own death deleted it (it left our
+    // walk) or our game played the event; kLandedHoldUs is only a safety cap, logged when it ends a hold.
     static constexpr u64 kLandedHoldUs = 8'000'000;
-    std::map<u64, u64> landed_hold_;        // address -> until when another game's remove of it waits
+    std::map<u64, std::pair<u64, u64>> landed_hold_;  // address -> (safety cap, placement hash)
     std::set<u64> keeper_addresses_;                          // this walk's keepers (Place skips their removes)
     std::string keeper_scene_;
     // The follow keepers (CoopEventResult::FollowKeepers) of `scene` by our game's played flags; none before the game's
@@ -2713,10 +2715,6 @@ public:
             owned_seen_.clear();
             owned_died_at_.clear();
         }
-        std::erase_if(landed_hold_, [&](const auto& h) {
-            return now_us >= h.second || std::none_of(seen.begin(), seen.end(),
-                                                       [&](const Seen& s) { return s.address == h.first; });
-        });
         std::unordered_map<u64, u64> hash_at;  // address -> placement hash
         std::unordered_map<u64, u64> life_at;  // address -> its Life component
         std::set<u64> lives;                   // every Life component in this walk
@@ -2742,6 +2740,19 @@ public:
         const auto played = [&flags](const std::string& e) {
             return flags && flags->get_bool(coop::host::flag_hash("HavePlayedEvent." + e)).value_or(false);
         };
+        // The removes held for a landed kill end on the real signal: its own death deleted the actor (gone from our
+        // walk), or our game played its event; the safety cap is logged (it should not be what ends one).
+        std::erase_if(landed_hold_, [&](const auto& h) {
+            if (!hash_at.contains(h.first) || hash_at.at(h.first) != h.second.second) return true;  // its death ran
+            const auto e = CoopEventResult::KillEventOf(scene, h.second.second);
+            if (!e || played(std::string(*e))) return true;  // our room asked and played its event
+            if (now_us >= h.second.first) {
+                LOG_INFO(Core, "coop: dungeon: trigger: {:#x} still stands {} ms after its kill landed: another game's "
+                               "remove of it goes ahead (safety cap)", h.second.second, kLandedHoldUs / 1000);
+                return true;
+            }
+            return false;
+        });
         // Row 160: a kept kill whose actor went (a reload re-made the room) waits by its placement hash; the re-made
         // actor of that hash takes it over, with the time it was first kept.
         for (auto it = trigger_kept_gone_.begin(); it != trigger_kept_gone_.end();) {
@@ -2881,7 +2892,6 @@ public:
                     }
                 }
                 LOG_INFO(Core, "coop: dungeon: trigger: the kill of {:#x} kept for its event lands now", at->second);
-                landed_hold_.insert_or_assign(it->first, now_us + kLandedHoldUs);
                 sync_.Written(it->first, it->second.first.life, now_us);
                 writes.push_back(std::move(it->second.first));
             } else {
@@ -2919,6 +2929,16 @@ public:
         for (LifeWrite& w : redo_writes) {
             sync_.Written(w.address, w.life, now_us);
             writes.push_back(std::move(w));
+        }
+        // Every kill landing here this walk on a kill actor of an event our game has not played holds other games'
+        // removes of that actor until its death ran (run 20261120-145142).
+        for (const LifeWrite& w : writes) {
+            if (w.life > 0 || w.heal || landed_hold_.contains(w.address)) continue;
+            const auto at = hash_at.find(w.address);
+            if (at == hash_at.end()) continue;
+            if (const auto e = CoopEventResult::KillEventOf(scene, at->second); e && !played(std::string(*e))) {
+                landed_hold_.emplace(w.address, std::make_pair(now_us + kLandedHoldUs, at->second));
+            }
         }
         // Row 160 (b): every kept kill's copy that is still a keeper holds our key (no hit lands on it).
         std::set<u64> want;
