@@ -518,6 +518,32 @@ reload brought the fight back with no container to win (#241, row 52).
   (NotShared, the stale mend clears it); an absent player's beaten room must still show a floor that works. A player still inside the dungeon (not in the room) at the kill gets the set only
   once they leave its scene; until then, as before, nobody is pulled into that room again.
 
+## Boss turns: every player fights the boss (2026-11-21)
+**Seen.** In two-player runs and a player's report, Phantom Ganon went for one player the whole fight, and only that
+player played his ball rally. The boss's AI runs in its owner's game alone, and it fights that game's Link. Other
+players' puppets are perceived (above), but a target sticks once chosen, and a puppet has no body: the ball passes
+through it in the owner's game, and in the puppet's own game the ball is a copy that its sword cannot send back.
+
+**What changed (server, `Session::next_turn`).** A boss in its fight takes turns. Once one owner has had it for
+`boss_turn_us` (20 s, from the fight's start or the last change of owner), the server asks it over to the next player
+by player number, round and round (1, 2, 3, 4, 1 ...). That player's game then runs the boss, and its AI goes for
+that player's Link: the ball rally, the charges and the breath are played with each player in turn, with the real
+hit and reflection in that player's own game. The turn goes only to a player whose game has it loaded, has played its
+intro (`unready` is not set), is up and playing (not paused, downed, dead or in an event) and stands within
+`boss_turn_m` (40 m) of it. It waits for a calm moment: no hit passed on for `boss_turn_quiet_us` (3 s), the owner not
+hitting it (`boss_owner_hit_hold_us`), its life above 0, its owner's animation no death and no cutscene, and no shot of
+the owner's game still flying in its scene (`boss_turn_shot_us`, 10 s at most for a shot whose end was lost; a shot
+is never handed over, so a rally would go on in the old owner's game alone). A hand-over carries the boss's state as
+every other one does (native boss sync, the life with every hit in it). `boss_turn_us` 0 turns it off. Counted in
+the server's `enemies:` line as `boss turns`.
+
+**Tests.** `tests/server/session_test.cpp`: "boss turns" (three players, round by number; a calm moment, near, up and
+ready; the ball in flight).
+
+**Not proven in game.** That every boss's AI takes a turn well from a copy's state (the phase jumps seen when the
+near rule moved bosses before native boss sync), and that 20 s is a good length. Check: two players fight Phantom
+Ganon; each gets his ball in turn and can send it back; Volvagia, Morpha and Twinrova go for each player in turn.
+
 ## A boss stuck in one move (tracker row 149, 0.11.6)
 
 King Dodongo rolled forever (Rolling_Start, Rolling_Loop_Start, Rolling_Loop, never Rolling_Impact or Rolling_End) on every screen and the fight could not be won (row 138 host log, 0.11.4).
