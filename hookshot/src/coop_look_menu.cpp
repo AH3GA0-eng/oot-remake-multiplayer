@@ -335,7 +335,7 @@ std::vector<Page::Line> Page::Lines() const {
         const std::string note = CoopI18n::Tr(Note(info.part));
         const std::string how = CoopI18n::Tr(
             "Left and Right try the colours; Confirm picks any colour of your own. Your Link wears it when you close "
-            "the menu, and the other players see it on you.");
+            "the menu. The other players see your gear in this colour, and your tunic in the nearest of the ten tunic colours.");
         out.push_back(
             {{info.name, ValueText(info.part, look_[info.part]), 1, true, true}, What::kPart, info.part, note + " " + how});
     }
