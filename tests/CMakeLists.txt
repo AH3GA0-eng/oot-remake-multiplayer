@@ -150,6 +150,7 @@ add_executable(coop_tests
   lichii/room_objects_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_room_objects.cpp
   lichii/switch_share_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_switch_share.cpp
   lichii/caller_orders_test.cpp
+  lichii/char_colours_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_char_colours.cpp
   lichii/eye_switch_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_eye_switch.cpp
   lichii/event_result_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_event_result.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_ocarina.cpp

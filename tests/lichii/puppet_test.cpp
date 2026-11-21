@@ -3000,3 +3000,48 @@ TEST_CASE("puppet (row 177): only a plain puppet of a pack with perception is se
     CHECK_FALSE(CoopPuppet::SeenPuppetActor("CoopPuppet_Child", false));
     CHECK_FALSE(CoopPuppet::SeenPuppetActor("Player_Child", true));
 }
+
+// Review of charsel-colours-0118 (S1): a routine whose bytes match but that the runtime cannot call (not a game
+// function the build knows) hands the puppets to co-op's own dressing after kDressNotMade calls not made.
+namespace {
+// One frame whose colour routine call is not made: the frame ends at it (as Hookshot's RunFrame on a failed call).
+bool FrameEndingAtDress(Director& d, Game& g, std::uint64_t now_ms) {
+    auto call = d.Step(g.guest, false, 0, now_ms);
+    while (call) {
+        if (call->function == kBase + kDressAt) {
+            return true;
+        }
+        std::uint64_t result = 0;
+        if (call->function == kBase + addr::kEquip) result = g.equip_result;
+        if (call->function == kBase + addr::kTakeCreated) REQUIRE(g.guest.Read(call->x[0] + addr::kRequestActor, &result, 8));
+        call = d.Step(g.guest, true, result, now_ms);
+    }
+    return false;
+}
+}  // namespace
+
+TEST_CASE("puppet characters: a colour routine that cannot be called gives the puppet to co-op's own dressing") {
+    Game g;
+    g.guest.Map(kBase + kDressAt, 16);
+    REQUIRE(g.guest.Write(kBase + kDressAt, kDressHead.data(), kDressHead.size()));
+    std::vector<std::string> log;
+    Director d([&](const std::string& line) { log.push_back(line); });
+    d.SetCharacterApply(kDressAt, kDressHead);
+    const std::uint64_t word = (std::uint64_t{9} << 32) | 0x12u;
+    REQUIRE(Dresses(LiveAs(d, g, Dressed("CoopPuppet_Adult_C005", (std::uint64_t{9} << 32) | 0x1u))) == 1);
+    d.SetInput(Wants({Dressed("CoopPuppet_Adult_C005", word)}));   // a change: its call is not made
+    const std::uint64_t now = 100;
+    REQUIRE(FrameEndingAtDress(d, g, now - 5));
+    REQUIRE(d.DressTargets().size() == 1);
+    CHECK(d.DressTargets()[0].mods_routine);    // its bytes match: the mod's routine's
+    CHECK(d.DressTargets()[0].character);
+    CHECK(d.DressTargets()[0].custom == 0x12u);
+    REQUIRE(FrameEndingAtDress(d, g, now + 5));   // the first not made: asked again
+    FrameEndingAtDress(d, g, now + 10);           // the second not made: ours from now on
+    REQUIRE(d.DressTargets().size() == 1);
+    CHECK_FALSE(d.DressTargets()[0].mods_routine);
+    CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) {
+              return l.find("could not be called") != std::string::npos;
+          }) == 1);
+    CHECK(Dresses(Frame(d, g, now + 20 + kAgainMs)) == 0);   // never asked of it again
+}

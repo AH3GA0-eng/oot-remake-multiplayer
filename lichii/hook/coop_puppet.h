@@ -282,7 +282,9 @@ inline constexpr std::array<int, kGearCount> kGearSlots{0, 4, -1, -1, -1, 3, -1,
 
 // A puppet's memory block, from the game's malloc, kept for the whole run.
 namespace block {
-inline constexpr std::uint64_t kSize = 0x780;  // to 0x778: coop_puppet_flame.h's key and handle
+inline constexpr std::uint64_t kSize = 0x880;  // to 0x778: coop_puppet_flame.h's key and handle; then kDress
+// Character Select's colours on the puppet (coop_char_colours.h: names and arguments of its calls).
+inline constexpr std::uint64_t kDress = 0x780;      // CoopCharColours::kCellBytes
 inline constexpr std::uint64_t kCreateArg = 0x000;  // 0x100 bytes
 inline constexpr std::uint64_t kName = 0x100;       // {char*, u32 capacity}
 inline constexpr std::uint64_t kHandles = 0x110;    // kHandleCount slots of 8 bytes
@@ -426,6 +428,7 @@ public:
         character_apply_ = offset;
         character_apply_head_ = head;
         character_apply_state_ = 0;
+        dress_not_made_ = 0;
     }
     // Move each puppet with the game's own setter as well (addr::kSetMatrix),
     // once a frame: for an actor with a physics body, such as the fairy.
@@ -479,6 +482,19 @@ public:
         std::size_t strays = 0; // actors of its player still being deleted
     };
     std::vector<SlotView> Slots() const;  // the calc thread, or tests
+    // Every live puppet, for co-op's own Customize colours (coop_char_colours.h): its actor, its block's dress
+    // cells, its player's options (Target::custom, 0 for Link) and whether it is a character's puppet that the
+    // mod's own routine dresses (Dress, verified at its place). The calc thread.
+    struct DressView {
+        std::uint8_t number = 0;
+        std::uint64_t actor = 0;
+        std::uint64_t cell = 0;
+        std::uint32_t custom = 0;
+        bool character = false;
+        bool mods_routine = false;
+        std::string actor_name;   // (a puppet made again as another actor starts anew)
+    };
+    std::vector<DressView> DressTargets() const;
     // Any thread: bit n set while puppet n's actor is live in this scene and
     // shown or held (not parked for a hide), as of the last calc frame. The
     // fairies follow it, so a Navi never shows without her puppet (issue 145).
@@ -728,7 +744,11 @@ private:
     bool pose_copy_ = false;
     std::uint64_t character_apply_ = 0;
     std::array<std::uint8_t, 16> character_apply_head_{};
-    int character_apply_state_ = 0;   // 0 not checked, 1 the routine is there, 2 it is not
+    int character_apply_state_ = 0;   // 0 not checked, 1 the routine is there, 2 it is not (or cannot be called)
+    // Its calls in a row that the runtime could not make (a routine that is not a game function the build knows):
+    // at kDressNotMade co-op's own dressing takes over (DressTargets).
+    int dress_not_made_ = 0;
+    static constexpr int kDressNotMade = 2;
     bool matrix_call_ = false;
     float tint_ = 0.0f;
     std::atomic<bool> null_reads_zero_{true};
@@ -993,6 +1013,8 @@ void SetPvpCopies(std::uint32_t mask);
 std::uint32_t PvpCopies();
 // Any thread: TheDirector's LiveMask(), 0 while the puppets are off.
 std::uint32_t LivePuppets();
+// The calc thread: TheDirector's DressTargets() (co-op's own Customize colours), none while the puppets are off.
+std::vector<Director::DressView> DressTargets();
 
 // Every remote player presence shows at `server_now_us`, with scene, status,
 // age, newest animation and gear: what Publish plans from. CoopFairy plans

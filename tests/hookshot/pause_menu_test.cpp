@@ -1582,3 +1582,20 @@ TEST_CASE("pause tab: Browse games: Refresh asks for the list again and empties 
     CHECK(m.TakeRequest()->kind == Request::Kind::kRefreshFound);
     CHECK(Names(m).back() == "Looking for games...");
 }
+
+TEST_CASE("pause tab: Customize Link with a Character Select character picked says Link's colours wait for Link") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    m.Show(o);
+    SelectRow(m, "Customize Link");
+    m.Press(Input::kDecide);
+    REQUIRE(m.page() == Page::kCustomize);
+    REQUIRE(Selected(m) == "Kokiri Tunic");
+    const std::string own = m.view().help;
+    CHECK_FALSE(own.empty());
+    m.SetCharacter(true);
+    CHECK(m.view().help == own + " " + Menu::kCharacterNote);   // after the row's own help
+    CHECK(m.view().rows[0].name == "Your name");   // the rows stay as they are
+    m.SetCharacter(false);
+    CHECK(m.view().help == own);
+}

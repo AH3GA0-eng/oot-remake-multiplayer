@@ -16,6 +16,7 @@
 #include "common/logging.h"
 #include "coop/protocol/messages.hpp"
 #include "coop_auto_rejoin.h"
+#include "coop_char_colours.h"
 #include "coop_colors.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
@@ -244,6 +245,7 @@ void RefreshSession(bool now) {
     if (now || NowMs() >= g_next_session_ms) {
         g_next_session_ms = NowMs() + 250;
         g_menu.SetSession(SessionNow());
+        g_menu.SetCharacter(CoopCharColours::ShownCharacter() != 0);   // (#308's Customize page: Link's colours wait)
     }
 }
 
