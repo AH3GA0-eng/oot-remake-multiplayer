@@ -667,13 +667,15 @@ TEST_CASE("pause tab: co-op that came with the game's start, and a failed Host, 
     Session launcher;
     launcher.by_launcher = launcher.in_one = true;
     CHECK(ActionFor(kRowSession, launcher) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kOpenMain);   // (never two A's to a teardown)
+    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kConfirmLeave);   // (left here too, after a second A)
     launcher.in_one = false;   // (not connected yet: still not Host)
     CHECK(ActionFor(kRowSession, launcher) == RowAction::kViewSession);
-    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kOpenMain);
+    CHECK(ActionFor(kRowLeave, launcher) == RowAction::kConfirmLeave);
     SessionView lv;
     lv.s = launcher;
-    CHECK(RowTexts(lv)[kRowLeave] == "Leave: restart the game");
+    CHECK(RowTexts(lv)[kRowLeave] == "Leave");
+    lv.confirm_leave = true;
+    CHECK(RowTexts(lv)[kRowLeave] == "A again: leave");
     // A Host (or Join) that failed: the row says so (why: the details list), and A shows the Session view.
     Session failed;
     failed.failed = true;
