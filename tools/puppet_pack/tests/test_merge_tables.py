@@ -818,3 +818,79 @@ class SnailCustomizeTest(MergeMembersTest):
         failed, _ = self.merge()
         self.assertEqual(failed, 0)
         self.assertNotIn(mt.SNAIL_MSG, self.served())
+
+
+class SelfModelsTest(unittest.TestCase):
+    """Row 202: Character Select's own Link models win Model/Player_<Age>; each copy gets co-op's own tunic names, in
+    the old top folder and under contents/ alike, so whichever wins your Link names your own tunic textures."""
+
+    def setUp(self):
+        from puppet_pack import tunic
+        self.tunic = tunic
+        self.dir = tempfile.mkdtemp(prefix="merge_tables_models_")
+        self.mods = os.path.join(self.dir, "mods")
+        self.pack = os.path.join(self.mods, *PACK.split("/"))
+        own = tunic.tile_name("green", tunic.SELF_LETTER)
+        self.put(os.path.join(self.pack, "romfs", "Tex", own + ".bntx.zs"), b"own tile")
+        self.child = b"FRES" + bytes(12) + b"Angin_Tile_A_Alb\x00Angin_Tile_A_Dark_Alb\x00Mt_Cloth_Parts_Player_Child_Alb\x00"
+        self.adult = b"FRES" + bytes(12) + b"Angin_Tile_A_Alb\x00Mt_Vest_Player_Adult_Alb\x00"
+        self.top = os.path.join(self.mods, "OoT Character Select")
+        self.under = os.path.join(self.mods, "contents", "0400486024DEC000", "OoT Character Select UI")
+        for m in (self.top, self.under):
+            self.put(os.path.join(m, "romfs", "Model", "Player_Child.Player_Child.bfres"), b"")   # (not the .zs)
+            self.put(os.path.join(m, "romfs", *mt.SELF_MODELS["Child"].split("/")), self.child)
+            self.put(os.path.join(m, "romfs", *mt.SELF_MODELS["Adult"].split("/")), self.adult)
+        self.lines = []
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    @staticmethod
+    def put(path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def model(self, mod, age):
+        return read(os.path.join(mod, "romfs", *mt.SELF_MODELS[age].split("/")))
+
+    def test_every_copy_names_your_own_tunic_textures_and_undo_puts_them_back(self):
+        t = self.tunic
+        own_tile = t.tile_name("green", t.SELF_LETTER).encode() + b"\x00"
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)
+        for m in (self.top, self.under):   # (both: whichever wins, your Link names yours)
+            child, adult = self.model(m, "Child"), self.model(m, "Adult")
+            self.assertIn(own_tile, child)
+            self.assertNotIn(b"Angin_Tile_A_Alb\x00", child)
+            self.assertIn(t.dark_name("green", t.SELF_LETTER).encode() + b"\x00", child)
+            self.assertNotIn(b"Mt_Cloth_Parts_Player_Child_Alb\x00", child)   # (the child's extra too)
+            self.assertIn(own_tile, adult)
+            self.assertNotIn(b"Mt_Vest_Player_Adult_Alb\x00", adult)
+            self.assertEqual(len(child), len(self.child))                      # (the same length: its size entry holds)
+            self.assertEqual(read(os.path.join(m, mt.MODELS_KEEP, *mt.SELF_MODELS["Child"].split("/"))), self.child)
+        self.assertEqual(len(self.lines), 4)
+        self.lines = []
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)   # the next start: nothing
+        self.assertEqual(self.lines, [])
+        mt.undo(self.mods, say=self.lines.append)                                      # --undo: theirs back
+        for m in (self.top, self.under):
+            self.assertEqual(self.model(m, "Child"), self.child)
+            self.assertEqual(self.model(m, "Adult"), self.adult)
+            self.assertFalse(os.path.isdir(os.path.join(m, mt.MODELS_KEEP)))
+
+    def test_a_new_copy_of_the_mod_is_done_again_from_its_own(self):
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        newer = self.child.replace(b"FRES", b"FRES", 1) + b"new\x00"
+        self.put(os.path.join(self.top, "romfs", *mt.SELF_MODELS["Child"].split("/")), newer)
+        self.lines = []
+        mt.merge_self_models(self.mods, "", self.lines.append)
+        self.assertEqual(len(self.lines), 1)
+        self.assertEqual(read(os.path.join(self.top, mt.MODELS_KEEP, *mt.SELF_MODELS["Child"].split("/"))), newer)
+        self.assertTrue(self.model(self.top, "Child").endswith(b"new\x00"))
+
+    def test_nothing_without_your_own_tunic_textures_in_the_pack(self):
+        os.remove(os.path.join(self.pack, "romfs", "Tex",
+                               self.tunic.tile_name("green", self.tunic.SELF_LETTER) + ".bntx.zs"))
+        self.assertEqual(mt.merge_self_models(self.mods, "", self.lines.append), 0)
+        self.assertEqual(self.model(self.top, "Child"), self.child)
+        self.assertEqual(self.lines, [])

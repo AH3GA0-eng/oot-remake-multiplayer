@@ -47,9 +47,9 @@ import sys
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from puppet_pack import byml, rstb, sarc, ui_pack, zs  # noqa: E402
+    from puppet_pack import byml, rstb, sarc, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 else:
-    from . import byml, rstb, sarc, ui_pack, zs
+    from . import byml, rstb, sarc, tunic, tunic_extra, ui_pack, zs
 
 LIST_FILE = "coop-mods.list"
 KEEP_DIR = "_coop-size-table"
@@ -830,11 +830,91 @@ def merge_one(root, codec, fname, win_name, win_path, others, say, fit=None):
     return 0
 
 
+# Row 202 (0.11.8: "customizing Link's colours does nothing" with Character Select on): your own Link wears the
+# pack's copy of each Link model that names co-op's own tunic textures (the S copies the module finds and repaints:
+# Set-KitSelfTunic, build.py's own model). Character Select ships its own Model/Player_Child and Player_Adult, which
+# win that file, so your Link named the game's shared tunic textures and the module found none of yours. At every
+# start each such copy of another mod gets the same names (tunic.model_for / tunic_extra.model_names, green, letter
+# S): every mod that ships one, wherever it sits (the old top folder or under contents/), so whichever wins, your
+# Link names yours. Its own copy is kept in <mod>/_coop-models/<path> with a stamp (`out <the file written>`);
+# --undo puts it back. Only when the pack has your own tunic textures (the kit put them in).
+MODELS_KEEP = "_coop-models"
+MODELS_HEAD = "coop-models 1"
+SELF_MODELS = {"Child": "Model/Player_Child.Player_Child.bfres.zs", "Adult": "Model/Player_Adult.Player_Adult.bfres.zs"}
+
+
+def self_model(data, age):
+    """A Link model with co-op's own tunic names (build.py's own copy for green)."""
+    names = [n for n, ages in tunic_extra.EXTRA.items() if age in ages]
+    out = tunic.model_for(data, "green", dark=True, letter=tunic.SELF_LETTER)
+    return tunic_extra.model_names(out, "green", names, letter=tunic.SELF_LETTER)
+
+
+def merge_self_models(root, romfs, say=print):
+    """Every other mod's copy of a Link model gets co-op's own tunic names. Returns the copies not done."""
+    order = load_order(root)
+    pack_path = next((p for n, p in order if fold(n) == PACK), None)
+    if pack_path is None:
+        return 0
+    own_tile = os.path.join(pack_path, "romfs", "Tex", tunic.tile_name("green", tunic.SELF_LETTER) + ".bntx.zs")
+    if not os.path.isfile(own_tile):
+        return 0   # (no own tunic textures in the pack: nothing to name)
+    codec = Codec(romfs)
+    failed = 0
+    for name, path in order:
+        if fold(name) == PACK:
+            continue
+        for age, rel in SELF_MODELS.items():
+            target = os.path.join(path, "romfs", *rel.split("/"))
+            if not os.path.isfile(target):
+                continue
+            kept = os.path.join(path, MODELS_KEEP, *rel.split("/"))
+            stamp_path = kept + ".txt"
+            stamp = read_text(stamp_path)
+            if stamp is not None and os.path.isfile(kept) and f"out {file_line(root, target)}" in stamp.split("\n"):
+                continue   # (done at an earlier start, and still the file written)
+            try:
+                if stamp is None or not os.path.isfile(kept):   # (the mod's own: the first start with it)
+                    os.makedirs(os.path.dirname(kept), exist_ok=True)
+                    shutil.copyfile(target, kept + ".tmp")
+                    os.replace(kept + ".tmp", kept)
+                elif f"out {file_line(root, target)}" not in stamp.split("\n"):
+                    shutil.copyfile(target, kept + ".tmp")   # (a new copy of the mod: its own again)
+                    os.replace(kept + ".tmp", kept)
+                with open(kept, "rb") as f:
+                    raw = f.read()
+                data = self_model(codec.unpack(raw), age)
+                write_atomic(target, codec.pack(data, raw))
+                write_atomic(stamp_path, f"{MODELS_HEAD}\nout {file_line(root, target)}\n".encode("utf-8"))
+                say(f"Your Link's colours: {name}'s {rel} names co-op's own tunic textures now (its own copy kept in "
+                    f"{name}/{MODELS_KEEP}).")
+            except (OSError, ValueError, MergeError, tunic.TunicError) as e:
+                failed += 1
+                say(f"Your Link's colours: {name}'s {rel} could not be given co-op's own tunic names ({e}): with it "
+                    "on, your Link's tunic colour does not change.")
+    return failed
+
+
 def undo(root, say=print):
     """Puts each kept original back, but only over the table the merge wrote: a new seed put into the folder since
     keeps its own table (the kept one is the old seed's). The kept folder and the mark go either way."""
     n = 0
     for name, path in find_mods(root).items():
+        models_keep = os.path.join(path, MODELS_KEEP)
+        if os.path.isdir(models_keep):   # (merge_self_models: each Link model back where it was written)
+            back = []
+            for rel in SELF_MODELS.values():
+                kept = os.path.join(models_keep, *rel.split("/"))
+                stamp = read_text(kept + ".txt")
+                target = os.path.join(path, "romfs", *rel.split("/"))
+                out = next((l[4:] for l in (stamp or "").split("\n") if l.startswith("out ")), None)
+                if os.path.isfile(kept) and out and os.path.isfile(target) and out == file_line(root, target):
+                    shutil.copyfile(kept, target)
+                    back.append(rel)
+            shutil.rmtree(models_keep)
+            say(f"Your Link's colours: {name}'s own {', '.join(back)} back." if back else
+                f"Your Link's colours: {name} has other Link models than the ones written: left as they are.")
+            n += 1
         members_keep = os.path.join(path, MEMBERS_KEEP)
         if os.path.isdir(members_keep):   # (merge_members: each archive back where the merge wrote it)
             back = []
@@ -906,7 +986,8 @@ def main(argv=None):
         members_failed, members_fit = merge_members(a.mods, a.romfs)
         for k, n in members_fit.items():
             fit[k] = max(fit.get(k, 0), n)
-        failed = merge_mods(a.mods, a.romfs, fit=fit) + members_failed
+        models_failed = merge_self_models(a.mods, a.romfs)   # (row 202: your Link's colours with Character Select)
+        failed = merge_mods(a.mods, a.romfs, fit=fit) + members_failed + models_failed
         # Last, on the tables as the game will read them: the pack's menu files only where they can load.
         menus_failed = guard_menus(a.mods, a.romfs)
         return 1 if (failed or rows_failed or menus_failed) else 0
