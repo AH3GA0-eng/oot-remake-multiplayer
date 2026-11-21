@@ -103,7 +103,7 @@ Squadala! team (report #N): ...`). The queue: `logs\problem-send\<date>-<report 
 
 **The crash ask on the title.** After a crash the game's title asks the player once to send it with `/bugreport`
 (`hookshot/src/coop_problem_ask.h`). A crash record the kit has sent (the bot took the zip that held it) is listed in
-`<game>ug-reports\coop-sent.txt`, and the title does not ask about it: the team has it already. With sending off that
+`<game>\bug-reports\coop-sent.txt`, and the title does not ask about it: the team has it already. With sending off that
 file is never written and the ask is as before. A game started again before the upload finished (about 20 s after the
 crash, longer without network) still asks.
 
