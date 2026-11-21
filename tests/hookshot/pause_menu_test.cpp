@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "coop/protocol/join_password.hpp"
 #include "coop_colors.h"
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
@@ -341,6 +342,40 @@ TEST_CASE("pause tab: Join offers the last game again first, one press") {
     CHECK(m.view().rows[0].name == "Join your friend again");
     m.SetRejoin("Saria", "");
     CHECK(m.view().rows[0].name == "Browse games");
+}
+
+TEST_CASE("pause tab: Browse games: a public game joins in one press with no password, a private one asks for it") {
+    Menu m;
+    CoopTitleMenu::Options o;
+    o.relay = "relay.example.net:27530";
+    m.Show(o);
+    m.Open(Page::kJoin);
+    SelectRow(m, "Browse games");
+    m.Press(Input::kDecide);
+    REQUIRE(m.page() == Page::kFind);
+    CoopPauseMenu::Menu::Found pub{"forest-4821", "Public game, Players 1/8", "forest-4821", 0, true, "forest-4821",
+                                   1, 8, true, true};
+    CoopPauseMenu::Menu::Found priv{"kokiri (Saria)", "Needs the host's password, Players 1/4", "kokiri", 0, true,
+                                    "Saria", 1, 4, true, false};
+    m.SetFound({pub, priv}, "");
+    SelectRow(m, "forest-4821");
+    m.Press(Input::kDecide);
+    auto r = m.TakeRequest();
+    REQUIRE(r.has_value());
+    CHECK(r->kind == Request::Kind::kJoin);
+    CHECK(r->text == "forest-4821@relay.example.net:27530 " + coop::protocol::public_join_password("forest-4821"));
+    // A private game: the Join page with the room typed and the password row chosen; nothing is tried.
+    m.Open(Page::kJoin);
+    SelectRow(m, "Browse games");
+    m.Press(Input::kDecide);
+    m.SetFound({pub, priv}, "");
+    SelectRow(m, "kokiri (Saria)");
+    m.Press(Input::kDecide);
+    CHECK(m.page() == Page::kJoin);
+    CHECK(Selected(m) == "Password");
+    CHECK_FALSE(m.TakeRequest().has_value());
+    REQUIRE_FALSE(m.NoteLines().empty());
+    CHECK(m.NoteLines()[0].find("needs the host's password") != std::string::npos);
 }
 
 TEST_CASE("pause tab: Find a game lists what is heard, searches the relay's rooms, and a pick fills the Join page") {

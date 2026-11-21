@@ -184,6 +184,7 @@ public:
         std::string host;          // its host's name (the search finds it too)
         int count = 0, max = 0;    // its players and the most it takes (the sort, the filter)
         bool same_version = true;
+        bool is_public = false;    // a public game (CoopRoomList::Room::is_public): joined at once, no password
         bool operator==(const Found&) const = default;
     };
     void SetFound(std::vector<Found> games, std::string state);

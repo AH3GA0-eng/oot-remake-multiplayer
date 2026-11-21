@@ -1053,24 +1053,26 @@ bool g_finding = false;
 void RefreshFound(std::uint64_t now) {
     const bool want = (g_shown || g_native) && g_menu.page() == CoopPauseMenu::Page::kFind;
     if (!want) {
-        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(false, now, {});
+        if (g_finding) CoopLanNet::Look(false, now), CoopRoomList::Look(CoopRoomList::Viewer::kMenu, false, now, {});
         g_finding = false;
         return;
     }
     g_finding = true;
     const bool online = g_menu.find_online();
     CoopLanNet::Look(!online, now);
-    CoopRoomList::Look(online, now, g_menu.options().relay);
+    CoopRoomList::Look(CoopRoomList::Viewer::kMenu, online, now, g_menu.options().relay);
     std::vector<CoopPauseMenu::Menu::Found> games;
     std::string state;
     const int mine = coop::protocol::kProtocolVersion;
     if (online) {
         const CoopRoomList::Snapshot rooms = CoopRoomList::Now();
         for (const CoopRoomList::Room& r : rooms.rooms) {
-            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopPauseTab::ListValue(r.players, r.max, r.protocol == mine),
-                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine});
+            // (the same words as the Lobby tab's and the pause tab's Public games: CoopRoomList::DetailText)
+            games.push_back({CoopPauseTab::ListName(r.host, r.room), CoopI18n::Tr(CoopRoomList::DetailText(r, mine)),
+                             r.room, 0, CoopRoomList::Joinable(r, mine), r.host, r.players, r.max, r.protocol == mine,
+                             r.is_public});
         }
-        state = rooms.state;
+        state = rooms.state.empty() ? std::string() : CoopI18n::Tr(rooms.state);
     } else {
         for (const CoopLan::Heard& h : CoopLanNet::Games(now)) {
             games.push_back({h.game.name + "'s game" + (h.game.room.empty() ? "" : " (" + h.game.room + ")"),

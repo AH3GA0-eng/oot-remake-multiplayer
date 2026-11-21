@@ -1533,8 +1533,8 @@ TEST_CASE("pause tab: the game browser: the rows choose the list, search, filter
     v.s.online = true;   // (the relay's list: why there are none, in the first game row)
     v.online_state = "No relay set";
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[0] == "Online (0)");
-    CHECK(ListLines(v)[0].name == "Online games");
+    CHECK(rows[0] == "Public games (0)");
+    CHECK(ListLines(v)[0].name == "Public games");
     CHECK(ListLines(v)[1].name == "No relay set: A to type one");   // (typed on the keyboard, saved)
     CHECK(ListLines(v)[1].act == RowAction::kTypeRelay);
     v.relay_set = true;   // (a relay that lists nothing: why, as it says)
@@ -1557,7 +1557,7 @@ TEST_CASE("pause tab: the game browser: the rows choose the list, search, filter
     v.online_list[7] = ListLine{"a room with a very long name indeed (Saria)", "Other version"};
     v.s.online_listed = 10;
     rows = RowTexts(View::kLan, v);
-    CHECK(rows[0] == "Online (10)");
+    CHECK(rows[0] == "Public games (10)");
     lines = ListLines(v);
     CHECK(lines[0].name == "Online games  < 1 of 2 >");   // (more than a page: the heading pages it)
     CHECK(lines[2].name == "kokiri (Saria)");

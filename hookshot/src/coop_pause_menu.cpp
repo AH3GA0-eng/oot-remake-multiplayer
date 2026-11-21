@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <utility>
 
+#include "coop/protocol/join_password.hpp"
 #include "coop_i18n.h"
 
 namespace CoopPauseMenu {
@@ -422,7 +423,7 @@ std::vector<Menu::Line> Menu::Lines() const {
             }
             // (the games on this network and the relay's public rooms: one picked fills the rows below. After the
             // last game again, which stays the first row: one press)
-            out.push_back({PageRow("Browse games", find_online_ ? "Online" : "This network", off), Act::kOpenFind,
+            out.push_back({PageRow("Browse games", find_online_ ? "Public games" : "This network", off), Act::kOpenFind,
                            "Lists the games on this network and the public rooms on your relay, with a search. Pick "
                            "one and its room or address is filled in below."});
             const bool typing_ip = typing_ && typing_act_ == Act::kJoinIp;
@@ -461,7 +462,7 @@ std::vector<Menu::Line> Menu::Lines() const {
         }
         break;
     case Page::kFind: {
-        out.push_back({Choice("List", find_online_ ? "Online" : "This network"), Act::kFindList,
+        out.push_back({Choice("List", find_online_ ? "Public games" : "This network"), Act::kFindList,
                        "Online: the public rooms on your relay (Settings > Relay). This network: the games hosted "
                        "in your home."});
         const bool typing_search = typing_ && typing_act_ == Act::kFindSearch;
@@ -1403,9 +1404,22 @@ void Menu::Decide(Act act) {
             join_ip_ = g.join;
             join_port_ = g.port > 0 && g.port != CoopTitleMenu::kDefaultPort ? std::to_string(g.port) : std::string();
         }
+        if (find_online_ && g.is_public) {
+            // A public game: joined at once with no password to type (its password is the room's, as its host made
+            // it). The field stays empty: nothing of it is shown or kept.
+            join_password_ = coop::protocol::public_join_password(g.join);
+            UpdateJoinFromIpPort();
+            join_password_.clear();
+            Go(Page::kJoin, Act::kJoinNow);
+            request_ = Request{Request::Kind::kJoin, join_};
+            break;
+        }
         UpdateJoinFromIpPort();
-        // (a room on the relay asks its password as a rule; a game on this network lets its own network in)
+        // (a room on the relay asks its password as a rule (a private game, or an older kit's: never tried with the
+        // public password, so an older host's wrong-password count is never touched); a game on this network lets
+        // its own network in)
         Go(Page::kJoin, find_online_ ? Act::kJoinPassword : Act::kJoinNow);
+        if (find_online_) note_ = {"This game needs the host's password. Type it, then Join."};
         break;
     }
     case Act::kName:

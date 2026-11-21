@@ -923,7 +923,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             break;
         }
         // (the list shown and how many it keeps; A flips to the other one)
-        rows[0] = std::string(v.s.online ? "Online" : "This network") + " (" + std::to_string(BrowseListed(v.s)) + ")";
+        rows[0] = std::string(v.s.online ? "Public games" : "This network") + " (" + std::to_string(BrowseListed(v.s)) + ")";
         rows[1] = v.search.empty() && v.typing != 5 ? std::string("Search: A to type") : "Search: " + v.search;
         rows[2] = std::string("Show: ") + CoopBrowse::FilterWords(v.s.browse_filter);
         rows[3] = std::string("Sort: ") + CoopBrowse::SortWords(v.s.browse_sort);
@@ -1260,7 +1260,7 @@ std::vector<ListLine> ListLines(const SessionView& v) {
     // (the heading: the list and its page, "< 1 of 3 >" when there are more (a click on its left half goes back a
     // page, on its right half on); its box asks the list again (a click, or Y))
     const int pages = CellPages(BrowseListed(v.s));
-    std::string head = v.s.online ? "Online games" : "This network";
+    std::string head = v.s.online ? "Public games" : "This network";
     if (pages > 1) head += "  < " + std::to_string((v.s.cell_page % pages + pages) % pages + 1) + " of " +
                            std::to_string(pages) + " >";
     lines[0] = ListLine{head, "Refresh", RowAction::kBrowseRefresh};
