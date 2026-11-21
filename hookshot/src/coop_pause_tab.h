@@ -207,7 +207,8 @@ public:
     void SetSettingsUsable(bool usable) { settings_ok_ = usable; }
     bool SettingsUsable() const { return settings_ok_; }
     // Which of System's buttons of ours the game's cursor is on now (the module reads it while A is held): 0 the
-    // Multiplayer button (Pa_Button_06), 1 the Longshot Settings button (Pa_Button_05), -1 neither. Its A opens that
+    // Multiplayer button (Pa_Button_06), 1 the Longshot Settings button (Pa_Button_05), 2 the Customize Link button
+    // (Pa_Button_07: the Multiplayer page, opened on Settings and look's Customize page), -1 neither. Its A opens that
     // page.
     void SetSystemButton(int which) { system_button_ = which; }
     // One of our pages was opened (A on its button) or left (B on its rows) since the last call (Which() says which):
@@ -215,6 +216,12 @@ public:
     // buttons' names).
     bool TakeOpened() { return std::exchange(opened_, false); }
     bool TakeLeft() { return std::exchange(left_, false); }
+    // The button the page was opened from (0, 1, 2 as SetSystemButton): its cursor goes back to it when the page goes.
+    int OpenedFrom() const { return opened_from_; }
+    // Opened from the Customize Link button since the last call: the module shows Settings and look's Customize page.
+    bool TakeCustomizeOpen() { return std::exchange(customize_open_, false); }
+    // Back to System from a view (B on Settings and look opened by the Customize Link button), the cursor on its button.
+    void LeaveToButton(const char* why) { Hide(why); left_ = true; }
     // Which of our pages shows (while Shown): 0 Multiplayer, 1 Longshot Settings.
     int Which() const { return which_; }
     // hos_coop_game_pause_page: -1 while our pages can be used (they are in System's place: the mouse's tabs are the
@@ -299,6 +306,8 @@ private:
     int which_ = 0;   // our page shown: 0 Multiplayer, 1 Longshot Settings (kept while hidden: the menu opens on it again)
     bool settings_ok_ = false;
     int system_button_ = -1;
+    int opened_from_ = 0;
+    bool customize_open_ = false;
     bool opened_ = false, left_ = false;
     const char* pages_sound_ = nullptr;
     std::string why_;

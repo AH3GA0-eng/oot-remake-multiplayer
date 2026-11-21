@@ -165,6 +165,10 @@ Checked on the game's own files, in memory: each layout's 40 panes become 41 and
 - Seen in a run (2026-11-18, the probe): both screens update once a frame, on several of the game's threads; R on Items asks 5, the page follows after the slide; the strip's mode is 1 in the Plus menu.
 
 
+### Customize Link (a button on System)
+
+System's third button of ours (the pack's `Pa_Button_07`, above Multiplayer) opens the Multiplayer page straight on Settings and look's Customize page, Link beside it (`Page::OpenedFrom` 2, `TakeCustomizeOpen`). B goes back step by step (a colour's editor, the list, the rows), and from the rows to System, the cursor on Customize Link again (`LeaveToButton`). An older pack has no such button: the module logs "Customize Link not in the pack" and the page is reached through Multiplayer as before.
+
 ### Longshot Settings (a button on System)
 
 Longshot's own options (its Insert menu's rows) in the game's UI, from a button on the System page. Patch 0032 hands the module the rows (`HosCoopApi::setting`, `setting_set`: the control bridge's own, `CoopLongshotSettings`); `tools/puppet_pack/pause_menu.py` makes the button and the page.
@@ -175,6 +179,17 @@ Longshot's own options (its Insert menu's rows) in the game's UI, from a button 
 - **The list** (the browser's Options rows `Pa_List_00..06`, live texts 22 to 41): a header, the category and its page ("Graphics (page 1 of 4)", its value box and arrows hidden), then six settings a page: the name ("*" after one that applies at the next start), the value between the arrows; one with nothing to choose on this PC dimmed. Debug tools is dimmed as "Debug tools (F1 menu only)": Longshot turns it on only in its own menu, which asks first.
 - **The pad:** Right or A into the list, up and down in it (turning the page at its ends), Left and Right change the value (on past a value Longshot does not take here: `StepSetting`), A the next of a few choices (`kCycleChoices`: never a slider back to its start), B back to the rows. **The mouse:** a setting under it is picked, a click on an arrow changes it; a click on a category only picks it (an A with the left button down in the last 400 ms and the mouse on a category, or `MouseRows`' click); the mouse onto the categories gives the rows the pad.
 - **A test switch** (`COOP_TEST_LONGSHOT_SETTINGS=1`): as the page first shows, every setting is checked to be in one category and set a step and back through the bridge, each logged (`coop: settings test: ...`). It changes the options file; back it up first.
+
+### Original game (one switch for the game as it came)
+
+A row of Co-op settings (F1 and the pause menu's Settings and look), **Original game** (coop-options.ini `original_game = on`; `hookshot/src/coop_original.h`), makes the game as it came from the next start:
+
+- **The module stays off.** `CoopHookshot::Start` returns before anything of co-op (no session, no pages or buttons of ours on System or the title, no look on Link, no HUD, no networking, no code mods), and the window's title and the Discord line are Longshot's own.
+- **Longshot loads no mod.** When the row is turned on, `coop-mods.list` (patch 0011) names every mod in the mods folder as off, the co-op pack and Save Profiles too. The list as it was is kept as `coop-mods.list.before-original` and put back when the row goes off, so each mod comes back as the player had it.
+- **The launcher touches nothing.** `play.ps1` starts the game without the pack, size table or Discord steps.
+- **The way back stays in the game.** While original, the module gives Longshot's F1 menu one tab, **Original game**, with the switch alone. Turned off there, the next start is the co-op game again.
+
+What Longshot was built with (our patches in `longshot.exe`) stays. They do nothing of their own without the module, apart from the Discord application name (patch 0026), crash reports (0027) and Skip title (0028).
 
 ## The Lobby tab
 

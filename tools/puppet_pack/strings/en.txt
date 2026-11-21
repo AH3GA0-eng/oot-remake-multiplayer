@@ -19,6 +19,7 @@ Pa_Coop_00-Pa_Button_04-T_Btn_00 = Leave
 # System's two buttons of ours (pause_menu.py's Pa_Button_05 and Pa_Button_06): Longshot Settings and Multiplayer.
 Pa_System_00-Pa_Button_05-T_Btn_00 = Longshot Settings
 Pa_System_00-Pa_Button_06-T_Btn_00 = Multiplayer
+Pa_System_00-Pa_Button_07-T_Btn_00 = Customize Link
 # Longshot Settings' five rows (Pa_Settings_00): Longshot's options by their tab in its own menu.
 Pa_Settings_00-Pa_Button_00-T_Btn_00 = Graphics
 Pa_Settings_00-Pa_Button_01-T_Btn_00 = Audio

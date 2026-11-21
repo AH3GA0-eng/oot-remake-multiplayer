@@ -120,15 +120,17 @@ class RowsTest(unittest.TestCase):
         d = system()
         n = pm.add_system_buttons(pm.add_rows(d))
         panes, parts = ui_pack.read_layout(n)
-        self.assertEqual([p.name for p in panes[-2:]], [pm.SETTINGS_BUTTON, pm.MULTIPLAYER_BUTTON])
-        self.assertEqual([p.name for p in parts[-2:]], [pm.SETTINGS_BUTTON, pm.MULTIPLAYER_BUTTON])
-        self.assertEqual(panes[-1].id, ui_pack.part_id(pm.MULTIPLAYER_BUTTON))
+        ours = [pm.SETTINGS_BUTTON, pm.MULTIPLAYER_BUTTON, pm.CUSTOMIZE_BUTTON]
+        self.assertEqual([p.name for p in panes[-3:]], ours)
+        self.assertEqual([p.name for p in parts[-3:]], ours)
+        self.assertEqual(panes[-1].id, ui_pack.part_id(pm.CUSTOMIZE_BUTTON))
         # one and two row steps (Pa_Button_03 to Pa_Button_04) below Pa_Button_04, beside the page's other buttons
         x3, y3, parent3, _ = pane(n, "Pa_Button_03")
         x4, y4, _, _ = pane(n, "Pa_Button_04")
         self.assertEqual(pane(n, pm.SETTINGS_BUTTON)[:3], (x4, y4 + (y4 - y3), parent3))
         self.assertEqual(pane(n, pm.MULTIPLAYER_BUTTON)[:3], (x4, y4 + 2 * (y4 - y3), parent3))
-        for part in parts[-2:]:
+        self.assertEqual(pane(n, pm.CUSTOMIZE_BUTTON)[:3], (x4, y4 + 3 * (y4 - y3), parent3))
+        for part in parts[-3:]:
             self.assertEqual(ui_pack._cstr(n, struct.unpack_from("<Q", n, part.record)[0]), "PaCommonBtnThin_00")
         for p in panes[-2:]:
             self.assertEqual(struct.unpack_from("<I", n, p.record + 0x38)[0] & 1, 0)   # (stored hidden)
