@@ -1140,8 +1140,7 @@ TEST_CASE("pause tab: q and e type into the code and the password, the page stay
     CHECK(m.page() == Page::kJoin);
     m.Press(Input::kDecide);
     CHECK_FALSE(m.typing());
-    // (a room name: through the built-in relay)
-    CHECK(m.join_text() == std::string("queue@") + CoopTitleMenu::kDefaultRelay);
+    CHECK(m.join_text() == "queue");   // (a typed bare name stays as typed: Join tries a PC first, then the room)
     // the Password row: the same
     Menu p;
     p.Show(CoopTitleMenu::Options{});

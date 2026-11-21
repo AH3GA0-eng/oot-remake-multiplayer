@@ -685,9 +685,10 @@ RowAction ActionFor(int row, const Session& s) {
         // look: a tester pressed "Let in: nobody asks" and a view with nothing to do came)
         return s.asking || s.invite ? RowAction::kViewLetIn : RowAction::kViewMenu;
     case kRowLeave:
-        if (s.by_launcher) return RowAction::kOpenMain;   // (not stopped here: the main page says to start the game again)
-        // (a second A leaves: never one stray press. In no session: Settings and look)
-        return s.in_one ? RowAction::kConfirmLeave : RowAction::kViewMenu;
+        // (a second A leaves: never one stray press. In no session: Settings and look. Co-op the launcher started
+        // (Nucleus Co-op, Host.bat) leaves here too: before, its row opened the overlay to say "restart the game", a
+        // tester's "opens the overlay")
+        return s.in_one || s.by_launcher ? RowAction::kConfirmLeave : RowAction::kViewMenu;
     default:
         return RowAction::kNone;
     }
@@ -885,14 +886,12 @@ std::vector<std::string> RowTexts(const SessionView& v) {
     } else {
         rows[kRowLetIn] = !v.s.auto_rejoin ? "Auto-rejoin: Off" : v.s.rejoining ? "Auto-rejoin: trying..." : "Auto-rejoin: On";
     }
-    if (v.s.by_launcher) {
-        rows[kRowLeave] = "Leave: restart the game";
-    } else if (v.confirm_leave) {
+    if (v.confirm_leave) {
         rows[kRowLeave] = v.confirm_click ? (v.s.hosting ? "Click again to stop" : "Click again to leave")   // (kRowChars)
                                           : (v.s.hosting ? "A again: stop hosting" : "A again: leave");
     } else {
         // (in no session: nothing to leave, Settings and look there; the release is on the list, DetailLines)
-        rows[kRowLeave] = !v.s.in_one ? "Settings and look" : v.s.hosting ? "Stop hosting" : "Leave";
+        rows[kRowLeave] = !v.s.in_one && !v.s.by_launcher ? "Settings and look" : v.s.hosting ? "Stop hosting" : "Leave";
     }
     for (std::string& r : rows) r = Fit(std::move(r));
     return rows;

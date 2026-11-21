@@ -883,6 +883,26 @@ void Menu::EndTyping(bool keep) {
         field = name_before_;
         return;
     }
+    if (act == Act::kNewPassword) {   // (never kept here: handed to the host on Enter, else dropped)
+        const std::string typed(Trim(new_password_));
+        new_password_.clear();
+        if (!keep) {
+            return;
+        }
+        if (typed.empty() || !CoopTitleMenu::PasswordOk(typed)) {
+            note_ = {typed.empty() ? "Join password: type the new one first. It was not changed."
+                                   : "Join password: no spaces, at most 128 characters. It was not changed."};
+            return;
+        }
+        request_ = Request{Request::Kind::kSetPassword, typed};
+        show_password_ = true;   // (the new one shown, once the host takes it; the selection stays on this row)
+        const auto lines = Lines();
+        const auto same = std::find_if(lines.begin(), lines.end(), [](const Line& l) { return l.act == Act::kNewPassword; });
+        if (same != lines.end()) {
+            selected_ = static_cast<std::size_t>(same - lines.begin());
+        }
+        return;
+    }
     if (act == Act::kFindSearch) {   // (the list follows it; Esc: the search as it was)
         find_search_ = keep ? std::string(Trim(find_search_)) : search_before_;
         Clamp();
@@ -1338,9 +1358,18 @@ void Menu::Decide(Act act) {
         const std::vector<Found> games = FoundShown();
         if (k >= games.size()) break;
         const Found& g = games[k];
-        join_ip_ = g.join;
-        join_port_ = g.port > 0 && g.port != CoopTitleMenu::kDefaultPort ? std::to_string(g.port) : std::string();
         join_password_.clear();
+        if (find_online_) {
+            // (the relay's list names rooms, never PCs: joined as room@relay straight away, so the bare-name rule of a
+            // typed line, a PC first, never catches it; a name the relay sent that is not a room name is not joined)
+            if (!CoopTitleMenu::RoomNameOk(g.join)) break;
+            const std::string_view relay = Trim(options_.relay);
+            join_ip_ = g.join + "@" + std::string(relay.empty() ? std::string_view(CoopTitleMenu::kDefaultRelay) : relay);
+            join_port_.clear();   // (the relay's port is in the relay line)
+        } else {
+            join_ip_ = g.join;
+            join_port_ = g.port > 0 && g.port != CoopTitleMenu::kDefaultPort ? std::to_string(g.port) : std::string();
+        }
         UpdateJoinFromIpPort();
         // (a room on the relay asks its password as a rule; a game on this network lets its own network in)
         Go(Page::kJoin, find_online_ ? Act::kJoinPassword : Act::kJoinNow);

@@ -392,14 +392,37 @@ void Follow(const HosCoopStatus& st) {
     const std::uint64_t now = NowMs();
     // Games on this network (coop_lan.h): a hosting game says it is there (its name, port, players, room; never the
     // join password), every CoopLan::kEveryMs.
-    if (host && st.state == HOS_COOP_HOSTING) {
+    // A game the launcher started on a server of this very PC (Nucleus Co-op's host PC, Host.bat: coop.ini's server
+    // 127.0.0.1) says so too, once it is the session's host: without it Nucleus's "Join a game on this network" on
+    // another PC found nothing (a tester's two PCs, 2026-11-20). Its port is coop.ini's.
+    std::uint16_t launcher_port = 0;
+    if (g_coop_on) {
+        static std::uint64_t read_ms = 0;
+        static std::uint16_t local_port = 0;
+        if (read_ms == 0 || now - read_ms > 5000) {
+            read_ms = now;
+            const std::string ini = ReadText(CoopIni());
+            std::string server(CoopTitleMenu::Trim(CoopTitleMenu::IniGet(ini, "server").value_or("")));
+            std::uint16_t port = CoopTitleMenu::kDefaultPort;
+            if (const auto colon = server.rfind(':'); colon != std::string::npos && server.find(':') == colon) {
+                if (const auto p = CoopTitleMenu::ParsePort(server.substr(colon + 1))) port = *p;
+                server.resize(colon);
+            } else if (const auto p = CoopTitleMenu::ParsePort(CoopTitleMenu::IniGet(ini, "port").value_or(""))) {
+                port = *p;
+            }
+            local_port = server == "127.0.0.1" || server == "localhost" || server == "::1" ? port : 0;
+        }
+        const CoopLobby::Seen seen = CoopLobby::Now();
+        if (local_port != 0 && seen.connected && seen.self != 0 && seen.self == seen.host) launcher_port = local_port;
+    }
+    if ((host && st.state == HOS_COOP_HOSTING) || launcher_port != 0) {
         const CoopTitleMenu::Options& o = g_menu.options();
         CoopLan::Game g;
         g.name = o.name;
         for (const auto& row : CoopHook::PlayerList()) {   // (the name co-op plays this game under, once it is in)
             if (row.self && !row.name.empty()) g.name = row.name;
         }
-        g.port = o.host_port != 0 ? o.host_port : CoopTitleMenu::kDefaultPort;
+        g.port = launcher_port != 0 ? launcher_port : o.host_port != 0 ? o.host_port : CoopTitleMenu::kDefaultPort;
         const CoopLobby::Seen seen = CoopLobby::Now();
         g.players = seen.connected ? static_cast<int>(seen.players.size()) : 1;
         g.max = o.max_players;
@@ -609,7 +632,7 @@ bool Join(const std::string& text_in) {
     if (!std::exchange(g_name_retry, false)) g_name_suffix.clear(), g_name_tries = 0;   // (a join of the player's own)
     std::string name = o.name;
     if (!g_name_suffix.empty()) {   // (at most 16 bytes in all: the name cut before a UTF-8 letter's start)
-        std::size_t n = std::min(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
+        std::size_t n = (std::min)(name.size(), std::size_t{16} > g_name_suffix.size() ? 16 - g_name_suffix.size() : 0);
         while (n > 0 && n < name.size() && (static_cast<unsigned char>(name[n]) & 0xc0) == 0x80) --n;
         name = std::string(CoopTitleMenu::Trim(name.substr(0, n))) + g_name_suffix;
     }
@@ -1488,10 +1511,17 @@ void HostNow() {
 
 void LeaveNow() {
     std::lock_guard lock(g_mutex);
-    if (g_coop_on) {   // (as the menu: no Leave row for it; its main page says to start the game again)
+    if (g_coop_on) {   // co-op the launcher started (Nucleus Co-op, Host.bat): left here as any join, its server stays
         FreshMain();
-        LOG_INFO(Core, "coop: multiplayer tab: not leaving: co-op came with the game's start");
-        SayOnPage(kSayLauncher);
+        LOG_INFO(Core, "coop: multiplayer tab: leaving the session the game started with (the launcher's): co-op "
+                       "stops here, the server and the other players go on");
+        CoopHook::End();
+        CoopLobby::Forget();
+        g_coop_on = false;
+        g_player_left = true;
+        g_doing.clear();
+        RefreshSession(true);
+        g_menu.SetNote({"Co-op stopped. You play on alone.", "Host or Join to play together again."});
         return;
     }
     Act(Request{Request::Kind::kLeave, {}});
