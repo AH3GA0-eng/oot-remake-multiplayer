@@ -724,10 +724,11 @@ void StartModule() {
     }
     const auto ini = Common::FS::GetEdenPath(Common::FS::EdenPath::ConfigDir) / "coop.ini";
     std::vector<std::string> errors;   // (said by the module's own start)
-    // The parts but the tunic: from coop-options.ini of a kit, else coop.ini.
-    const auto kit = CoopFiles::FindKit();
+    // The parts but the tunic: from the file the pause menu saves them to (CoopTitle::LookFile). Row 198 (0.11.9):
+    // read from a kit's coop-options.ini only, a game with its coop-options.ini beside longshot.exe (the owner's
+    // test pair, Nucleus instances) saved the look there and started without it: the chosen colours never came back.
     std::vector<std::string> part_errors;
-    Look worn = ReadParts(CoopFiles::ReadText(kit ? *kit / "coop-options.ini" : CoopFiles::CoopIni()), &part_errors);
+    Look worn = ReadParts(CoopFiles::ReadText(CoopTitle::LookFile()), &part_errors);
     worn[Part::tunic] = CoopHook::LoadSettings(ini, errors).color;
 
     g_textures = std::make_unique<GameTextures>();
