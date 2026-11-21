@@ -22,6 +22,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
+#include "coop_pack_notice.h"
 #include "coop_mod_screens.h"
 #include "coop_mods_runtime.h"
 #include "coop_pause.h"
@@ -953,6 +954,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
         const char* words = sub && f >= 0 && static_cast<std::size_t>(f) < look.count
                                 ? CoopTitleMenu::MenuHint(look.rows[static_cast<std::size_t>(f)].action)
                                 : nullptr;
+        if (words == nullptr && !sub && CoopPackNotice::DirectOn()) words = CoopPackNotice::kDirectHint;   // (player report 225: solo has no chat box)
         const bool hint = words != nullptr && layout != 0 && g_column.hint != 0 &&
                           SetLiveText(ctx, layout, kHintSlot, CoopI18n::Tr(words));
         ShowColumn(ctx, screen, CoopTitleNative::kButtons, hint, {});

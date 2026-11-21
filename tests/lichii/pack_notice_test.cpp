@@ -48,3 +48,13 @@ TEST_CASE("pack notice: a game started by hand says to use the kit's start file 
     CHECK(CoopPackNotice::TakeLines(false).empty());   // once per run
     CoopPackNotice::EnableDirect(false);
 }
+
+TEST_CASE("pack notice: the title's hint line (solo, no chat box) follows the same switch") {
+    CoopPackNotice::EnableDirect(false);
+    CHECK_FALSE(CoopPackNotice::DirectOn());
+    CoopPackNotice::EnableDirect(true);
+    CHECK(CoopPackNotice::DirectOn());
+    CHECK(std::string(CoopPackNotice::kDirectHint).find("Start Squadala") != std::string::npos);
+    CHECK(std::string(CoopPackNotice::kDirectHint).size() <= 159);   // the hint line's placeholder holds 159 bytes
+    CoopPackNotice::EnableDirect(false);
+}

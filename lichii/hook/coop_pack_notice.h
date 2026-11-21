@@ -81,13 +81,18 @@ inline std::atomic<bool>& DirectSaid() {
 
 inline void EnableDirect(bool on) { detail::DirectOn().store(on); }
 
+// Solo, with no session and so no chat box: the title's own hint line under its buttons says it (coop_title.cpp).
+inline bool DirectOn() { return detail::DirectOn().load(std::memory_order_relaxed); }
+inline constexpr const char* kDirectHint =
+    "Not started with Start Squadala: close the game and start the kit with Start Squadala.";
+
 // Present thread, once per frame: the line to add to the chat, or nothing.
 inline std::vector<std::string> TakeLines(bool others) {
     if (detail::DirectOn().load(std::memory_order_relaxed) && !detail::DirectSaid().exchange(true)) {
         return {kDirectText};
     }
     const int s = detail::State().load(std::memory_order_relaxed);
-    if (s == 0 ||!detail::TheOnce().Due(s == 1, others)) {
+    if (s == 0 || !detail::TheOnce().Due(s == 1, others)) {
         return {};
     }
     return {kText};
