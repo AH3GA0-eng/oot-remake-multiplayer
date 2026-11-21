@@ -19,6 +19,8 @@ namespace {
 
 // A screen whose updates stopped this long ago is taken as gone (the game updates an open menu once a frame).
 constexpr std::uint64_t kStaleMs = 250;
+constexpr std::uint64_t kPlusGapMs = 200;    // after our - is let go: at least this before the + press
+constexpr std::uint64_t kPlusWaitMs = 3000;  // the - menu not closed by then: no + press
 constexpr std::uint64_t kTypingStartMs = 400;   // (an A this soon after typing began is the one that began it)
 // A window over the page keeps it away this long after its last opening, open or closing update.
 constexpr std::uint64_t kBlockMs = 250;
@@ -175,7 +177,34 @@ bool Page::CanMinus(std::uint64_t now_ms) const {
 
 // The pad while the - menu is up and ours can be used: R on Map onto ours, R / L among ours, L off the first back to
 // Map. Buttons the module took are kept from the game until let go.
+void Page::SetMinusRows(std::uint32_t shown) {
+    minus_rows_ = shown & ((1u << kRows) - 1);
+    if (minus_rows_ != 0 && (minus_rows_ & (1u << minus_row_)) == 0) MinusStep(1);   // (its row gone: the next shown)
+}
+
+void Page::MinusStep(int dir) {
+    if (minus_rows_ == 0) return;
+    for (int k = 1; k <= kRows; ++k) {
+        const int r = ((minus_row_ + dir * k) % kRows + kRows) % kRows;
+        if ((minus_rows_ & (1u << r)) == 0) continue;
+        // (no wrap, as System's buttons; a row gone from under the cursor finds the next one around)
+        if ((minus_rows_ & (1u << minus_row_)) != 0 && (dir > 0 ? r < minus_row_ : r > minus_row_)) return;
+        minus_row_ = r;
+        return;
+    }
+}
+
+void Page::GoToPlus() {
+    to_plus_ = 2, keep_view_ = true;
+    again_ = true, which_ = 0;   // (the + menu's opening on System shows the Multiplayer page: ShowAgain)
+}
+
 std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
+    if (to_plus_ > 0) {   // (the game's -: pressed one read, let go the next; the rest is kept from the game)
+        swallow_ |= buttons;
+        if (to_plus_ == 1) plus_since_ms_ = std::max<std::uint64_t>(pad_ms_, 1);   // (then the + press: PlusAfterMinus)
+        return to_plus_-- == 2 ? kPadMinus : 0;
+    }
     if (minus_tab_ < 0) {
         if ((down & kPadR) != 0 && strip_.lit == kMapCategory) {
             minus_tab_ = 0, minus_slide_ = 1;
@@ -189,12 +218,21 @@ std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
         if (minus_tab_ < kMinusTabs - 1) {
             ++minus_tab_, minus_slide_ = 1;
             strip_sound_ = "mc_TabToRight";
+            minus_row_ = 0, minus_rows_ = 0;   // (another page: its first row; the module sets its rows)
         }
         swallow_ |= kPadR;
     } else if ((down & kPadL) != 0) {
         --minus_tab_, minus_slide_ = -1;   // (off the first: Map again)
         strip_sound_ = "mc_TabToLeft";
+        minus_row_ = 0, minus_rows_ = 0;
         swallow_ |= kPadL;
+    } else if ((down & (kPadUp | kPadStickUp | kPadDown | kPadStickDown)) != 0 && minus_rows_ != 0) {
+        const int was = minus_row_;
+        MinusStep((down & (kPadUp | kPadStickUp)) != 0 ? -1 : 1);
+        if (minus_row_ != was) strip_sound_ = "button_on";
+    } else if ((down & kPadA) != 0 && (minus_rows_ & (1u << minus_row_)) != 0) {
+        minus_decide_ = minus_row_;
+        strip_sound_ = "button_decide";
     }
     // (ours shows: its page has the pad; B, + and - stay the game's, which close or change the menu)
     const std::uint64_t game = kPadB | kPadPlus | kPadMinus;
@@ -297,7 +335,8 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         // (the - menu's tabs of ours: shown while its strip is open; gone with it, and ours with them)
         if (minus_ok_) {
             const bool minus_open = f.mode != kPlusMode && (f.state == 1 || f.state == 2);
-            if (!minus_open) minus_tab_ = -1;
+            if (!minus_open) minus_tab_ = -1, minus_row_ = 0, minus_rows_ = 0, minus_decide_ = -1;
+            if (!minus_open && to_plus_ > 0) to_plus_ = 0, plus_since_ms_ = 0, keep_view_ = again_ = false;   // (closed early)
             const int state = !minus_open ? -2 : minus_tab_;
             const std::uint64_t gen = strip_seen_.gen;
             if (state != minus_set_ || (minus_open && minus_gen_ != gen)) {
@@ -324,6 +363,23 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     swallow_ &= buttons;   // (let go: the game gets it again)
     if (shown_ && !CanStay(now_ms)) {
         Hide("the menu's state changed", pages_.state == 3 || pages_.state == 0 || strip_.state == 3 || strip_.state == 0);
+    }
+    if (plus_press_ > 0 || plus_since_ms_ != 0) {   // (after our -: the + menu, once the - menu is closed)
+        if (plus_press_ > 0) {
+            swallow_ |= buttons;
+            return plus_press_-- == 2 ? kPadPlus : 0;
+        }
+        // (closing, state 3, still counts as up: a + during the close is the game's to drop)
+        const bool minus_up = strip_.screen != 0 && now_ms - strip_ms_ < kStaleMs && strip_.mode != kPlusMode &&
+                              strip_.state != 0;
+        if (!minus_up && now_ms - plus_since_ms_ >= kPlusGapMs) {
+            plus_since_ms_ = 0, plus_press_ = 2;
+            swallow_ |= buttons;
+            return 0;
+        }
+        if (now_ms - plus_since_ms_ >= kPlusWaitMs) {   // (the - menu never closed: the view is not kept)
+            plus_since_ms_ = 0, keep_view_ = again_ = false;
+        }
     }
     if (!shown_ && CanMinus(now_ms)) return MinusPad(buttons, down);   // (the - menu: its tabs of ours)
     if (!shown_) {
@@ -520,14 +576,15 @@ bool Page::Char(std::uint32_t cp) {
 
 void Page::ShowAgain(std::uint64_t now_ms) {
     if (!again_ || shown_) {
+        if (!again_) keep_view_ = false;
         return;
     }
     if (pages_.state == 2 && pages_.page != kSystemPage && pages_.page >= 0) {
-        again_ = false;   // (the menu open on another page: not ours)
+        again_ = false, keep_view_ = false;   // (the menu open on another page: not ours)
         return;
     }
     if (CanStay(now_ms)) {
-        shown_ = true, again_ = false, decide_ = false, why_.clear();
+        shown_ = true, again_ = false, decide_ = false, why_.clear(), keep_view_ = false;
         slide_ = 0;   // (the menu opening on our page: at once, as the game opens on its own last page)
     }
 }
@@ -920,6 +977,49 @@ std::string Players(int n) {
 
 }  // namespace
 
+std::vector<std::string> RowTexts(MinusPage page, const SessionView& v) {
+    std::vector<std::string> rows(kRows);
+    const auto main = RowTexts(v);   // (the Multiplayer page's entries, their words for what co-op does now)
+    switch (page) {
+    case MinusPage::kLobby:
+        rows[0] = main[kRowFind];
+        rows[1] = main[kRowHost];
+        rows[2] = main[kRowJoin];
+        break;
+    case MinusPage::kMultiplayer:
+        rows[0] = main[kRowPlayers];
+        rows[1] = main[kRowSettings];
+        rows[2] = "Local co-op";
+        if (v.s.hosting) {
+            rows[3] = main[kRowHost];   // ("Your game", "Your game: Saria asks")
+        } else if (v.s.in_one || v.s.by_launcher) {
+            rows[3] = main[kRowJoin];   // ("Your session", "Turned away", "Copy answer code")
+        }
+        break;
+    case MinusPage::kMods: break;
+    }
+    return rows;
+}
+
+RowAction ActionFor(MinusPage page, int row, const Session& s) {
+    switch (page) {
+    case MinusPage::kLobby:
+        if (row == 0) return ActionFor(kRowFind, s);
+        if (row == 1) return ActionFor(kRowHost, s);
+        if (row == 2) return ActionFor(kRowJoin, s);
+        return RowAction::kNone;
+    case MinusPage::kMultiplayer:
+        if (row == 0) return ActionFor(kRowPlayers, s);
+        if (row == 1) return ActionFor(kRowSettings, s);
+        if (row == 2) return RowAction::kViewLocal;
+        if (row == 3 && s.hosting) return ActionFor(kRowHost, s);
+        if (row == 3 && (s.in_one || s.by_launcher)) return ActionFor(kRowJoin, s);
+        return RowAction::kNone;
+    case MinusPage::kMods: return RowAction::kNone;
+    }
+    return RowAction::kNone;
+}
+
 std::vector<std::string> RowTexts(const SessionView& v) {
     std::vector<std::string> rows(kRows);
     // (0.11.9: five fixed entries; a word of what co-op does now only where it changes what the entry opens)
@@ -1176,6 +1276,7 @@ const char* ActionWords(RowAction a) {
     case RowAction::kRejoin: return "join the last game again";
     case RowAction::kViewSession: return "the Session view";
     case RowAction::kViewHost: return "the Host a game view";
+    case RowAction::kViewLocal: return "Settings and look on Local co-op";
     case RowAction::kCopyLan: return "the same-network join line to the clipboard";
     case RowAction::kCopyVpn: return "the VPN join line to the clipboard";
     case RowAction::kResync: return "the host's save again (Resync from host)";
