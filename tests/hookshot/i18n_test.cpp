@@ -651,5 +651,8 @@ TEST_CASE("coop i18n: a character not downloaded (Snail's Character Select, coop
                               "get Snail's NPC characters).";
     CHECK(CoopI18n::Tr(hans, "A player" + other) ==
           "一名玩家 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。");
-    CHECK(CoopI18n::Tr(hant, "Player 3" + other).rfind("Player 3 用的角色你還沒下載", 0) == 0);
+    // (the only caller writes "Player N": the number as every other Player line, 玩家 N)
+    CHECK(CoopI18n::Tr(hans, "Player 3" + other) ==
+          "玩家 3 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。");
+    CHECK(CoopI18n::Tr(hant, "Player 3" + other).rfind("玩家 3 用的角色你還沒下載", 0) == 0);
 }

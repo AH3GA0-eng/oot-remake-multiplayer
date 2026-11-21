@@ -504,6 +504,7 @@ constexpr Entry kzh_Hans[] = {
     {"This character is not downloaded: press N at the kit's start to get Snail's NPC characters.", "这个角色还没下载：在套件启动时按 N，即可获取 Snail 的 NPC 角色。"},
     {"A player", "一名玩家"},
     {"{} plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).", "{} 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。"},
+    {"Player {} plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).", "玩家 {} 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。"},
     {"Open mic", "自由麦"},
     {"The host only: takes that player out of the game. They can join again.", "仅房主：把该玩家踢出游戏。他还能再加入。"},
     {"The host only: takes that player out, and they cannot join again, under any name, until the host stops hosting.",
@@ -1715,6 +1716,7 @@ constexpr Entry kzh_Hant[] = {
     {"This character is not downloaded: press N at the kit's start to get Snail's NPC characters.", "這個角色還沒下載：在套件啟動時按 N，即可取得 Snail 的 NPC 角色。"},
     {"A player", "一名玩家"},
     {"{} plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).", "{} 用的角色你還沒下載，顯示為林克（在套件啟動時按 N，即可取得 Snail 的 NPC 角色）。"},
+    {"Player {} plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).", "玩家 {} 用的角色你還沒下載，顯示為林克（在套件啟動時按 N，即可取得 Snail 的 NPC 角色）。"},
     {"Open mic", "自由麥"},
     {"The host only: takes that player out of the game. They can join again.", "僅房主：把該玩家踢出遊戲。他還能再加入。"},
     {"The host only: takes that player out, and they cannot join again, under any name, until the host stops hosting.",
@@ -2801,6 +2803,9 @@ constexpr Shape kShapes[] = {
     // (another player's character not downloaded: "Player 3 plays ...", coop_char_slots.h)
     {"", " plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).",
      "{} plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).", true},
+    // (the caller writes "Player N": the number in the table's own "玩家 N", as every other Player line)
+    {"Player ", " plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).",
+     "Player {} plays a character you have not downloaded, shown as Link (press N at the kit's start to get Snail's NPC characters).", false},
     {"Hosting: ", " players", "Hosting: {} players", false},
     {"Join ", " again", "Join {} again", false},
     {"No ", " yet.", "No {} yet.", true},
