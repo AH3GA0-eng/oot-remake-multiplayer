@@ -205,7 +205,10 @@ public:
         for (std::size_t i = 0; i < s_.units.size() && !r_.failed; i++) {
             const std::uint64_t p = R64(list + 8 * i);
             const std::uint64_t unit = p != 0 ? R64(p) : 0;
-            if (s_.units[i].unit != unit) s_.units[i] = State::Unit{unit};
+            if (s_.units[i].unit != unit) {
+                s_.units[i] = State::Unit();
+                s_.units[i].unit = unit;
+            }
             if (unit == 0 || R64(unit) == 0) continue;
             r_.units++;
             Unit(s_.units[i], o, put_back, iris_shift);
@@ -287,7 +290,9 @@ std::size_t Wardrobe::Frame(const Game& game, const std::vector<Target>& targets
         Kept& k = *it;
         k.seen = true;
         if (k.state.cell != t.cell) {
-            k.state = State{t.actor, t.cell};
+            k.state = State();
+            k.state.actor = t.actor;
+            k.state.cell = t.cell;
             k.dressed.reset();
             k.ever = false;
         }
