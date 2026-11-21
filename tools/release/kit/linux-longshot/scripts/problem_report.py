@@ -520,7 +520,26 @@ def add_report(kit, version="", logs=None, game_dirs=None, user="", pc="", wait=
         if crashes:
             ss["crashes"] = ss["crashes"] + [c.name for c in crashes]
             write_send_state(kit.send_state, ss)
+            # (which crash records this zip holds: once the bot took it, sent_crashes tells the game)
+            out.with_name(out.name + ".crashes").write_text("".join(f"{c}\n" for c in crashes), encoding="utf-8")
         return out
+
+
+def sent_crashes(zip_path):
+    """The crash records a sent zip held, added to their game's bug-reports/coop-sent.txt: the game's title then does
+    not ask the player to send that crash with /bugreport (hookshot/src/coop_problem_ask.h: we have it already)."""
+    try:
+        paths = [Path(l) for l in Path(str(zip_path) + ".crashes").read_text(encoding="utf-8").splitlines() if l]
+    except OSError:
+        return
+    for p in paths:
+        f = p.parent.parent / "coop-sent.txt"
+        try:
+            have = [l for l in f.read_text(encoding="utf-8").splitlines() if l] if f.exists() else []
+            if p.name not in have:
+                f.write_text("\n".join((have + [p.name])[-200:]) + "\n", encoding="utf-8")
+        except OSError:
+            pass
 
 
 def check_zip(path, user="", pc=""):
@@ -632,7 +651,13 @@ def send_queue(kit, url=None, send=upload, user="", pc=""):
                 tries_file.write_text(str(t))
                 if t >= SEND_MAX_TRIES or z.stat().st_mtime < time.time() - SEND_MAX_DAYS * 86400:
                     result, why, move = "gave up", f"not sent after {t} tries", "held"
+            if move == "sent":
+                sent_crashes(z)
             if move:
+                try:
+                    z.with_name(z.name + ".crashes").unlink()
+                except OSError:
+                    pass
                 to = kit.send_dir / move
                 to.mkdir(parents=True, exist_ok=True)
                 os.replace(z, to / z.name)

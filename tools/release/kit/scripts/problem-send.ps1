@@ -226,6 +226,24 @@ function Test-ProblemSendZip([string]$Zip, [string]$UserName = $env:USERNAME, [s
     ''
 }
 
+# The crash records a sent zip held ($Zip.crashes), added to their game's bug-reports\coop-sent.txt: the game's title then
+# does not ask the player to send that crash with /bugreport (hookshot/src/coop_problem_ask.h: we have it already).
+function Add-ProblemSentCrashes([string]$Zip) {
+    $list = "$Zip.crashes"
+    if (-not (Test-Path -LiteralPath $list)) { return }
+    foreach ($p in @(Get-Content -LiteralPath $list -ErrorAction SilentlyContinue | Where-Object { $_ })) {
+        try {
+            $file = Join-Path (Split-Path -Parent (Split-Path -Parent $p)) 'coop-sent.txt'
+            $have = @(Get-Content -LiteralPath $file -ErrorAction SilentlyContinue)
+            $name = Split-Path -Leaf $p
+            if ($have -notcontains $name) {
+                $keep = @($have | Where-Object { $_ } | Select-Object -Last 199) + $name
+                [System.IO.File]::WriteAllText($file, (($keep -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+            }
+        } catch { }
+    }
+}
+
 # One upload over HTTPS: 'sent', 'duplicate' (the bot had it), 'retry' (no network, the bot busy or away: tried again
 # later) or 'refused' (the bot will never take it). TLS 1.2 or newer; $TimeoutMs for all of it.
 function Send-ProblemZip([string]$Zip, [string]$Url, [string]$Install, [string]$Id, [int]$TimeoutMs = $script:SendTimeoutMs) {
@@ -310,7 +328,9 @@ function Send-ProblemQueue([string]$Kit, [string]$Url = (Get-ProblemSendUrl $Kit
                     $r = @{ Result = 'gave up'; Why = "not sent after $t tries" }; $move = 'held'
                 }
             }
+            if ($move -eq 'sent') { Add-ProblemSentCrashes $zip.FullName }
             if ($move) {
+                Remove-Item -LiteralPath "$($zip.FullName).crashes" -Force -ErrorAction SilentlyContinue
                 $to = Join-Path $dir $move
                 if (-not (Test-Path -LiteralPath $to)) { New-Item -ItemType Directory -Path $to -Force | Out-Null }
                 Move-Item -LiteralPath $zip.FullName -Destination (Join-Path $to $zip.Name) -Force
@@ -352,7 +372,11 @@ function Add-ProblemSendReport([string]$Kit, [string]$Version = '', [string[]]$L
         $out = Join-Path (Get-ProblemSendDir $Kit) ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + (New-ProblemSendId) + '.zip')
         $zip = New-ProblemSendZip $(if ($report) { $report.Zip } else { '' }) $crashes $out $Version $UserName $PcName
         Write-ProblemState $rf $rs
-        if ($crashes) { $ss.crashes = @($ss.crashes) + @($crashes | ForEach-Object { $_.Name }); Write-ProblemSendState $sf $ss }
+        if ($crashes) {
+            $ss.crashes = @($ss.crashes) + @($crashes | ForEach-Object { $_.Name }); Write-ProblemSendState $sf $ss
+            # (which crash records this zip holds: once the bot took it, Add-ProblemSentCrashes tells the game)
+            if ($zip) { [System.IO.File]::WriteAllLines("$zip.crashes", [string[]]@($crashes | ForEach-Object { $_.FullName })) }
+        }
         $zip
     } finally { Exit-ProblemSendLock $lock }
 }

@@ -149,9 +149,16 @@ class Kit(unittest.TestCase):
         again = self.log("longshot_log.3.txt", "3" * 32, [PROBLEMS[2]])
         self.assertIsNone(self.add([again]))
         (self.game / "bug-reports" / "pending" / "crash-20261121T190000Z-12-1.txt").write_text("Exception again\n")
-        only = zip_text(self.add([]))
+        only_zip = self.add([])
+        only = zip_text(only_zip)
         self.assertIn("1 crash record", only["problem-report.txt"])
         self.assertTrue(only["crash-record-1.txt"].startswith("crash-20261121T190000Z.txt"))
+        # once the bot took them, the game's title is told (coop-sent.txt, by their own names)
+        self.assertEqual(pr.send_queue(self.kit, "https://x.org/p", lambda *a: ("sent", ""), USER, PC),
+                         sorted([(z.name, "sent"), (only_zip.name, "sent")]))
+        sent = (self.game / "bug-reports" / "coop-sent.txt").read_text().split()
+        self.assertEqual(sorted(sent), ["crash-20261121T180000Z.txt", "crash-20261121T190000Z-12-1.txt"])
+        self.assertEqual(list(self.kit.send_dir.glob("*.crashes")), [])
 
     def make(self, name, files):
         p = self.kit.send_dir / name

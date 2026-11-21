@@ -101,6 +101,12 @@ or 30 days, then kept in `held\`. Refused by the bot (400, 404, 405, 411, 413, 4
 result is one line in `logs\problem-send\result.txt`, and the next start shows it (`Last: Problem report sent to the
 Squadala! team (report #N): ...`). The queue: `logs\problem-send\<date>-<report id>.zip`.
 
+**The crash ask on the title.** After a crash the game's title asks the player once to send it with `/bugreport`
+(`hookshot/src/coop_problem_ask.h`). A crash record the kit has sent (the bot took the zip that held it) is listed in
+`<game>ug-reports\coop-sent.txt`, and the title does not ask about it: the team has it already. With sending off that
+file is never written and the ask is as before. A game started again before the upload finished (about 20 s after the
+crash, longer without network) still asks.
+
 **The bot's side.** `tools/discord-bot/intake_core.py` (its README, "Problem-report intake"): POST `/v1/problem-report`
 only, 256 KB at most, `application/zip` only, both ids 32 hex digits, at most 4 uploads an hour and 12 a day per
 install, 10 an hour per sending address (kept in memory only, never logged), 60 an hour from everyone. The zip must hold

@@ -148,6 +148,9 @@ Check ($r.Count -eq 2 -and ($r | Where-Object { $_.Result -ne 'sent' }).Count -e
 Check ($calls[-1] -eq $install) 'with the install id'
 Check (@(Get-ChildItem $dir -Filter *.zip).Count -eq 0 -and @(Get-ChildItem (Join-Path $dir 'sent') -Filter *.zip).Count -eq 2) 'a copy of each stays in sent\'
 Check (-not (Test-Path (Join-Path $dir '*.tries'))) 'their tries are forgotten'
+$sentList = @(Get-Content (Join-Path $game 'bug-reports\coop-sent.txt') -ErrorAction SilentlyContinue)
+Check (($sentList -join ',') -in 'crash-20261121T180000Z.txt,crash-20261121T190000Z-1234-1.txt', 'crash-20261121T190000Z-1234-1.txt,crash-20261121T180000Z.txt') 'the sent crash records are listed for the game''s title (coop-sent.txt), by their own names'
+Check (-not (Test-Path (Join-Path $dir '*.crashes'))) 'and their lists are gone'
 Check ((Get-Content (Join-Path $dir 'result.txt') -TotalCount 1) -match 'sent to the Squadala! team \(report #7\)') 'the result line'
 $r = @(Send-ProblemQueue $kit 'https://reports.example.org/v1/problem-report' $sent)
 Check ($r.Count -eq 0) 'nothing is sent twice'
