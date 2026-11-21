@@ -1915,9 +1915,10 @@ void DressCharacters(void* ctx) {
     }
     // (0.11.9: your own Link's eye colour, the look shown: the one chosen in Customize at once, a preview, else worn;
     // its cell of guest memory made once with the game's malloc, as a puppet's block)
-    // (and the pause menu's model actors while the menu is up: Character Select's Customize picture is one of them, a
-    // model of its own, so the eyes and hair chosen showed on your Link in the field but not in the picture: lane-0119
-    // 13:03. Each its own cell, slot 0 your Link's, 1..4 the menu's slots)
+    // (and, while the menu is up, the pause menu's model actor that is your Link: Character Select's Customize picture
+    // is a model of the menu's own, so the eyes chosen showed on your Link in the field but not in the picture,
+    // lane-0119 13:03. Your Link there: an actor of the field player's own actor name, while you are Link; never the
+    // picker's other characters (review). Each its own cell: 0 your Link's, 1..4 the menu's slots)
     static std::array<std::uint64_t, 5> cells{};
     static std::array<bool, 5> cells_asked{};
     const auto cell = [&](std::size_t i) {
@@ -1936,21 +1937,40 @@ void DressCharacters(void* ctx) {
         return cells[i];
     };
     const CoopLook::Look shown = CoopLook::Shown();
-    const auto eyes = shown[CoopLook::Part::eyes];
-    const auto hair = CoopCharColours::ShownCharacter() == 0 ? shown[CoopLook::Part::hair] : std::nullopt;
-    if (eyes || hair) {
+    const auto own = CoopCharColours::LinkOnly(CoopCharColours::ShownCharacter() == 0, shown[CoopLook::Part::eyes],
+                                               shown[CoopLook::Part::hair]);
+    if (own.eyes || own.hair) {
         const auto dress = [&](std::uint64_t actor, std::size_t i, std::uint64_t model) {
             if (actor == 0 || cell(i) == 0) return;
             CoopCharColours::Target t{actor, cells[i], 0, false, 0, model};
-            if (eyes) t.eyes = *eyes & 0xFFFFFFu;
-            if (hair) t.hair = *hair & 0xFFFFFFu;
+            t.eyes = own.eyes, t.hair = own.hair;
             targets.push_back(t);
         };
+        const auto name_of = [](std::uint64_t actor) {
+            std::uint64_t at = 0;
+            char text[64] = {};
+            if (actor == 0 || !CoopRuntime::Read(actor + 0x260, &at, sizeof at) || at == 0) return std::string();
+            if (!CoopRuntime::Read(at, text, sizeof text - 1)) return std::string();
+            return std::string(text);
+        };
         BridgeGuest guest;
-        dress(CoopPose::FindPlayer(guest, CoopRuntime::MainBase()), 0, 0);
-        if (CoopPauseTab::GameMenuUp()) {
+        const std::uint64_t player = CoopPose::FindPlayer(guest, CoopRuntime::MainBase());
+        dress(player, 0, 0);
+        if (CoopPauseTab::GameMenuUp() && player != 0) {
+            const std::string link = name_of(player);
+            static std::string said;
+            std::string seen;
             const auto menu = CoopPauseTab::MenuActors();
-            for (std::size_t s = 0; s < menu.size(); ++s) dress(menu[s].actor, 1 + s, 0x6d656e7500000000ull | menu[s].id);
+            for (std::size_t s = 0; s < menu.size(); ++s) {
+                if (menu[s].actor == 0) continue;
+                const std::string name = name_of(menu[s].actor);
+                seen += fmt::format("{}{}: {}", seen.empty() ? "" : ", ", s, name.empty() ? "?" : name);
+                if (!link.empty() && name == link) dress(menu[s].actor, 1 + s, 0x6d656e7500000000ull | menu[s].id);
+            }
+            if (seen != said) {   // (what the menu holds, once a change: which of them is your Link)
+                said = seen;
+                LOG_INFO(Core, "coop: look: the menu's models ({}); your Link's actor {}", seen.empty() ? "none" : seen, link);
+            }
         }
     }
     if (targets.empty()) return;
