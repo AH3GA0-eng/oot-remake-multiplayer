@@ -1860,6 +1860,9 @@ constexpr std::uint64_t kMenuSetCurrent = 0x340b720;  // (mgr, category): the me
 std::uint64_t g_minus_page = 0, g_minus_part = 0;      // Pa_CoopMinus_00's pane and its part layout (LookStrip). g_mutex
 std::uint64_t g_minus_page_gen = 0;                     // the strip's opening they were looked up for
 std::array<std::uint64_t, kRows> g_minus_buttons{}, g_minus_cursors{};
+// Each button's W_Select_00: the focus frame the game shows (lane R1: a frame stayed on the last button copied and our
+// N_Cursor_00 moved nothing; PaCommonBtnThin_00's Select / UnSelect animations show and hide W_Select_00)
+std::array<std::uint64_t, kRows> g_minus_selects{};
 std::vector<std::uint64_t> g_minus_hide;               // (that layout's panes ours never shows)
 int g_minus_vis = -1;                                   // the page shown (1) or not (0) as last set; -1 not set
 int g_minus_page_tab = -1, g_minus_focus = -1;          // the tab its rows are for, the row its cursor shows on
@@ -1874,7 +1877,8 @@ bool g_map_hidden = false;                              // (the map screen's upd
 
 void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen) {
     g_minus_page_gen = gen;
-    g_minus_page = 0, g_minus_part = 0, g_minus_buttons = {}, g_minus_cursors = {}, g_minus_hide.clear();
+    g_minus_page = 0, g_minus_part = 0, g_minus_buttons = {}, g_minus_cursors = {}, g_minus_selects = {};
+    g_minus_hide.clear();
     g_minus_vis = -1, g_minus_page_tab = -1, g_minus_focus = -1, g_minus_shown_rows = ~0u, g_minus_rows_ms = 0;
     g_minus_texts = {};
     std::uint64_t table = 0;
@@ -1893,6 +1897,7 @@ void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen) {
         if (!IsPart(b)) continue;
         g_minus_buttons[static_cast<std::size_t>(r)] = b;
         g_minus_cursors[static_cast<std::size_t>(r)] = PaneIn(ctx, PartLayout(part, name), "N_Cursor_00");
+        g_minus_selects[static_cast<std::size_t>(r)] = PaneIn(ctx, PartLayout(part, name), "W_Select_00");
         ++found;
     }
     for (const char* name : {"Pa_SystemController_00", "Pa_Button_05", "Pa_Button_06", "Pa_Button_07"}) {
@@ -1904,8 +1909,10 @@ void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen) {
         if (const std::uint64_t q = PaneIn(ctx, part, name); q != 0) g_minus_hide.push_back(q);
     }
     if (found == kRows) g_minus_page = page, g_minus_part = part;
-    LOG_INFO(Core, "coop: pause tab: the - menu's page (Pa_CoopMinus_00): {} of {} buttons{}", found, kRows,
-             found == kRows ? "" : " (not used)");
+    int frames = 0;
+    for (const std::uint64_t q : g_minus_selects) frames += q != 0 ? 1 : 0;
+    LOG_INFO(Core, "coop: pause tab: the - menu's page (Pa_CoopMinus_00): {} of {} buttons, {} focus frames (W_Select_00){}",
+             found, kRows, frames, found == kRows ? "" : " (not used)");
 }
 
 // The strip's update, g_mutex: the page shown while one of ours is lit, its buttons those with words (MinusWords, set
@@ -1942,12 +1949,19 @@ int ApplyMinusPage(void* ctx, std::uint64_t gen) {
         g_minus_shown_rows = rows, g_minus_focus = -1;
     }
     const int focus = rows != 0 ? g_page.MinusRow() : -1;
-    if (focus != g_minus_focus) {   // (the game's cursor frame on the row picked, as on System's own focused button)
+    // (the game's focus frame on the row picked, as on System's own focused button. Set at every update: the part's
+    // own animation may set it back, lane R1)
+    for (int r = 0; r < kRows; ++r) {
+        const std::size_t k = static_cast<std::size_t>(r);
+        if (g_minus_cursors[k] != 0) SetVisible(ctx, g_minus_cursors[k], r == focus);
+        if (g_minus_selects[k] != 0) SetVisible(ctx, g_minus_selects[k], r == focus);
+    }
+    if (focus != g_minus_focus) {
         for (int r = 0; r < kRows; ++r) {
             const std::size_t k = static_cast<std::size_t>(r);
-            if (g_minus_cursors[k] != 0) SetVisible(ctx, g_minus_cursors[k], r == focus);
             if (g_minus_buttons[k] != 0) CallAlpha(ctx, g_minus_buttons[k], r == focus ? 1.0f : 0.8f);
         }
+        LOG_INFO(Core, "coop: pause tab: the - menu's page: focus on row {}", focus);
         g_minus_focus = focus;
     }
     return NowMs() - g_minus_rows_ms >= 250 ? tab : -1;

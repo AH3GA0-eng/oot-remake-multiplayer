@@ -2485,16 +2485,42 @@ TEST_CASE("pause tab (0.11.9): the - menu's own page: up and down among its rows
     CHECK(p.ViewKept());
     CHECK(p.OnPad(kPadA, now + 58) == kPadMinus);
     CHECK(p.OnPad(kPadA, now + 60) == 0);
-    CHECK_FALSE(p.GoingToPlus());
-    // The - menu goes, the + menu opens on System: the Multiplayer page shows there.
+    CHECK(p.GoingToPlus());   // (lane R1: that - closes the - menu; the + press comes once it is closed)
+    // The - menu goes (closing: still up, no + yet), then its updates stop: one press of + (down, then let go).
     p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode, 3), now + 70);
     CHECK(p.MinusTab() == -1);
-    p.OnPad(0, now + 72);
-    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 80);
-    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 80);
+    CHECK(p.OnPad(0, now + 72) == 0);
+    CHECK(p.OnPad(0, now + 400) == 0);   // (stale now, the gap passed: the press is due)
+    CHECK(p.OnPad(0, now + 402) == kPadPlus);
+    CHECK(p.OnPad(0, now + 404) == 0);
+    CHECK_FALSE(p.GoingToPlus());
+    CHECK(p.ViewKept());
+    // The + menu opens on System: the Multiplayer page shows there.
+    p.OnScreen(Pages(0xa000, kSystemPage, kSystemPage, 1), now + 410);
+    p.OnScreen(Strip(0x9000, 5, kSystemPage, kPlusMode, 1), now + 410);
     CHECK(p.Shown());
     CHECK(p.Which() == 0);
     CHECK_FALSE(p.ViewKept());   // (shown: the view is the page's own again)
+}
+
+TEST_CASE("pause tab (0.11.9): after our - the + press waits for the - menu to close, and gives up after a while") {
+    Page p;
+    p.SetMinusTabsUsable(true);
+    const std::uint64_t now = 1000;
+    p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), now);
+    p.OnPad(kPadR, now + 10), p.OnPad(0, now + 12);
+    p.SetMinusRows(0b111);
+    p.GoToPlus();
+    CHECK(p.OnPad(0, now + 14) == kPadMinus);
+    CHECK(p.OnPad(0, now + 16) == 0);
+    // The - menu stays open (its updates go on): never a +, and after the wait the view is not kept.
+    std::uint64_t t = now + 16;
+    for (; t < now + 3200; t += 100) {
+        p.OnScreen(Strip(0x9000, 8, kMapCategory, kMinusMode), t);
+        CHECK(p.OnPad(0, t + 1) != kPadPlus);
+    }
+    CHECK_FALSE(p.GoingToPlus());
+    CHECK_FALSE(p.ViewKept());
 }
 
 TEST_CASE("pause tab (0.11.9): the - menu's Lobby and Multiplayer pages: every row opens something, none empty-handed") {

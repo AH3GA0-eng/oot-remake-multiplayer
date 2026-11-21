@@ -19,6 +19,8 @@ namespace {
 
 // A screen whose updates stopped this long ago is taken as gone (the game updates an open menu once a frame).
 constexpr std::uint64_t kStaleMs = 250;
+constexpr std::uint64_t kPlusGapMs = 200;    // after our - is let go: at least this before the + press
+constexpr std::uint64_t kPlusWaitMs = 3000;  // the - menu not closed by then: no + press
 constexpr std::uint64_t kTypingStartMs = 400;   // (an A this soon after typing began is the one that began it)
 // A window over the page keeps it away this long after its last opening, open or closing update.
 constexpr std::uint64_t kBlockMs = 250;
@@ -200,6 +202,7 @@ void Page::GoToPlus() {
 std::uint64_t Page::MinusPad(std::uint64_t buttons, std::uint64_t down) {
     if (to_plus_ > 0) {   // (the game's -: pressed one read, let go the next; the rest is kept from the game)
         swallow_ |= buttons;
+        if (to_plus_ == 1) plus_since_ms_ = std::max<std::uint64_t>(pad_ms_, 1);   // (then the + press: PlusAfterMinus)
         return to_plus_-- == 2 ? kPadMinus : 0;
     }
     if (minus_tab_ < 0) {
@@ -332,7 +335,8 @@ Page::Do Page::OnScreen(const Facts& f, std::uint64_t now_ms) {
         // (the - menu's tabs of ours: shown while its strip is open; gone with it, and ours with them)
         if (minus_ok_) {
             const bool minus_open = f.mode != kPlusMode && (f.state == 1 || f.state == 2);
-            if (!minus_open) minus_tab_ = -1, minus_row_ = 0, minus_rows_ = 0, minus_decide_ = -1, to_plus_ = 0;
+            if (!minus_open) minus_tab_ = -1, minus_row_ = 0, minus_rows_ = 0, minus_decide_ = -1;
+            if (!minus_open && to_plus_ > 0) to_plus_ = 0, plus_since_ms_ = 0, keep_view_ = again_ = false;   // (closed early)
             const int state = !minus_open ? -2 : minus_tab_;
             const std::uint64_t gen = strip_seen_.gen;
             if (state != minus_set_ || (minus_open && minus_gen_ != gen)) {
@@ -359,6 +363,23 @@ std::uint64_t Page::OnPad(std::uint64_t buttons, std::uint64_t now_ms) {
     swallow_ &= buttons;   // (let go: the game gets it again)
     if (shown_ && !CanStay(now_ms)) {
         Hide("the menu's state changed", pages_.state == 3 || pages_.state == 0 || strip_.state == 3 || strip_.state == 0);
+    }
+    if (plus_press_ > 0 || plus_since_ms_ != 0) {   // (after our -: the + menu, once the - menu is closed)
+        if (plus_press_ > 0) {
+            swallow_ |= buttons;
+            return plus_press_-- == 2 ? kPadPlus : 0;
+        }
+        // (closing, state 3, still counts as up: a + during the close is the game's to drop)
+        const bool minus_up = strip_.screen != 0 && now_ms - strip_ms_ < kStaleMs && strip_.mode != kPlusMode &&
+                              strip_.state != 0;
+        if (!minus_up && now_ms - plus_since_ms_ >= kPlusGapMs) {
+            plus_since_ms_ = 0, plus_press_ = 2;
+            swallow_ |= buttons;
+            return 0;
+        }
+        if (now_ms - plus_since_ms_ >= kPlusWaitMs) {   // (the - menu never closed: the view is not kept)
+            plus_since_ms_ = 0, keep_view_ = again_ = false;
+        }
     }
     if (!shown_ && CanMinus(now_ms)) return MinusPad(buttons, down);   // (the - menu: its tabs of ours)
     if (!shown_) {

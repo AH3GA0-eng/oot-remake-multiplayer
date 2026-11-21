@@ -280,7 +280,7 @@ public:
     // module asks the menu for the System page and the game gets one press of - (the - menu's own way to the + menu),
     // and the Multiplayer page shows at the + menu's opening on System (as a menu closed on our page opens on it again).
     void GoToPlus();
-    bool GoingToPlus() const { return to_plus_ > 0; }
+    bool GoingToPlus() const { return to_plus_ > 0 || plus_since_ms_ != 0 || plus_press_ > 0; }
     // The view the row set is kept for that opening (the module puts the page's view back to its five rows only when
     // not): from GoToPlus until the + menu opens (on our page, or on another page of its: then not).
     bool ViewKept() const { return keep_view_; }
@@ -353,6 +353,12 @@ private:
     int minus_decide_ = -1;         // TakeMinusDecide
     std::uint32_t minus_rows_ = 0;  // SetMinusRows
     int to_plus_ = 0;               // GoToPlus: the pad reads left with the game's - pressed (down, then let go)
+    // GoToPlus, then: the - press closes the - menu (lane R1, 0.11.9: it never went to the + menu); once the - menu is
+    // closed the game gets one + press (down one read, let go the next), which opens the + menu on System (the menu
+    // manager's page) and so on our page. plus_since_ms_: when the - was let go (0: not waiting); given up after
+    // kPlusWaitMs (the view kept no longer).
+    int plus_press_ = 0;
+    std::uint64_t plus_since_ms_ = 0;
     bool keep_view_ = false;        // ViewKept
     void MinusStep(int dir);
     bool CanMinus(std::uint64_t now_ms) const;
