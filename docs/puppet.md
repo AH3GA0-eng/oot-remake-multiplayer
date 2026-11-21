@@ -841,6 +841,31 @@ Branch `customizer-full`, Hookshot only. The Multiplayer tab's **Customize Link*
 - **The Hylian frame's warm grey (row 185, branch `frame-warm-grey`).** Player report: some of the frame's pixels kept the game's colour (dark specks along its edges, your own Link and the puppets alike). Cause, read from the game's texture: the frame's shades include a pale warm grey (about 168, 168, 136; 4224 block ends) whose spread is just over `ToneOf`'s grey limit (15% of its brightness), so it was taken for gold; the frame paints grey only and gold is the Triforce's, kept, so those ends were neither painted nor (#202) cleared of their metal. Now `ToneOf` gives such a colour (gold hue, bright, spread under a quarter of its brightness) `kWarmGrey` beside `kGold`; only the frame's rule takes it (`kGrey | kWarmGrey`), every other rule sees its `kGold` as before. On the game's textures (block ends, first rule as the painter): the Hylian Shield's frame 36854 -> 42393, unpainted gold 6225 -> 686 (the Triforce, untouched); every other shield, sword, gauntlet and boots texture the same before and after. The other grey parts were checked and left out on purpose: the Biggoron sword's pale ends of that kind lie on its gold guard, the Mirror Shield has 11 and the Kokiri Sword 1. The pack tool's `look_metal.tone_of` and rules are the same (a test compares them with the module's).
 - **Not done yet.** Your own gear's colours also show on a shop's or a wall's copy of the same item on your screen, and on a puppet that has no slot (below). The masks have no parts; the Cap trim is not shown on the puppets.
 
+### Exact tunic colours on the puppets (0.11.9)
+
+Each other player's puppet wears a tunic copy of its own, repainted live in their exact colour; before, the copy nearest
+their colour (ten presets). Not run in a game yet.
+
+- **Which copy**: the look worker gives the nine coloured copies (`CoopPuppet_<Age>_<Colour>`) out by player number,
+  each to the nearest still free (`CoopColors::AssignTunicCopies`), never the plain puppet (its tunic is the game's own
+  texture, which the Kokiri share); past nine other players the rest share the nearest copy, in its preset. The planner
+  dresses each puppet in its player's copy (`SetTunicCopies`, `Remote::tunic_copy`); the boots follow the same copies.
+- **The paint**: the pack writes each coloured copy's texels (`coop_look/puppet-<colour>.bin`, marked as the copies
+  are); a "puppets' tunics" wardrobe finds them in memory and draws each given copy from `green.bin` in its player's
+  exact colour through Longshot's texture overrides (`CoopLookParts::PuppetTunicsTexels`). A texture of another size
+  than green's (the child's dark tile) keeps the copy's preset, as your own Link's does.
+- **Cost**: about 26 MB of pack files outside `romfs`; in RAM the nine copies' texels once read (~26 MB) and one
+  override per copy given (~2.9 MB each).
+
+### Your colours stay yours (row 198, 0.11.9)
+
+Your own Link's colours are drawn over the game textures your wardrobe finds by their texels, so no puppet may wear a
+texture with the game's own texels: the wearer (sword) copies name textures of their own, marked `0x80 + n`
+(`look_items.blade_*`); a puppet wears its slot's look copy from the moment it has a slot (`CopyOf`), and a puppet with
+no slot (more players than slots) the pack's neutral copy (`"neutral"`, never painted); the wardrobe logs "row 198
+guard" when one of your textures is found more than once. With Character Select, its own Customize options are held at
+0 (one customizer: ours) and the options a 0.11.8 game sends (part 62) are not kept.
+
 ### Gear colours on the puppets
 
 Branch `customizer-puppets`, Hookshot only. Every player sees the others' part colours on their puppets, not only the tunic. Files: `tools/puppet_pack/look_items.py` (the copies), `lichii/hook/coop_look_share.*` (slots and copies), `lichii/hook/coop_puppet.*` (which copy a puppet wears), `hookshot/src/coop_look_parts.*` and `coop_look_live.cpp` (`PaintPuppetCopy` and the puppets' wardrobe). No memory of the game is written for it: Longshot's texture overrides (patch 0020, as for your own Link) draw the copies' textures in each player's colours.
