@@ -162,7 +162,7 @@ TEST_CASE("snail customize: values capitalised as his own (Red next to Game's ow
     CHECK(Capitalised("çº¢è²") == "çº¢è²");   // (Chinese: unchanged)
 }
 
-TEST_CASE("snail customize: the title fits its pane (61 bytes) on every page in every language, the page's name first; both hints unless too long") {
+TEST_CASE("snail customize: the title fits its pane (61 bytes) on every page in every language, the page's name first, both hints unless too long") {
     int lost = 0;
     for (int i = 0; i < CoopI18n::kLangCount; ++i) {
         Driver d;
