@@ -4,14 +4,18 @@
 // code (Tr()'s shapes), and the English a table does not have.
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <regex>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "coop_i18n.h"
+#include "coop_pause_menu.h"
+#include "coop_pause_tab.h"
 
 namespace {
 
@@ -655,4 +659,115 @@ TEST_CASE("coop i18n: a character not downloaded (Snail's Character Select, coop
     CHECK(CoopI18n::Tr(hans, "Player 3" + other) ==
           "玩家 3 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。");
     CHECK(CoopI18n::Tr(hant, "Player 3" + other).rfind("玩家 3 用的角色你還沒下載", 0) == 0);
+}
+
+// menu-parity-0119 (the owner: "no English left on zh games"): every row the pause menu's native co-op pages show, in
+// every view and every state of co-op the rows have words for, is a line (or a shape) of both Chinese tables, and so
+// is every row and help of Co-op settings, host rows included. A row left English fails here with its words.
+TEST_CASE("coop i18n: every native co-op row in every view and state has its Chinese") {
+    using namespace CoopPauseTab;
+    const CoopI18n::Lang* langs[] = {ByCode("zh-Hans"), ByCode("zh-Hant")};
+    const std::vector<std::string> names = {"Saria", "Mido"};
+    std::vector<SessionView> states;
+    {
+        SessionView v;   // nothing yet
+        states.push_back(v);
+        v.s.rejoin = true, v.rejoin_host = "Saria";
+        states.push_back(v);
+        v.rejoin_host.clear();
+        states.push_back(v);
+        v.room_field = "forest", v.room_ready = v.s.room_ready = true;
+        for (const bool relay : {false, true}) {
+            v.relay_set = relay;
+            states.push_back(v);
+        }
+        v.join_address = true, v.join_port = 27510;
+        states.push_back(v);
+        v.typing = 0;
+        states.push_back(v);
+        v.typing = 1;
+        states.push_back(v);
+        SessionView f;
+        f.s.failed = true;
+        states.push_back(f);
+    }
+    {
+        SessionView h;   // hosting
+        h.s.hosting = h.s.in_one = h.s.code = true;
+        h.connecting = true;
+        states.push_back(h);
+        h.connecting = false;
+        h.room = "forest", h.players = 2, h.port = 27510;
+        states.push_back(h);
+        h.asking = {"Mido"};
+        states.push_back(h);
+        h.asking = {"Mido", "Saria"}, h.s.asking = true, h.s.invite = true;
+        states.push_back(h);
+        h.confirm_leave = true;
+        states.push_back(h);
+        h.confirm_click = true;
+        states.push_back(h);
+        h.confirm_leave = h.confirm_click = false;
+        h.player_name = "Mido", h.names = names;
+        states.push_back(h);
+        h.confirm_kick = true;
+        states.push_back(h);
+    }
+    {
+        SessionView g;   // in a friend's game
+        g.s.in_one = true;
+        g.connecting = true;
+        states.push_back(g);
+        g.connecting = false, g.players = 3, g.host_name = "Saria", g.s.can_resync = true;
+        states.push_back(g);
+        g.confirm_leave = true;
+        states.push_back(g);
+        g.confirm_leave = false, g.s.wait_host = true;
+        states.push_back(g);
+        g.s.wait_host = false, g.turned_away = "full";
+        states.push_back(g);
+        SessionView l;
+        l.s.by_launcher = true;
+        states.push_back(l);
+    }
+    const auto english = [&](const std::string& row) {   // (a row that only holds a name is the name in any language)
+        if (row.empty() || std::find(names.begin(), names.end(), row) != names.end()) return false;
+        if (row.find_first_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") == std::string::npos) return false;
+        for (const CoopI18n::Lang* lang : langs) {
+            if (CoopI18n::Tr(lang, row) == row) return true;
+        }
+        return false;
+    };
+    const View views[] = {View::kMain, View::kPlayers, View::kLetIn, View::kJoin, View::kSession, View::kPlayer,
+                          View::kPlayerHost, View::kLan, View::kLanGame, View::kPassword, View::kMenu, View::kHost};
+    for (const SessionView& v : states) {
+        for (const View view : views) {
+            for (const std::string& row : RowTexts(view, v)) CHECK_MESSAGE(!english(row), row);
+        }
+        for (const MinusPage page : {MinusPage::kMultiplayer, MinusPage::kLobby}) {
+            for (const std::string& row : RowTexts(page, v)) CHECK_MESSAGE(!english(row), row);
+        }
+    }
+    // Co-op settings, as the hub's list shows it: not in a session, hosting with the rules in force, and as a guest.
+    std::vector<CoopPauseMenu::Session> sessions(3);
+    sessions[1].state = CoopPauseMenu::Session::State::kHosting, sessions[1].hosting = true, sessions[1].rules = true;
+    sessions[2].state = CoopPauseMenu::Session::State::kJoined, sessions[2].rules = true;
+    for (const CoopPauseMenu::Session& ss : sessions) {
+        CoopPauseMenu::Menu m;
+        m.Show(CoopTitleMenu::Options{});
+        m.SetSession(ss);
+        m.Open(CoopPauseMenu::Page::kSettings);
+        const std::size_t rows = m.view().rows.size();
+        for (std::size_t i = 0; i < rows; ++i) {
+            m.Select(i);
+            const CoopPauseMenu::View mv = m.view();
+            const CoopPauseMenu::Row& r = mv.rows[i];
+            const bool host_row = r.name == "Game" || r.name == "Approve joins" || r.name == "PvP" ||
+                                  r.name == "Down but not out" || r.name == "Bleed-out time" ||
+                                  r.name == "Revive hold" || r.name == "Revive hearts";
+            if (!host_row) continue;   // (the other rows' words: the 0.11.7 and 0.11.8 cases above)
+            CHECK_MESSAGE(!english(r.name), r.name);
+            if (static_cast<std::size_t>(mv.selected) == i) CHECK_MESSAGE(!english(mv.help), mv.help);
+        }
+    }
 }
