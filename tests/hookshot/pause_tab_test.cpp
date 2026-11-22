@@ -2350,12 +2350,51 @@ TEST_CASE("census (the - menu research): screens first seen, state changes, gone
           std::vector<std::string>{"census: screen 0x4bebaa8 seen, state 1"});   // back: seen anew
 }
 
-TEST_CASE("the - strip counts slot 3 only when it shows a word, so no empty slot sits before our tabs (UI gate)") {
-  CHECK(GameTabsShown(false, 0.0f) == 3);     // the game's own - menu: slot 3 hidden
-  CHECK(GameTabsShown(true, 0.0f) == 3);      // shown but empty: no gap
-  CHECK(GameTabsShown(true, 0.5f) == 3);
-  CHECK(GameTabsShown(true, 241.5f) == 4);    // a Characters tab with its word
-  CHECK(GameTabsShown(false, 241.5f) == 3);   // a word on a hidden tab does not count
+TEST_CASE("the - strip counts slot 3 only with a mod's code in the game, so no empty slot sits before our tabs") {
+  CHECK(GameTabsShown(false, false) == 3);   // the game's own - menu: slot 3 hidden
+  CHECK(GameTabsShown(true, false) == 3);    // Character Select's header without his code (0.11.9 kit): no gap
+  CHECK(GameTabsShown(true, true) == 4);     // his code built in: his Characters tab and the game's three
+  CHECK(GameTabsShown(false, true) == 3);    // a mod's code, but no fourth tab shown
+}
+
+TEST_CASE("exefs_patches.txt: a code patch the game was built with") {
+  const char* header = "# The mods' ExeFS patch files this game was built with (nx2/exefs_patches.py): mod, file, ...\n";
+  CHECK_FALSE(ModCodeBuiltIn(""));
+  CHECK_FALSE(ModCodeBuiltIn(header));
+  CHECK(ModCodeBuiltIn(std::string(header) + "OoT Character Select\tE0F3CCFA.ips\t64a49145\tcode\t\n"));
+  CHECK(ModCodeBuiltIn(std::string(header) + "OoT Character Select\tE0F3CCFA.ips\t64a49145\tcode\t\r\n"));
+  CHECK(ModCodeBuiltIn("OoT Character Select\tE0F3CCFA.ips\t64a49145\tcode"));   // (no note, no line end)
+  CHECK_FALSE(ModCodeBuiltIn(std::string(header) + "Some mod\tx.pchtxt\t0000\tunsupported\tanother version\n"));
+  CHECK_FALSE(ModCodeBuiltIn("Some mod\tx.pchtxt\t0000\tdata\t\n"));
+  CHECK_FALSE(ModCodeBuiltIn("broken line without fields\ncode\n"));
+  CHECK(ModCodeBuiltIn("Other\ty.ips\t1\tunsupported\t\nOoT Character Select\tE0.ips\t2\tcode\tnote\n"));
+}
+
+TEST_CASE("the - strip's tabs: one compact row by their words, centred where the game's were") {
+  // (four game tabs 400 apart from x -600: Characters, Key Items, Threads of Time, Map; then Multiplayer, Lobby, Mods)
+  const std::vector<float> w = {280.0f, 250.0f, 313.0f, 159.0f, 325.0f, 201.0f, 180.0f};
+  const std::vector<float> x = TabRowX(-600.0f, 400.0f, 4, w);
+  REQUIRE(x.size() == 7);
+  // the game's tightest gap: 400 - (250 + 313) / 2 = 118.5; every pair that far apart word to word
+  for (std::size_t i = 1; i < x.size(); ++i) CHECK(x[i] - x[i - 1] == doctest::Approx((w[i - 1] + w[i]) / 2 + 118.5));
+  CHECK((x.front() + x.back()) / 2 == doctest::Approx(0.0f));   // centred on the game's -600..600
+  // narrower than one step apart each (the 0.11.9 kit's row): 6 steps would be 2400
+  CHECK(x.back() - x.front() < 6 * 400.0f);
+  // a word not drawn yet: one step to its neighbours, the rest as before
+  std::vector<float> w2 = w;
+  w2[5] = 0.0f;
+  const std::vector<float> y = TabRowX(-600.0f, 400.0f, 4, w2);
+  CHECK(y[5] - y[4] == doctest::Approx(400.0f));
+  CHECK(y[6] - y[5] == doctest::Approx(400.0f));
+  CHECK(y[4] - y[3] == doctest::Approx((159.0f + 325.0f) / 2 + 118.5f));
+  // no game word known: every tab one step apart (the old row)
+  const std::vector<float> z = TabRowX(-400.0f, 400.0f, 3, std::vector<float>(6, 0.0f));
+  for (std::size_t i = 1; i < z.size(); ++i) CHECK(z[i] - z[i - 1] == doctest::Approx(400.0f));
+  CHECK((z.front() + z.back()) / 2 == doctest::Approx(0.0f));
+  // words wider than the game's step: the gap never below a tenth of a step
+  const std::vector<float> v = TabRowX(0.0f, 100.0f, 2, {150.0f, 150.0f, 150.0f});
+  CHECK(v[1] - v[0] == doctest::Approx(160.0f));
+  CHECK(TabRowX(0.0f, 100.0f, 3, {}).empty());
 }
 
 TEST_CASE("pause tab (row 199): the menu is up while the tab strip is open or opening and fresh") {

@@ -1812,6 +1812,7 @@ std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
 std::array<std::uint64_t, 4> g_game_words{};   // each game tab's T_Text_00: its drawn width says whether the tab shows a word
 std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
+std::array<std::uint64_t, kMinusTabs> g_minus_texts{};   // each of ours' T_Text_00 (its drawn width: TabRowX)
 // Ours sit under the strip's root (the pack's), the game's under N_MenuChange_00: the two frames apart by how far ours
 // were packed from where the game's step puts them (their own places read at the lookup against the fourth tab's).
 float g_minus_frame_x = 0.0f, g_minus_frame_y = 0.0f;
@@ -1827,7 +1828,7 @@ void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen);   // (be
 void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
     if (gen != g_strip_gen) {
         g_strip_gen = gen, g_strip_looked = false;
-        g_game_tabs = {}, g_game_words = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_ok = false,
+        g_game_tabs = {}, g_game_words = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_texts = {}, g_minus_ok = false,
         g_minus_shown = false;
         g_strip_btns = {}, g_strip_moved = false;
     }
@@ -1856,6 +1857,7 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         std::snprintf(name, sizeof name, "Pa_Category_%02d", 4 + i);
         g_minus_panes[static_cast<std::size_t>(i)] = FindOwnPane(ctx, f.layout, name);
         g_minus_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "N_MenuChangeTextIn_00");
+        g_minus_texts[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "T_Text_00");
         g_minus_ok = g_minus_ok && IsPart(g_minus_panes[static_cast<std::size_t>(i)]);
     }
     // (pause_menu.add_tab: ours i at the fourth tab's place plus (i + 1) steps, in the root's frame)
@@ -1913,10 +1915,32 @@ void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
     }
 }
 
+// Whether the game holds a mod's code (the game folder's exefs_patches.txt lists a code patch: GameTabsShown), read
+// once: the list changes only with a game build, which needs the game started again.
+bool ModCodeInGame() {
+    static const bool built = [] {
+        std::error_code ec;
+        const std::filesystem::path p = CoopRuntime::GameDir() / "exefs_patches.txt";
+        std::string text;
+        if (std::filesystem::is_regular_file(p, ec)) {
+            if (std::FILE* f = std::fopen(p.string().c_str(), "rb")) {
+                char buf[4096];
+                for (std::size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0 && text.size() < (1u << 20);) text.append(buf, n);
+                std::fclose(f);
+            }
+        }
+        const bool yes = ModCodeBuiltIn(text);
+        LOG_INFO(Core, "coop: pause tab: a mod's code in the game (exefs_patches.txt): {} (the - strip's slot 3 {})",
+                 yes ? "yes" : "no", yes ? "counts when shown" : "never counts: the game's code fills three - tabs");
+        return yes;
+    }();
+    return built;
+}
+
 // The - strip as one row (R1, 2026-11-21: ours placed after Map ran past the strip's right end, Mods not seen, and the
-// game's R label stayed on Multiplayer): the game's shown tabs and ours centred where the game's were, one game step
-// apart, the L and R labels as far from the row's ends as the game has them. Everything back at the game's own places
-// whenever ours are not shown (the + menu uses the same strip). Own X (+0x6c) only, as the game's own place setter.
+// game's R label stayed on Multiplayer): the game's shown tabs and ours centred where the game's were, packed by their
+// words (TabRowX, charsel-tab-0119: one game step apart spread seven tabs over the bar), the L and R labels as far
+// from the row's ends as the game has them. Everything back at the game's own places whenever ours are not shown (the + menu uses the same strip). Own X (+0x6c) only, as the game's own place setter.
 // g_mutex.
 void FollowMinus(void* ctx) {
     const auto put_back = [&] {
@@ -1933,17 +1957,21 @@ void FollowMinus(void* ctx) {
         put_back();
         return;
     }
-    // (the game's shown: slots 0..3 when Character Select's header shows slot 3, else 0..2)
-    // (a slot 3 shown but with no word draws nothing, and a tab counted for it left a one-tab gap before ours: it counts
-    // only with a word, the width the game's text pane draws, +0x13c)
+    // (the game's shown: slots 0..3 when a mod's code fills slot 3 (Character Select's Characters tab), else 0..2:
+    // GameTabsShown)
     const int game = GameTabsShown(g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0,
-                                   g_game_words[3] != 0 ? Read<float>(g_game_words[3] + kPaneTextWidth) : 0.0f);
+                                   ModCodeInGame());
     const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
     if (!std::isfinite(step) || step == 0.0f) return;
     const float first = g_game_tabs_x[0], last = g_game_tabs_x[static_cast<std::size_t>(game - 1)];
-    const float centre = (first + last) / 2.0f;
     const int n = game + kMinusTabs;
-    const auto x_of = [&](int k) { return centre + step * (static_cast<float>(k) - static_cast<float>(n - 1) / 2.0f); };
+    // (one compact row by the words' widths: TabRowX)
+    std::vector<float> widths;
+    const auto width_of = [&](std::uint64_t text) { return text != 0 ? Read<float>(text + kPaneTextWidth) : 0.0f; };
+    for (int k = 0; k < game; ++k) widths.push_back(width_of(g_game_words[static_cast<std::size_t>(k)]));
+    for (int i = 0; i < kMinusTabs; ++i) widths.push_back(width_of(g_minus_texts[static_cast<std::size_t>(i)]));
+    const std::vector<float> row = TabRowX(first, step, game, widths);
+    const auto x_of = [&](int k) { return row[static_cast<std::size_t>(k)]; };
     for (int k = 0; k < game; ++k) PlacePane(ctx, g_game_tabs[static_cast<std::size_t>(k)], x_of(k));
     // (ours in the root's frame: the game's places plus the frames' distance. R1 lane 12:52 had ours placed with the
     // game's own numbers, so they sat a header's distance off, over the Map)

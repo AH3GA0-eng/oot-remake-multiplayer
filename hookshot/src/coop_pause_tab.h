@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -846,13 +847,26 @@ void SettingMove(int count, int dy, int* page, int* row, int per_page = kSetting
 inline constexpr std::uint64_t kMenuUpMs = 200;
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
 
-// The - strip's game tabs shown (3, or 4 with slot 3): slot 3 counts only when it is visible AND its word has a width.
-// Character Select's header leaves slot 3 visible but empty in a - menu without a Characters tab, and counting it left
-// an empty slot, one tab wide, between Map and our tabs (UI gate, 2026-11-22).
+// The - strip's game tabs shown (3, or 4 with slot 3). The game's own code fills three - tabs; a fourth (Character
+// Select's Characters, in slot 0, his others after it) is filled only by a mod's code patch, built into the game
+// (patches 0034/0035; the game folder's exefs_patches.txt lists it). His header alone (his layout, as in a game built
+// without his code: the 0.11.9 test kit) leaves slot 3 visible and empty, and counting it put an empty slot between Map
+// and our tabs. The width its word drew (tab-gap-0119) did not tell it: the owner's 0.11.9 kit still had the gap.
+// So slot 3 counts when it is visible and the game holds a mod's code (charsel-tab-0119).
 inline constexpr std::uint64_t kPaneTextWidth = 0x13c;   // f32: a text pane's drawn width (docs/game-ui.md, checked)
-inline int GameTabsShown(bool slot3_visible, float slot3_word_width) {
-    return slot3_visible && slot3_word_width > 1.0f ? 4 : 3;
+inline int GameTabsShown(bool slot3_visible, bool mod_code_built_in) {
+    return slot3_visible && mod_code_built_in ? 4 : 3;
 }
+// Whether exefs_patches.txt (nx2/exefs_patches.py write_list: '#' comment, then "mod<TAB>file<TAB>hash<TAB>kind<TAB>
+// note" a patch file) lists a code patch the game was built with.
+bool ModCodeBuiltIn(std::string_view exefs_list);
+// The - strip's tabs as one compact row (charsel-tab-0119; the owner, 0.11.9 kit: "It's extremely spread out"): before,
+// every tab sat one game step apart, a step the game sized for three or four tabs, so seven ran across the whole bar.
+// Now each two neighbours are as far apart as their words' half widths and the tightest gap the game itself leaves
+// between two of its shown words (at least a tenth of a step, at most a step); a pair with a word not drawn yet (<= 1)
+// keeps one step. The row is centred where the game's shown tabs were. `first`: the game's first tab's x; `step`: its
+// tabs' step; `game`: how many of `widths` (each tab's word width, left to right) are the game's. Each tab's x.
+std::vector<float> TabRowX(float first, float step, int game, const std::vector<float>& widths);
 // Character Select's Customize screen while its own state reads open (1, 2): whether co-op takes it as open. Lane 062917
 // (0.11.9): his layout reads open again for about a second while the - menu closes (the strip at 3, closing), and an
 // opening taken there kept his rows' keys from the field. So an opening is taken only with the menu up, and only once the

@@ -703,6 +703,51 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms) {
     return (strip_state == 1 || strip_state == 2) && seen_ms != 0 && now_ms >= seen_ms && now_ms - seen_ms < kMenuUpMs;
 }
 
+bool ModCodeBuiltIn(std::string_view list) {
+    while (!list.empty()) {
+        const std::size_t end = list.find('\n');
+        std::string_view line = list.substr(0, end);
+        list = end == std::string_view::npos ? std::string_view{} : list.substr(end + 1);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        if (line.empty() || line.front() == '#') continue;
+        // (mod, file, hash, kind, note: the fourth field)
+        std::size_t at = 0;
+        for (int i = 0; i < 3 && at != std::string_view::npos; ++i) {
+            at = line.find('\t', at);
+            if (at != std::string_view::npos) ++at;
+        }
+        if (at == std::string_view::npos) continue;
+        if (line.substr(at, line.find('\t', at) - at) == "code") return true;
+    }
+    return false;
+}
+
+std::vector<float> TabRowX(float first, float step, int game, const std::vector<float>& widths) {
+    const int n = static_cast<int>(widths.size());
+    std::vector<float> x(static_cast<std::size_t>(n), first);
+    if (n == 0) return x;
+    game = std::clamp(game, 1, n);
+    const auto w = [&](int i) { return widths[static_cast<std::size_t>(i)]; };
+    const auto known = [&](int i) { return std::isfinite(w(i)) && w(i) > 1.0f; };
+    // (the game's tightest gap between two of its shown words: its own look at its closest)
+    float gap = step;
+    bool any = false;
+    for (int i = 0; i + 1 < game; ++i) {
+        if (!known(i) || !known(i + 1)) continue;
+        gap = any ? std::min(gap, step - (w(i) + w(i + 1)) / 2.0f) : step - (w(i) + w(i + 1)) / 2.0f;
+        any = true;
+    }
+    gap = std::clamp(gap, step / 10.0f, step);
+    for (int i = 1; i < n; ++i) {
+        const float apart = any && known(i - 1) && known(i) ? (w(i - 1) + w(i)) / 2.0f + gap : step;
+        x[static_cast<std::size_t>(i)] = x[static_cast<std::size_t>(i - 1)] + apart;
+    }
+    // (centred where the game's shown tabs were)
+    const float shift = (first + first + step * static_cast<float>(game - 1)) / 2.0f - (x.front() + x.back()) / 2.0f;
+    for (float& v : x) v += shift;
+    return x;
+}
+
 SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::uint64_t strip_seen_ms, std::uint64_t now_ms) {
     const bool up = MenuUpFrom(strip_state, strip_seen_ms, now_ms);
     if (open) {
