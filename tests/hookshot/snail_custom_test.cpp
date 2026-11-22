@@ -37,7 +37,7 @@ TEST_CASE("snail customize: his six options show co-op's parts, ZL / ZR step the
     CHECK(t.labels[3] == "Goron Tunic");   // (his right column)
     CHECK(t.labels[4] == "Zora Tunic");
     CHECK(t.labels[5].empty());
-    CHECK(t.values[4] == "red");
+    CHECK(t.values[4] == "Red");   // (capitalised as his own values: the UI gate, review-ui-tabs-0119-4)
     CHECK(t.values[1] == "Game's own");
     // The d-pad is his (his marker moves); co-op follows: right to Goron Tunic, down to Zora Tunic.
     CHECK(d.Pad(kRight) == kRight);
@@ -143,9 +143,18 @@ TEST_CASE("snail customize: his screen's texts in the game's language, as co-op'
     CHECK(t.labels[1] == CoopI18n::Tr(hans, "Kokiri Tunic"));
     CHECK(t.values[4] == CoopI18n::Tr(hans, "red"));
     CHECK(t.values[4] != "red");
+    CHECK(t.values[4] != CoopI18n::Tr(hans, "Red"));   // (capitalised after the table: the colour, not a colour's red part)
     CHECK(t.values[1] == CoopI18n::Tr(hans, "Game's own"));
     CHECK(t.values[3] == d.Shown(nullptr).values[3]);   // (#123456 stays)
     // English (no table): the same texts as before.
     CHECK(d.Shown(nullptr).title == "Link (page 1 of 4)   Y: next page");
-    CHECK(d.Shown(nullptr).values[4] == "red");
+    CHECK(d.Shown(nullptr).values[4] == "Red");
+}
+
+TEST_CASE("snail customize: values capitalised as his own (Red next to Game's own), the rest unchanged") {
+    CHECK(Capitalised("red") == "Red");
+    CHECK(Capitalised("Game's own") == "Game's own");
+    CHECK(Capitalised("#123456") == "#123456");
+    CHECK(Capitalised("") == "");
+    CHECK(Capitalised("çº¢è²") == "çº¢è²");   // (Chinese: unchanged)
 }
