@@ -127,6 +127,8 @@ inline constexpr const char* kTokenCount = "PouchData.Item_Token_Gold.StockNum";
 // the others hold it there, also a game that loads the room later (the
 // server keeps the place).
 bool IsShifter(std::string_view name);
+// A capstan turned in place by a pushed bar (a shifter that is never held): IsCapstan.
+bool IsCapstan(std::string_view name);
 // A keyed piece taken by another game's key whose fall or break should
 // show here before it is removed: falling floors and web parts.
 bool IsFallTaken(std::string_view name);
