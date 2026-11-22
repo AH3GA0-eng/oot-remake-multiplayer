@@ -3279,6 +3279,95 @@ TEST_CASE("review-geno-0119-3: a stun right after a boss turn still hands the bo
   CHECK(h.session.stats().boss_to_hitter == 1);
 }
 
+TEST_CASE("enemy turns: a plain enemy in a fight takes turns among the players near it") {
+  SessionConfig config = turn_config();
+  config.enemy_turns = true;  // (off by default: review-geno-0119-4, its own case)
+  config.boss_turn_us = SessionConfig{}.boss_turn_us;  // 4 s: a plain enemy's fight lasts 12 s after a hit
+  {  // both players at it: player 2's turn at its attack's end
+    TurnHarness h(config);
+    h.stand(1, 3);
+    h.stand(2, 5);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);  // a fight
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    CHECK(h.session.stats().enemy_turns == 1);
+    CHECK(h.session.stats().boss_turns == 0);
+  }
+  {  // player 2 is 20 m off: not fighting it, no turn (a boss would take 40 m)
+    TurnHarness h(config);
+    h.stand(1, 3);
+    h.stand(2, 20);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(h.session.stats().enemy_turns == 0);
+  }
+  {  // the switch
+    SessionConfig off = config;
+    off.enemy_turns = false;
+    TurnHarness h(off);
+    h.stand(1, 3);
+    h.stand(2, 5);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("review-geno-0119-4: by default a plain enemy keeps the player it fights, a boss still takes turns") {
+  // A plain enemy's AI chases only its owner's Link: a turn at each attack's end walked it to the other player and
+  // back (report 138's shuttle). enemy_turns is off by default; the same fight on a boss passes the turn.
+  SessionConfig config = turn_config();
+  config.boss_turn_us = SessionConfig{}.boss_turn_us;
+  REQUIRE_FALSE(config.enemy_turns);
+  {  // a plain enemy, both players at it, both on a build that takes turns: no turn
+    TurnHarness h(config);
+    h.stand(1, 3);
+    h.stand(2, 5);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(h.asks() == 0);
+    CHECK(h.session.stats().enemy_turns == 0);
+    CHECK(h.session.object_owner(placed(7)) == owned(1, 0));
+  }
+  {  // the same as a boss: player 2's turn
+    TurnHarness h(config);
+    h.stand(1, 3);
+    h.stand(2, 5);
+    h.receive(1, ObjectGroup{0, {{placed(7), placed(7), object_group::boss}}}, kChannelOwnership);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(11, false)}, kChannelObjectSamples);
+    h.clear();
+    h.run(7 * kSecond);
+    attack_ends(h, 1, 0, 11);
+    h.run(250'000);
+    CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+    CHECK(h.session.stats().boss_turns == 1);
+  }
+}
+
+TEST_CASE("every enemy in a fight leaves an owner who died at once, out of a fight after 10 s") {
+  OwnerHarness h(turn_config());
+  h.stand(1, 3);
+  h.stand(2, 30);  // far: no near or chase rule
+  h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // its fight
+  REQUIRE(h.session.object_in_fight(placed(7), h.now));
+  h.clear();
+  h.receive(1, PlayerStatus{0, status::dead}, kChannelSession);
+  h.run(500'000);
+  CHECK(messages_to<HandoverAsk>(h, 1) == std::vector<HandoverAsk>{{placed(7), 0, 2}});
+}
+
 TEST_CASE("boss-turns-0119: the old owner's attack is never read as the new owner's attack end") {
   std::vector<std::string> lines;
   SessionConfig config = turn_config();
@@ -3909,7 +3998,7 @@ TEST_CASE("a kill by the old owner that crossed the hand-over still counts, for 
   }
 }
 
-TEST_CASE("an owner that is loading, paused 6 s or dead 10 s gives it up, even in a fight") {
+TEST_CASE("an owner that is loading, paused 2 s or dead gives up an enemy in its fight (fight_owner_*)") {
   OwnerHarness h;
   h.receive(1, ObjectSample{0, placed(7), 0, state_at(0, 11)}, kChannelObjectSamples);  // a fight
   SUBCASE("loading") {
@@ -3919,17 +4008,41 @@ TEST_CASE("an owner that is loading, paused 6 s or dead 10 s gives it up, even i
   }
   SUBCASE("paused") {
     h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
-    h.run(5'750'000);
+    h.run(1'750'000);
     CHECK(h.asks() == 0);
     h.run(500'000);
     CHECK(h.asks() == 1);
   }
   SUBCASE("a pause that ends in time") {
     h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
-    h.run(5 * kSecond);
+    h.run(1'500'000);
     h.receive(1, PlayerStatus{0, 0}, kChannelSession);
     h.run(5 * kSecond);
     CHECK(h.asks() == 0);
+  }
+  SUBCASE("dead") {
+    h.receive(1, PlayerStatus{0, status::dead}, kChannelSession);
+    h.run(250'000);
+    CHECK(h.asks() == 1);  // at once: a dead owner's enemy fights nobody
+  }
+  SUBCASE("nobody else can play: it stays") {
+    h.receive(2, PlayerStatus{0, status::paused}, kChannelSession);
+    h.receive(1, PlayerStatus{0, status::loading}, kChannelSession);
+    h.run(kSecond);
+    CHECK(h.asks() == 0);
+  }
+}
+
+TEST_CASE("out of a fight an owner paused 6 s or dead 10 s gives it up") {
+  OwnerHarness h;
+  h.run(61 * kSecond);  // the harness's first sample's fight over
+  REQUIRE_FALSE(h.session.object_in_fight(placed(7), h.now));
+  SUBCASE("paused") {
+    h.receive(1, PlayerStatus{0, status::paused}, kChannelSession);
+    h.run(5'750'000);
+    CHECK(h.asks() == 0);
+    h.run(500'000);
+    CHECK(h.asks() == 1);
   }
   SUBCASE("dead") {
     h.receive(1, PlayerStatus{0, status::dead}, kChannelSession);
@@ -3937,12 +4050,6 @@ TEST_CASE("an owner that is loading, paused 6 s or dead 10 s gives it up, even i
     CHECK(h.asks() == 0);
     h.run(500'000);
     CHECK(h.asks() == 1);
-  }
-  SUBCASE("nobody else can play: it stays") {
-    h.receive(2, PlayerStatus{0, status::paused}, kChannelSession);
-    h.receive(1, PlayerStatus{0, status::loading}, kChannelSession);
-    h.run(kSecond);
-    CHECK(h.asks() == 0);
   }
 }
 
