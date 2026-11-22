@@ -961,7 +961,7 @@ RowAction ActionFor(View view, int row, const Session& s) {
             return row == 1 ? RowAction::kViewJoin : RowAction::kNone;
         }
         if (row == 0) return RowAction::kHost;
-        return row == 1 ? RowAction::kViewMenu : RowAction::kNone;
+        return row == 1 ? RowAction::kViewHostSettings : RowAction::kNone;
     case View::kLetIn:
         if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
         if (row == 1 && s.hosting && s.asking) return RowAction::kDeny;
@@ -1153,7 +1153,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
     }
     case View::kLan: {
         if (v.s.in_one || v.s.by_launcher) {
-            rows[0] = v.s.by_launcher ? "Co-op came with the game" : "In a session already";
+            rows[0] = v.s.by_launcher ? "Co-op is on" : "In a session already";
             break;
         }
         // (the list shown and how many it keeps; A flips to the other one)
@@ -1166,7 +1166,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
     case View::kLanGame:
         rows[0] = v.lan_game;
         if (v.s.in_one || v.s.by_launcher) {
-            rows[1] = v.s.by_launcher            ? "Co-op came with the game"
+            rows[1] = v.s.by_launcher            ? "Co-op is on"
                       : !v.turned_away.empty() ? "Turned away: Leave first"
                                                : "In a session already";
             break;
@@ -1219,13 +1219,13 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         if (v.s.in_one || v.s.by_launcher) {
             rows[0] = v.s.wait_host               ? "Copy answer code"
                       : !v.turned_away.empty()   ? "Turned away: why"
-                      : v.s.by_launcher          ? "Co-op came with the game"
+                      : v.s.by_launcher          ? "Co-op is on"
                                                  : "Session details";
             rows[kJoinRowLeave] = v.confirm_leave ? (v.confirm_click ? "Click again to leave" : "A again: leave")
                                                   : "Leave the game";
             break;
         }
-        rows[0] = v.s.by_launcher            ? "Co-op came with the game"
+        rows[0] = v.s.by_launcher            ? "Co-op is on"
                   : !v.turned_away.empty() ? "Turned away: Leave first"
                   : v.s.in_one             ? "In a session already"
                                            : "Paste code and join";
@@ -1267,7 +1267,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             rows[kHostRowStop] = v.confirm_leave ? (v.confirm_click ? "Click again to stop" : "A again: stop hosting")
                                                  : "Stop hosting";
         } else if (v.s.in_one || v.s.by_launcher) {
-            rows[0] = v.s.by_launcher ? "Co-op came with the game" : "In a friend's game";
+            rows[0] = v.s.by_launcher ? "Co-op is on" : "In a friend's game";
             rows[1] = "Leave it first: Join";
         } else {
             rows[0] = "Start hosting";
@@ -1275,7 +1275,10 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         }
         break;
     case View::kMenu:
-        for (int i = 0; i < kMenuTabs; ++i) rows[static_cast<std::size_t>(i)] = kMenuTabNames[static_cast<std::size_t>(i)];
+        for (int i = 0; i < kMenuTabs; ++i) {
+            if (i == kTabLocal && v.menu_tab != kTabLocal) continue;   // (its home: the Multiplayer tab's row)
+            rows[static_cast<std::size_t>(i)] = kMenuTabNames[static_cast<std::size_t>(i)];
+        }
         break;
     case View::kPassword:
         // (the host's join password: on the details list while shown; a new one with the typing keys)
@@ -1322,7 +1325,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         } else if (v.s.in_one) {
             rows[0] = v.host_name.empty() ? "In a session" : "Joined " + v.host_name;
         } else {
-            rows[0] = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
+            rows[0] = v.s.by_launcher ? "Co-op is on" : "Not in a session";
         }
         if (v.s.wait_host) rows[1] = "Copy answer code";
         if (v.s.in_one && v.s.can_resync) rows[3] = "Resync from host";
@@ -1352,6 +1355,7 @@ const char* ActionWords(RowAction a) {
     case RowAction::kViewSession: return "the Session view";
     case RowAction::kViewHost: return "the Host a game view";
     case RowAction::kViewLocal: return "Settings and look on Local co-op";
+    case RowAction::kViewHostSettings: return "Settings and look on Co-op settings, at its host rows";
     case RowAction::kCopyLan: return "the same-network join line to the clipboard";
     case RowAction::kCopyVpn: return "the VPN join line to the clipboard";
     case RowAction::kResync: return "the host's save again (Resync from host)";
@@ -1610,7 +1614,10 @@ bool RoomMatches(const std::string& room, const std::string& host, const std::st
 
 std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
-    if (view != View::kMain && view != View::kSession && view != View::kPassword) return lines;
+    // (menu-parity-0119, a lane shot: co-op that came with the game's start left the Lobby's Host and Join views with
+    // one row and an empty right half: they say there why nothing starts or stops here)
+    const bool launcher_view = v.s.by_launcher && (view == View::kHost || view == View::kJoin);
+    if (view != View::kMain && view != View::kSession && view != View::kPassword && !launcher_view) return lines;
     std::size_t at = 1;
     const auto add = [&](const std::string& name, const std::string& value) {
         if (at < lines.size()) lines[at++] = ListLine{FitTo(name, kListNameChars), FitTo(value, kListValueChars)};
@@ -1636,6 +1643,7 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
         header = "In a session";
     } else {
         header = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
+        if (v.s.by_launcher && why.empty()) why = "Restart the game to change it";
     }
     // (the header's value: hosting, who can reach this game. The header had none: the game's cursor frame, which
     // Longshot's mouse puts on the line under it, framed an empty box there, a tester's screenshot 2026-11-19)

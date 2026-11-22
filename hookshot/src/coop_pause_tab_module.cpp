@@ -119,6 +119,7 @@ std::vector<ListLine> g_menu_typing_lines;
 constexpr std::string_view kMenuLetters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.: ";
 bool g_menu_typed_last = false;
 std::uint64_t g_menu_pad_last = 0;
+std::atomic<bool> g_menu_host_rules{false};   // (Host settings: the page opens at its host rows, FollowMenu)
 std::atomic<bool> g_menu_focus_reset{false};   // (the view came: the game's cursor's row then is no choice)
 int g_menu_focus_seen = -2;                     // the game's cursor's row as last followed. g_mutex
 std::uint64_t g_menu_click_ms = 0;   // the left button last down on the list or Link (Longshot's A for it: not one)
@@ -2740,6 +2741,7 @@ void FollowMenu(bool shown) {
         if (open < 0) CoopPause::OpenNative(MenuTabPage(want));   // (the files' settings read once, as the view opens)
         else CoopPause::NativeGo(MenuTabPage(want));              // (another of its pages: no files or devices read)
         g_menu_top = 0;
+        if (g_menu_host_rules.exchange(false)) CoopPause::NativeSelectHostRules();   // (the list keeps it shown)
         LOG_INFO(Core, "coop: pause tab: settings and look: {} on the list", kMenuTabNames[static_cast<std::size_t>(want)]);
     }
     g_live_poke = true;
@@ -2970,8 +2972,13 @@ void Act(int row, int line = -1, bool clicked = false, RowAction forced = RowAct
     case RowAction::kCopyAnswer: CoopPause::PageCopyNow(CoopPause::PageCopy::kAnswer); break;
     case RowAction::kCopyLan: CoopPause::PageCopyNow(CoopPause::PageCopy::kLan); break;
     case RowAction::kCopyVpn: CoopPause::PageCopyNow(CoopPause::PageCopy::kVpn); break;
-    case RowAction::kViewMenu:
-        g_menu_tab = 0, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
+    case RowAction::kViewMenu:   // (Co-op settings: its own page; Customize Link is System's button)
+        g_menu_tab = kTabSettings, g_menu_list = false, g_menu_top = 0, g_menu_focus_reset = true;
+        SetView(View::kMenu);
+        break;
+    case RowAction::kViewHostSettings:   // (Co-op settings at its host rows, the list holding the pad)
+        g_menu_tab = kTabSettings, g_menu_list = true, g_menu_top = 0, g_menu_focus_reset = true;
+        g_menu_host_rules = true;
         SetView(View::kMenu);
         break;
     case RowAction::kViewLocal:   // (Settings and look on its Local co-op page: kMenuTabNames' last)
@@ -3893,8 +3900,15 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // (the page follows the game's cursor only once it moves to another row: where it was as the view
                 // came (the view's own row: in a session row 4, Local co-op's) or as the list gave the pad back (the row
                 // it was on all along) is no choice: a test run opened Co-op settings after a click on the header)
+                // (menu-parity-0119, a lane shot: Multiplayer > Local co-op showed Customize Link: the game puts its
+                // cursor back on row 0 a frame or two after the view comes, and that step was taken as a choice. Until
+                // the pad steps or kFocusSettleMs pass, a move of the game's own is only noted, not followed.)
+                static std::uint64_t focus_reset_ms = 0;
+                constexpr std::uint64_t kFocusSettleMs = 500;
                 const int focused = FocusedRow();
-                if (g_menu_focus_reset.exchange(false)) g_menu_focus_seen = focused;
+                if (g_menu_focus_reset.exchange(false)) g_menu_focus_seen = focused, focus_reset_ms = now;
+                const bool settled = up || down || now - focus_reset_ms >= kFocusSettleMs;
+                if (!list && focused != g_menu_focus_seen && !settled) g_menu_focus_seen = focused;
                 if (!list && focused != g_menu_focus_seen) {
                     g_menu_focus_seen = focused;
                     if (focused >= 0 && focused < kMenuTabs && focused != g_menu_tab.load()) {

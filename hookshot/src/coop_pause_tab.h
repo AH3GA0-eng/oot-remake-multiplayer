@@ -495,7 +495,13 @@ enum class RowAction {
     kMenuTab,        // that view's row: its page on the list, and the list has the pad
     kViewHost,       // the Host a game view (View::kHost): start hosting, or the game hosted: its code, Let in, Stop
     kViewLocal,      // Local co-op (0.11.9, the Multiplayer tab's row): Settings and look on its Local co-op page
+    kViewHostSettings,   // the Host view's Host settings: Settings and look on Co-op settings, at its host rows (Game,
+                         // Approve joins, PvP, Down but not out), the list holding the pad
 };
+// Settings and look's pages by their row (kMenuTabNames): the Co-op settings row and Host settings open kTabSettings
+// (Customize Link is System's own button, kTabCustomize); Local co-op's row shows only when its page is open (its home
+// is the Multiplayer tab's row: one home).
+inline constexpr int kTabCustomize = 0, kTabSettings = 1, kTabLocal = 3;
 inline constexpr std::uint64_t kConfirmMs = 5000;   // (3 s ran out before a test's second click)
 // proto::lobby_mute's bits (CoopLobby's kVoice, kChat; the module checks they match).
 inline constexpr std::uint8_t kMuteVoice = 1u << 0, kMuteChat = 1u << 1;
