@@ -12,9 +12,15 @@ the plan; [dungeons-boss.md](dungeons-boss.md) says how the sync works today.
   attack in its owner's game (4 s at least with one player, `boss_turn_us`, so a quick combo is not split), so its
   AI fights each player in turn. A player who is down, dead or paused is skipped, and is in the round again at the
   next attack's end once up (their puppet is seen by enemies again then too).
-- **Never stuck on a player who cannot fight** (2026-11-21): a boss leaves an owner who goes down or dies at once
-  and one paused after 2 s (`boss_owner_dead_us`, `boss_owner_paused_us`; a plain enemy still waits 10 s and 6 s),
-  for a player up and playing. With nobody up it stays where it is.
+- **Never stuck on a player who cannot fight** (2026-11-21, every enemy): a boss, or any enemy in its fight, leaves
+  an owner who goes down or dies at once and one paused after 2 s (`fight_owner_dead_us`, `fight_owner_paused_us`;
+  out of a fight the old 10 s and 6 s), for a player up and playing. With nobody up it stays where it is.
+- **Plain enemies can take turns too, OFF by default** (`enemy_turns`): the same rule as a boss's, between its
+  attacks, among the players within 12 m of it (`enemy_turn_m`). It stays off: a plain enemy's AI chases only its
+  owner's Link, so every turn walks it over to the other player and back (the shuttle of report 138, docs/objects.md
+  "Sticky target"), where solo a mob keeps the Link it fights; the chase, near and sticky rules already give it to
+  the player fighting it. On, the server's `enemies:` line counts them as `enemy turns`. (Also: only a boss or part
+  is listed with `object_presence::takes_turns` by the hook, so plain enemies would need that flag first.)
 - **A stun hands the boss to the stunner, also right after a turn:** a stun in another player's game (Gohma's eye,
   a ball sent back into a copy Phantom Ganon or Ganondorf) asks the boss over at most every 8 s
   (`boss_hitter_cooldown_us`), counted from the last change that was no turn (`Object::hitter_changed_at`): with a

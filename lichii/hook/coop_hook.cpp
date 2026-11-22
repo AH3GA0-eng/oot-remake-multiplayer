@@ -12,6 +12,7 @@
 // view_mutex. OnFrame never holds two at once.
 
 #include "coop_hook.h"
+#include "coop/protocol/scene_place.hpp"
 #include "coop_caller_orders.h"
 #include "coop_version.h" // LICHII_COOP_VERSION, written on each build (cmake/coop_version.cmake)
 
@@ -67,6 +68,7 @@
 #include "coop_pvp_native_game.h"
 #include "coop_lobby_game.h"
 #include "coop_dbno_game.h"
+#include "coop_hallway.h"
 #include "coop_mod_share.h"
 #include "coop_pack_notice.h"
 #include "coop_name_privacy.h"
@@ -582,6 +584,30 @@ public:
             for (const auto& k : CoopDungeon::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
+            for (const auto& k : CoopDungeon::WorldKeys()) {  // row 220: overworld obstacles that stay done
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
+        }
+        // Row 219 (#84): every one-time placement of the game as served (the kit's start lists them, a seed's
+        // one-time pots too), shared from the start: the host's snapshot then carries one taken before a save +
+        // reload, and a copy another game still has loaded goes (CoopPickups::IsOneTime).
+        CoopPickups::SetOneTime({});
+        if (const std::string file = EnvString("LICHII_COOP_ONE_TIME_KEYS"); pickups_ && !file.empty()) {
+            std::string note;
+            if (const auto list = CoopPickups::LoadOneTime(file, note)) {
+                for (const std::uint64_t key : list->pickups) {
+                    session_->share_pickup(coop::protocol::FlagKey::key64_flag(key));
+                }
+                for (const std::uint64_t key : list->holders) {
+                    session_->share_pickup(coop::protocol::FlagKey::key64_flag(key));
+                }
+                CoopPickups::SetOneTime(*list);
+                LOG_INFO(Core, "coop: flags: {} one-time pickups and {} one-time holders shared from {}",
+                         list->pickups.size(), list->holders.size(), file);
+            }
+            if (!note.empty()) {
+                LOG_INFO(Core, "coop: flags: {}", note);
+            }
         }
         // On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches): another
         // player's gimmick event plays here too when our Link comes near it.
@@ -739,6 +765,8 @@ public:
             session_->guard_count(coop::protocol::FlagKey(coop::host::kGoldTokenCount, std::uint16_t{0}),
                                   skulltulas);
         }
+        // Row 218: heart containers add up across players as heart pieces do (FlagWatcher::share_containers).
+        session_->share_containers(coop::protocol::FlagKey{0xfbe01da1u, 0});
         thread_ = std::thread([this] { Run(); });
         return true;
     }
@@ -1610,9 +1638,21 @@ public:
         }
         if (game_store) {  // issue 88: what the session left in MaxLife (docs/items.md)
             const auto max_life = game_store->read(coop::protocol::FlagKey{0xfbe01da1u, 0});
-            CoopObjects::SetMaxLife(max_life && max_life->kind == coop::protocol::FlagKind::int32
-                                        ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
-                                        : std::nullopt);
+            // Row 218: our Link's hearts follow the group's maximum as we know it, not only the flag: when our game
+            // wrote its own lower max back before the object walk raised Link (a container another player took),
+            // the drop is ours alone and the flag stays low, and that container was lost to this player for good.
+            // Not while a hold lowers it (rows 136/137, 181): that hold's value wins.
+            std::optional<std::int32_t> walk_max =
+                max_life && max_life->kind == coop::protocol::FlagKind::int32
+                    ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
+                    : std::nullopt;
+            if (session_ && walk_max && !session_->held_lower(coop::protocol::FlagKey{0xfbe01da1u, 0})) {
+                if (const auto group = session_->group_int(coop::protocol::FlagKey{0xfbe01da1u, 0});
+                    group && *group > *walk_max) {
+                    walk_max = group;
+                }
+            }
+            CoopObjects::SetMaxLife(walk_max);
             // Boss cutscenes (coop_boss_scenes.h): the one shared heart container sees our maximum and may set it.
             const bool known = max_life && max_life->kind == coop::protocol::FlagKind::int32;
             CoopBoss::SetMaxLife(known ? std::optional<std::int32_t>(static_cast<std::int32_t>(max_life->value))
@@ -1629,6 +1669,9 @@ public:
             if (const auto to = CoopBoss::TakeMaxLifeWrite(); to && known) {
                 auto set = *max_life;
                 set.value = static_cast<std::uint32_t>(*to);
+                // Row 218: the group has this container (the server's answer): our game's rise to it is no pickup
+                // of ours, so it is never sent as a change on top (one container, not two).
+                if (session_) session_->note_group_at_least(coop::protocol::FlagKey{0xfbe01da1u, 0}, *to);
                 const bool ok = game_store->write(set);
                 LOG_INFO(Core, "coop: boss: our maximum life {} -> {} (the boss's one heart container){}",
                          static_cast<std::int32_t>(max_life->value), *to, ok ? "" : ": the write failed");
@@ -1897,6 +1940,15 @@ public:
                         report.server_now_us);
         for (auto& line : CoopDbno::TakeLines()) {
             chat_.Add(std::move(line), true);
+        }
+        // The Forest Temple's twisting hallway (coop_hallway.h): a refused turn says who is in the way, to us
+        // and (as our chat) to them.
+        for (auto& line : CoopHallway::TakeOurLines()) {
+            LOG_INFO(Core, "coop: hallway: {}", line);
+            chat_.Add(std::move(line), true);
+        }
+        for (const auto& line : CoopHallway::TakeChatLines()) {
+            LOG_INFO(Core, "coop: hallway: said to the players inside: {}{}", line, SendChat(line) ? "" : " (not sent)");
         }
         // The Lobby (docs/play-online.md "Lobby"): the tab's host actions go out.
         CoopLobby::Frame(report.connected ? session_.get() : nullptr);
@@ -2639,7 +2691,8 @@ private:
             }
             const auto& s = *it->second;
             text += ": " + s.scene.value_or("?");
-            const bool same = s.scene && frame.scene && *s.scene == *frame.scene;
+            // Either era of one place counts (row 221).
+            const bool same = s.scene && frame.scene && coop::protocol::same_place(*s.scene, *frame.scene);
             if (same && frame.position) {
                 const auto& a = s.position;
                 const auto& b = *frame.position;

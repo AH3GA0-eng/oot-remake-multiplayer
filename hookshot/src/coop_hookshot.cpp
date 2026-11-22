@@ -55,6 +55,7 @@
 #include "coop_actor_events.h"
 #include "coop_boss_native.h"
 #include "coop_boss_scenes.h"
+#include "coop_hallway.h"
 #include "coop_dbno_body.h"
 #include "coop_dbno_game.h"
 #include "coop_enemy_shots.h"
@@ -97,6 +98,7 @@
 #include "coop/protocol/messages.hpp"
 #include "coop_runtime.h"
 #include "coop_pause_files.h"
+#include "coop_pickups.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -1212,6 +1214,14 @@ bool Start(const HosCoopApi* api) {
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
+    // Row 219 (#84): the one-time placements the kit's start lists beside the mods (merge_tables.py one_time_keys),
+    // read by the hook when a session starts. The mods folder as Hookshot's host/mods.c finds it.
+    if (Env("LICHII_COOP_ONE_TIME_KEYS").empty()) {
+        const std::string mods = Env("HOS_MODS");
+        const std::filesystem::path root =
+            mods.empty() ? CoopRuntime::GameDir() / "mods" : std::filesystem::path(std::u8string(mods.begin(), mods.end()));
+        CoopFiles::SetEnv("LICHII_COOP_ONE_TIME_KEYS", CoopFiles::Utf8Path(root / CoopPickups::kOneTimeFile));
+    }
     // Original game (coop_original.h): the module stays off, all of it, and Longshot's F1 menu gets one tab with the
     // switch alone, so the player can turn it back.
     if (const auto options = CoopTitle::KitOptionsFile();
@@ -1252,6 +1262,13 @@ bool Start(const HosCoopApi* api) {
         CoopPuppetConfig::Configure(PerceivedSafe());  // as the emulator's cave (coop_puppet_config.h)
     }
     CoopPackNotice::Enable(CoopPuppetConfig::HasPack());  // no pack: the chat says so once (coop_pack_notice.h)
+    // The kit's start file sets OOT_COOP_KIT_START (play.ps1, start.sh, the autotest). Without it (and not Nucleus
+    // Co-op, which starts each game its own way) the chat says to use Start Squadala (player report 225).
+    const bool direct = !EnvOn("OOT_COOP_KIT_START") && !CoopLook::NucleusWrote(CoopFiles::ReadText(ini));
+    CoopPackNotice::EnableDirect(direct);
+    if (direct) {
+        LOG_WARNING(Core, "coop: the game was not started with Start Squadala (the kit's start file): the title and the chat say so");
+    }
     g_hold = EnvOn("LICHII_COOP_OBJECTS_AI_HOLD");
     CoopLinkSound::SetProbe(EnvOn("LICHII_COOP_DEBUG_SOUND"));  // every user's sounds named once in the log
     // Flags through the game's own functions (coop_flag_native.h): its writes as events from the applier's wrap, ours
@@ -1692,6 +1709,12 @@ int Wrap(std::uint32_t id, int phase, std::uint64_t* x, void* /*ctx*/) {
             // One death cutscene per game (coop_boss_scenes.h refuse_deaths): a boss's death asked again after it
             // played here is not run; x0 0 is the manager's own "not taken" (phase 1 still reports it).
             if (named && CoopBossScenes::RefuseAsk(name)) {
+                x[0] = 0;
+                return 1;
+            }
+            // The Forest Temple's twisting hallway never turns under another player standing in it
+            // (coop_hallway.h): the eye's turn is not run, and the lines say who is in the way.
+            if (named && CoopHallway::RefuseAsk(name)) {
                 x[0] = 0;
                 return 1;
             }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "coop_snail_custom.h"
 
+#include "coop_i18n.h"
+
 namespace CoopSnailCustom {
 
 int Neighbour(int f, Dir dir) {
@@ -60,18 +62,22 @@ std::uint64_t Driver::Pad(std::uint64_t down) {
     return his;
 }
 
-Texts Driver::Shown() const {
+Texts Driver::Shown() const { return Shown(CoopI18n::Current()); }
+
+// In the player's language, as co-op's own pages put their rows' names and values (CoopI18n::Tr at the write, the
+// pause tab's list): a name or value already in it, or a colour of their own (#RRGGBB), comes back unchanged.
+Texts Driver::Shown(const CoopI18n::Lang* lang) const {
     const CoopLookMenu::View v = page_.view();
     Texts t;
     if (v.rows.empty()) return t;
-    t.title = v.rows[0].name;
-    if (!page_.editing() && page_.GroupsOffered() > 1) t.title += "   Y: next page";
+    t.title = CoopI18n::Tr(lang, v.rows[0].name);
+    if (!page_.editing() && page_.GroupsOffered() > 1) t.title += "   " + CoopI18n::Tr(lang, "Y: next page");
     for (int f = 0; f < kOptions; ++f) {
         const std::size_t r = static_cast<std::size_t>(f + 1);
         if (r >= v.rows.size()) break;
-        t.labels[static_cast<std::size_t>(f)] = v.rows[r].name;
+        t.labels[static_cast<std::size_t>(f)] = CoopI18n::Tr(lang, v.rows[r].name);
         // (an action row, Game's own colour or Done, has no value of its own: its key)
-        t.values[static_cast<std::size_t>(f)] = v.rows[r].kind == 0 ? std::string("A") : v.rows[r].value;
+        t.values[static_cast<std::size_t>(f)] = v.rows[r].kind == 0 ? std::string("A") : CoopI18n::Tr(lang, v.rows[r].value);
     }
     return t;
 }

@@ -22,6 +22,7 @@
 #include "common/logging.h"
 #include "coop_hook.h"
 #include "coop_i18n.h"
+#include "coop_pack_notice.h"
 #include "coop_mod_screens.h"
 #include "coop_mods_runtime.h"
 #include "coop_pause.h"
@@ -847,7 +848,11 @@ void CloseAsk(bool seen) {
         std::lock_guard lock(g_mutex);
         pending = std::move(g_ask_pending);
         g_apply_until = NowMs() + kApplyForMs, g_apply_next = 0;   // (the title's own texts back on its buttons)
-        if (seen) g_sound = "button_decide";
+        // The ask gave its OK the title's cursor (the fourth button, StepAsk): once it is seen the cursor goes back
+        // to the first button (Continue, Start or New Game), where the title's set-up puts it. Left on the fourth,
+        // the next A chose the title's own row there (Multiplayer, then Host's page: smoke hs-players, kit-0119).
+        // Not when co-op's page or the host's save took the title: those give the focus themselves.
+        if (seen) g_sound = "button_decide", g_focus_to = 0;
     }
     if (seen && !CoopProblemAsk::WriteAsked(AskFolder(), CoopProblemAsk::AskedAfter(pending))) {
         LOG_WARNING(Core, "coop: title: bug-reports\\coop-asked.txt could not be written: the ask may come again");
@@ -953,6 +958,7 @@ void StepMenu(void* ctx, std::uint64_t screen) {
         const char* words = sub && f >= 0 && static_cast<std::size_t>(f) < look.count
                                 ? CoopTitleMenu::MenuHint(look.rows[static_cast<std::size_t>(f)].action)
                                 : nullptr;
+        if (words == nullptr && !sub && CoopPackNotice::DirectOn()) words = CoopPackNotice::kDirectHint;   // (player report 225: solo has no chat box)
         const bool hint = words != nullptr && layout != 0 && g_column.hint != 0 &&
                           SetLiveText(ctx, layout, kHintSlot, CoopI18n::Tr(words));
         ShowColumn(ctx, screen, CoopTitleNative::kButtons, hint, {});

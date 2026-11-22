@@ -107,6 +107,26 @@ TEST_CASE("pvp: what a swing never hits") {
     CHECK(a.Swing(Swing(blade, "spot01"), self, "spot00", 1, std::vector<Target>{Other(2, {1, 0, 0})}, kS).empty());
 }
 
+TEST_CASE("pvp: the two eras of one place hit and hurt each other, another place does not (row 221)") {
+    CoopPvp::Attacker a;
+    const Vec3 self{0, 0, 0};
+    const Vec3 blade{0.8f, 1.0f, 0.0f};
+    const std::vector<Target> child{Other(2, {1, 0, 0}, "Graveyard_Child")};
+    CHECK(a.Swing(Swing(blade, "Graveyard_Adult"), self, "Graveyard_Adult", 1, child, kS).size() == 1);
+    const std::vector<Target> elsewhere{Other(2, {1, 0, 0}, "Kakariko_Child")};
+    CHECK(a.Swing(Swing(blade, "Graveyard_Adult"), self, "Graveyard_Adult", 1, elsewhere, 2 * kS).empty());
+    CoopPvp::Local me = Me();
+    me.scene = "Graveyard_Child";
+    CoopPvp::Victim v;
+    const auto d = v.Hit(HitOn(2), true, me, Them("Graveyard_Adult"), kS);
+    REQUIRE(d);
+    CHECK(d->take == 2);
+    CoopPvp::Victim w;
+    const auto e = w.Hit(HitOn(2), true, me, Them("Kakariko_Adult"), kS);
+    REQUIRE(e);
+    CHECK(e->hurt.flags == proto::pvp_hurt::guarded);
+}
+
 TEST_CASE("pvp: shots hit within their reach, and a nut never hurts") {
     CoopPvp::Attacker a;
     const Vec3 self{0, 0, 0};
