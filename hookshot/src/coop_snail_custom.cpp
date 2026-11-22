@@ -80,10 +80,12 @@ Texts Driver::Shown(const CoopI18n::Lang* lang) const {
     Texts t;
     if (v.rows.empty()) return t;
     t.title = CoopI18n::Tr(lang, v.rows[0].name);
-    if (!page_.editing() && page_.GroupsOffered() > 1) t.title += "   " + CoopI18n::Tr(lang, "Y: next page");
+    if (!page_.editing() && page_.GroupsOffered() > 1) t.title += "  " + CoopI18n::Tr(lang, "Y: next page");
     // (A opens the colour mixer whenever the set has colours, one page or several: its own condition, not the pages';
     // a set with no colour option, the note row, has nothing to pick)
-    if (!page_.editing() && page_.GroupsOffered() >= 1) t.title += "   " + CoopI18n::Tr(lang, "A: pick exact hue");
+    if (!page_.editing() && page_.GroupsOffered() >= 1) t.title += "  " + CoopI18n::Tr(lang, "A: pick exact hue");
+    // (the title's pane takes 61 bytes at most: the placeholder's room, seen in zh on the first page, 62 bytes, whose
+    // title stayed Character Select's own "Customize"; the hints go with two spaces, not three, to stay within it)
     for (int f = 0; f < kOptions; ++f) {
         const std::size_t r = static_cast<std::size_t>(f + 1);
         if (r >= v.rows.size()) break;
