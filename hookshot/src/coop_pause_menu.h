@@ -210,6 +210,12 @@ public:
     // Character Select (coop_char_colours.h ShownCharacter): this game shows a character, not Link, so the
     // Customize page says Link's colours wait for Link (#308's live display; the character keeps its own).
     void SetCharacter(bool picked) { character_ = picked; }
+    // Character Select's code is in the game (coop_pause_tab.h SnailCodeBuiltIn): his Customize screen, with co-op's
+    // rows (coop_snail_custom.h), is the one home of Link's look (the owner, 0.11.9: "one home per thing"). The Customize
+    // page keeps Your name and says where the colours are; the main page's Customize Link row says it too.
+    void SetSnailHome(bool on) { snail_home_ = on; }
+    bool SnailHome() const { return snail_home_; }
+    static constexpr const char* kSnailHomeNote = "Link's colours are on the Characters tab: pick Link, then Customize.";
     static constexpr const char* kCharacterNote =
         "A Character Select character is picked: it keeps its own colours (X on its Characters page); these colours show on Link when you pick Link again.";
     // The Find a game page's list (the Join page's first row): the games on this network or the relay's public
@@ -330,6 +336,7 @@ private:
     coop::protocol::DifficultyValues DifficultyValuesShown() const;
     void DifficultyLines(std::vector<Line>& out) const;
     bool character_ = false;  // SetCharacter
+    bool snail_home_ = false;  // SetSnailHome
     bool title_ = false;      // SetTitle
     std::string picked_;      // the title: the game picked on the list that asks for a password ("": none)
     std::string picked_host_; // (its host, so a long name gives way on the page's note: TitleGameName)

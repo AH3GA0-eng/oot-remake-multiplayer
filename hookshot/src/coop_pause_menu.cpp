@@ -438,9 +438,14 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({PageRow("Settings", options_.name.size() > 12 ? options_.name.substr(0, Utf8Start(options_.name, 9)) + "..." : options_.name), Act::kOpenSettings,
                        "Your name, Link's look, how many players can join your game, voice chat, the chat key, "
                        "which controller this game reads, and players on the map."});
-        out.push_back({PageRow("Customize Link", "Colours"), Act::kOpenCustomize,
-                       "A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture of "
-                       "the result. Your Link wears it when you close the menu; the other players see your tunic's colour."});
+        if (snail_home_) {   // (one home: Character Select's Customize screen; the page keeps Your name)
+            out.push_back({PageRow("Customize Link", "Characters tab"), Act::kOpenCustomize, kSnailHomeNote});
+        } else {
+            out.push_back({PageRow("Customize Link", "Colours"), Act::kOpenCustomize,
+                           "A colour for each part of your tunics, shields, swords, boots and gauntlets, with a picture "
+                           "of the result. Your Link wears it when you close the menu; the other players see your tunic's "
+                           "colour."});
+        }
         out.push_back({PageRow("Commands", ChatKeyWords(options_.chat_key)), Act::kOpenCommands, "The chat's commands, and the key that opens the chat."});
         break;
     case Page::kHost: {
@@ -651,10 +656,12 @@ std::vector<Menu::Line> Menu::Lines() const {
         out.push_back({Action("Your name", typing_ && typing_act_ == Act::kName ? options_.name + "_" : options_.name),
                        Act::kName,
                        "The name the other players see: 1 to 16 characters, typed with the keyboard."});
-        out.push_back({Choice("Link's look", options_.colour.empty() ? std::string("By player number") : options_.colour),
-                       Act::kLook,
-                       "The colour of your Link's tunic and cap, as you and the other players see it. By player "
-                       "number: each player's own colour."});
+        if (!snail_home_) {   // (with Character Select's code in the game his Customize screen is the tunic's one home)
+            out.push_back({Choice("Link's look", options_.colour.empty() ? std::string("By player number") : options_.colour),
+                           Act::kLook,
+                           "The colour of your Link's tunic and cap, as you and the other players see it. By player "
+                           "number: each player's own colour."});
+        }
         out.push_back({Choice("Players when you host", std::to_string(options_.max_players)), Act::kPlayers,
                        "The most players in a game you host, you included."});
         out.push_back({Action("Port when you host",
@@ -1332,6 +1339,7 @@ bool Menu::Press(Input input) {
     note_.clear();
     if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h; Your name above them, ours)
         using L = CoopLookMenu::Input;
+        if (snail_home_) customize_name_ = true;   // (Your name only: the colours are Character Select's screen's)
         const bool name_row = !customize_.editing();
         if (typing_) {   // (Your name typed on its row: as on the Settings page)
             switch (input) {
@@ -1350,6 +1358,11 @@ bool Menu::Press(Input input) {
             case Input::kLeft:
             case Input::kRight: break;
             }
+            return true;
+        }
+        if (snail_home_) {   // (Your name only, above)
+            if (input == Input::kDecide) Decide(Act::kName);
+            if (input == Input::kBack) Go(Page::kMain, Act::kOpenCustomize);
             return true;
         }
         if (name_row && customize_name_) {
@@ -1965,6 +1978,10 @@ void Menu::Change(Act act, int step) {
 void Menu::Select(std::size_t row) {
     if (page_ == Page::kCustomize) {
         if (typing_) return;
+        if (snail_home_) {   // (Your name only)
+            customize_name_ = true;
+            return;
+        }
         if (!customize_.editing()) {   // (row 0: Your name; the parts one row down)
             customize_name_ = row == 0;
             if (row > 0) customize_.Select(row - 1);
@@ -1989,11 +2006,12 @@ void Menu::Click(std::size_t row, int side) {
             return;
         }
         if (!customize_.editing()) {
-            customize_name_ = row == 0;
+            customize_name_ = row == 0 || snail_home_;
             if (row == 0) {
                 Decide(Act::kName);   // (a click on Your name: its typing)
                 return;
             }
+            if (snail_home_) return;   // (the note under it: words only)
             customize_.Click(row - 1, side);
             TakeCustomize();
             return;
@@ -2190,6 +2208,21 @@ bool Menu::Paste(std::string_view text) {
 
 View Menu::view() const {
     View v;
+    if (page_ == Page::kCustomize && snail_home_) {   // (one home: Your name, and where Link's colours are)
+        Row name;
+        name.name = "Your name";
+        name.value = options_.name;
+        name.kind = RowKind::kAction;
+        v.rows.push_back(std::move(name));
+        v.rows.push_back(Note(kSnailHomeNote));
+        v.selected = 0;
+        v.typing = typing_;
+        v.help_title = "Your name";
+        v.help = !note_.empty() ? Joined(note_)
+                                : std::string("The name the other players see over your Link and in the chat: 1 to 16 "
+                                              "characters.");
+        return v;
+    }
     if (page_ == Page::kCustomize) {   // (its own rows: coop_look_menu.h; Your name above them)
         const CoopLookMenu::View c = customize_.view();
         const bool name_row = !customize_.editing();

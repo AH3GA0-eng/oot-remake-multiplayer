@@ -1670,6 +1670,46 @@ TEST_CASE("pause tab: Customize Link with a Character Select character picked sa
     CHECK(m.view().help == own);
 }
 
+TEST_CASE("pause tab: with Character Select's code in the game, Link's colours have one home: his Customize screen") {
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.SetSnailHome(true);
+    // The main page's row says where, and still opens the page (Your name stays there).
+    SelectRow(m, "Customize Link");
+    CHECK(RowNamed(m.view(), "Customize Link")->value == "Characters tab");
+    CHECK(m.view().help == Menu::kSnailHomeNote);
+    m.Press(Input::kDecide);
+    REQUIRE(m.page() == Page::kCustomize);
+    View v = m.view();
+    REQUIRE(v.rows.size() == 2);   // Your name, and the note: no part rows, no second place for the colours
+    CHECK(v.rows[0].name == "Your name");
+    CHECK(v.rows[1].kind == RowKind::kNote);
+    CHECK(v.rows[1].name == Menu::kSnailHomeNote);
+    CHECK(v.selected == 0);
+    // The pad stays on Your name; nothing reaches the hidden part rows.
+    m.Press(Input::kDown);
+    m.Press(Input::kRight);
+    m.Press(Input::kUp);
+    CHECK(m.view().rows.size() == 2);
+    CHECK(m.view().selected == 0);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    m.Select(1);
+    m.Click(1, 1);
+    CHECK(m.view().rows.size() == 2);
+    CHECK_FALSE(m.TakeRequest().has_value());
+    m.Press(Input::kBack);
+    CHECK(m.page() == Page::kMain);
+    // The Settings page has no tunic row of its own then.
+    m.Open(Page::kSettings);
+    CHECK(RowNamed(m.view(), "Link's look") == nullptr);
+    CHECK(RowNamed(m.view(), "Your name") != nullptr);
+    // Without his code: our page is the home, as before.
+    m.SetSnailHome(false);
+    CHECK(RowNamed(m.view(), "Link's look") != nullptr);
+    m.Open(Page::kMain);
+    CHECK(RowNamed(m.view(), "Customize Link")->value == "Colours");
+}
+
 TEST_CASE("pause tab: Settings: A, Left and Right on Original game (d501ce95: A did nothing on Original)") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});

@@ -28,6 +28,10 @@ namespace CoopPause {
 // leaves Host and Join alone.
 void Init(bool coop_on);
 
+// The game folder's exefs_patches.txt: the mods' code patches the game was built with (read once: another build needs
+// the game started again). The - strip's slot 3 and the home of Link's look follow it (charsel-tab-0119).
+const std::string& ExefsList();
+
 // Each game frame (HOS_COOP_SITE_FRAME), shown or not: what follows from
 // co-op's state (the invite code copied, a connected join remembered and the
 // host's save loaded at the title). At most every 250 ms.

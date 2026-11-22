@@ -2368,6 +2368,12 @@ TEST_CASE("exefs_patches.txt: a code patch the game was built with") {
   CHECK_FALSE(ModCodeBuiltIn("Some mod\tx.pchtxt\t0000\tdata\t\n"));
   CHECK_FALSE(ModCodeBuiltIn("broken line without fields\ncode\n"));
   CHECK(ModCodeBuiltIn("Other\ty.ips\t1\tunsupported\t\nOoT Character Select\tE0.ips\t2\tcode\tnote\n"));
+  // Character Select's own code (the home of Link's look): his name in any case, a code line only
+  CHECK(SnailCodeBuiltIn("# list\nOoT Character Select\tE0F3CCFA.ips\t64a49145\tcode\t\n"));
+  CHECK(SnailCodeBuiltIn("mods/oot character select v3\tE0.ips\t1\tcode\t\r\n"));
+  CHECK_FALSE(SnailCodeBuiltIn("Other mod\tE0.ips\t1\tcode\t\n"));
+  CHECK_FALSE(SnailCodeBuiltIn("OoT Character Select\tE0.ips\t1\tunsupported\tanother version\n"));
+  CHECK_FALSE(SnailCodeBuiltIn(""));
 }
 
 TEST_CASE("the - strip's tabs: one compact row by their words, centred where the game's were") {

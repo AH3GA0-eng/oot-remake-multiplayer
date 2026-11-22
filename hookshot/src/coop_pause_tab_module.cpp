@@ -1919,17 +1919,7 @@ void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
 // once: the list changes only with a game build, which needs the game started again.
 bool ModCodeInGame() {
     static const bool built = [] {
-        std::error_code ec;
-        const std::filesystem::path p = CoopRuntime::GameDir() / "exefs_patches.txt";
-        std::string text;
-        if (std::filesystem::is_regular_file(p, ec)) {
-            if (std::FILE* f = std::fopen(p.string().c_str(), "rb")) {
-                char buf[4096];
-                for (std::size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0 && text.size() < (1u << 20);) text.append(buf, n);
-                std::fclose(f);
-            }
-        }
-        const bool yes = ModCodeBuiltIn(text);
+        const bool yes = ModCodeBuiltIn(CoopPause::ExefsList());
         LOG_INFO(Core, "coop: pause tab: a mod's code in the game (exefs_patches.txt): {} (the - strip's slot 3 {})",
                  yes ? "yes" : "no", yes ? "counts when shown" : "never counts: the game's code fills three - tabs");
         return yes;

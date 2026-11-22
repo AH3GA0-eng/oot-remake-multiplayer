@@ -703,7 +703,10 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms) {
     return (strip_state == 1 || strip_state == 2) && seen_ms != 0 && now_ms >= seen_ms && now_ms - seen_ms < kMenuUpMs;
 }
 
-bool ModCodeBuiltIn(std::string_view list) {
+namespace {
+// Whether a code line's mod name (exefs_patches.txt, see ModCodeBuiltIn) is one `take` wants.
+template <class F>
+bool AnyCodeLine(std::string_view list, F take) {
     while (!list.empty()) {
         const std::size_t end = list.find('\n');
         std::string_view line = list.substr(0, end);
@@ -717,9 +720,22 @@ bool ModCodeBuiltIn(std::string_view list) {
             if (at != std::string_view::npos) ++at;
         }
         if (at == std::string_view::npos) continue;
-        if (line.substr(at, line.find('\t', at) - at) == "code") return true;
+        if (line.substr(at, line.find('\t', at) - at) == "code" && take(line.substr(0, line.find('\t')))) return true;
     }
     return false;
+}
+}  // namespace
+
+bool ModCodeBuiltIn(std::string_view list) {
+    return AnyCodeLine(list, [](std::string_view) { return true; });
+}
+
+bool SnailCodeBuiltIn(std::string_view list) {
+    return AnyCodeLine(list, [](std::string_view mod) {
+        std::string m(mod);
+        for (char& c : m) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return m.find("character select") != std::string::npos;
+    });
 }
 
 std::vector<float> TabRowX(float first, float step, int game, const std::vector<float>& widths) {

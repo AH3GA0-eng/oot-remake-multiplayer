@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -257,6 +258,27 @@ CoopPauseMenu::Session SessionNow() {
     return s;
 }
 
+}  // namespace
+
+const std::string& ExefsList() {
+    static const std::string text = [] {
+        std::string t;
+        std::error_code ec;
+        const std::filesystem::path p = CoopRuntime::GameDir() / "exefs_patches.txt";
+        if (std::filesystem::is_regular_file(p, ec)) {
+            if (std::FILE* f = std::fopen(p.string().c_str(), "rb")) {
+                char buf[4096];
+                for (std::size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0 && t.size() < (1u << 20);) t.append(buf, n);
+                std::fclose(f);
+            }
+        }
+        return t;
+    }();
+    return text;
+}
+
+namespace {
+
 void RefreshSession(bool now) {
     if (now || NowMs() >= g_next_session_ms) {
         g_next_session_ms = NowMs() + 250;
@@ -264,6 +286,8 @@ void RefreshSession(bool now) {
         const CoopDifficulty::State d = CoopDifficulty::Get();
         g_menu.SetDifficulty({d.connected, d.can_edit, d.choice, d.values}, static_cast<int>(CoopHook::PlayerList().size()));
         g_menu.SetCharacter(CoopCharColours::ShownCharacter() != 0);   // (#308's Customize page: Link's colours wait)
+        // (one home for Link's look: Character Select's Customize screen when his code is in the game)
+        g_menu.SetSnailHome(CoopPauseTab::SnailCodeBuiltIn(ExefsList()));
     }
 }
 

@@ -860,6 +860,10 @@ inline int GameTabsShown(bool slot3_visible, bool mod_code_built_in) {
 // Whether exefs_patches.txt (nx2/exefs_patches.py write_list: '#' comment, then "mod<TAB>file<TAB>hash<TAB>kind<TAB>
 // note" a patch file) lists a code patch the game was built with.
 bool ModCodeBuiltIn(std::string_view exefs_list);
+// Whether it lists a code patch of Character Select's (the kit installs him as "OoT Character Select"; a mod whose name
+// has "character select" in any case): his Characters tab and Customize screen are in the game, and his Customize
+// screen is the one home of Link's look (co-op's rows on it: coop_snail_custom.h; the owner, 0.11.9).
+bool SnailCodeBuiltIn(std::string_view exefs_list);
 // The - strip's tabs as one compact row (charsel-tab-0119; the owner, 0.11.9 kit: "It's extremely spread out"): before,
 // every tab sat one game step apart, a step the game sized for three or four tabs, so seven ran across the whole bar.
 // Now each two neighbours are as far apart as their words' half widths and the tightest gap the game itself leaves
