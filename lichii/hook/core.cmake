@@ -12,6 +12,7 @@ target_sources(core PRIVATE
     "${_coop_hook}/coop_teleport_game.cpp"
     "${_coop_hook}/coop_hallway.cpp"
     "${_coop_hook}/coop_hallway_game.cpp"
+    "${_coop_hook}/coop_pivot.cpp"
     "${_coop_hook}/coop_pvp.cpp"
     "${_coop_hook}/coop_dbno.cpp"
     "${_coop_hook}/coop_dbno_game.cpp"
