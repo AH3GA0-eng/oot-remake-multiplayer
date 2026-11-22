@@ -1812,7 +1812,7 @@ std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
 std::array<std::uint64_t, 4> g_game_words{};   // each game tab's T_Text_00: its drawn width says whether the tab shows a word
 std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
-std::array<std::uint64_t, kMinusTabs> g_minus_texts{};   // each of ours' T_Text_00 (its drawn width: TabRowX)
+std::array<std::uint64_t, kMinusTabs> g_minus_tab_words{};   // each of ours' T_Text_00 (its drawn width: TabRowX)
 // Ours sit under the strip's root (the pack's), the game's under N_MenuChange_00: the two frames apart by how far ours
 // were packed from where the game's step puts them (their own places read at the lookup against the fourth tab's).
 float g_minus_frame_x = 0.0f, g_minus_frame_y = 0.0f;
@@ -1828,7 +1828,7 @@ void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen);   // (be
 void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
     if (gen != g_strip_gen) {
         g_strip_gen = gen, g_strip_looked = false;
-        g_game_tabs = {}, g_game_words = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_texts = {}, g_minus_ok = false,
+        g_game_tabs = {}, g_game_words = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_tab_words = {}, g_minus_ok = false,
         g_minus_shown = false;
         g_strip_btns = {}, g_strip_moved = false;
     }
@@ -1857,7 +1857,7 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         std::snprintf(name, sizeof name, "Pa_Category_%02d", 4 + i);
         g_minus_panes[static_cast<std::size_t>(i)] = FindOwnPane(ctx, f.layout, name);
         g_minus_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "N_MenuChangeTextIn_00");
-        g_minus_texts[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "T_Text_00");
+        g_minus_tab_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "T_Text_00");
         g_minus_ok = g_minus_ok && IsPart(g_minus_panes[static_cast<std::size_t>(i)]);
     }
     // (pause_menu.add_tab: ours i at the fourth tab's place plus (i + 1) steps, in the root's frame)
@@ -1959,7 +1959,7 @@ void FollowMinus(void* ctx) {
     std::vector<float> widths;
     const auto width_of = [&](std::uint64_t text) { return text != 0 ? Read<float>(text + kPaneTextWidth) : 0.0f; };
     for (int k = 0; k < game; ++k) widths.push_back(width_of(g_game_words[static_cast<std::size_t>(k)]));
-    for (int i = 0; i < kMinusTabs; ++i) widths.push_back(width_of(g_minus_texts[static_cast<std::size_t>(i)]));
+    for (int i = 0; i < kMinusTabs; ++i) widths.push_back(width_of(g_minus_tab_words[static_cast<std::size_t>(i)]));
     const std::vector<float> row = TabRowX(first, step, game, widths);
     const auto x_of = [&](int k) { return row[static_cast<std::size_t>(k)]; };
     for (int k = 0; k < game; ++k) PlacePane(ctx, g_game_tabs[static_cast<std::size_t>(k)], x_of(k));
