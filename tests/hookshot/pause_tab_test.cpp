@@ -2341,6 +2341,14 @@ TEST_CASE("census (the - menu research): screens first seen, state changes, gone
           std::vector<std::string>{"census: screen 0x4bebaa8 seen, state 1"});   // back: seen anew
 }
 
+TEST_CASE("the - strip counts slot 3 only when it shows a word, so no empty slot sits before our tabs (UI gate)") {
+  CHECK(GameTabsShown(false, 0.0f) == 3);     // the game's own - menu: slot 3 hidden
+  CHECK(GameTabsShown(true, 0.0f) == 3);      // shown but empty: no gap
+  CHECK(GameTabsShown(true, 0.5f) == 3);
+  CHECK(GameTabsShown(true, 241.5f) == 4);    // a Characters tab with its word
+  CHECK(GameTabsShown(false, 241.5f) == 3);   // a word on a hidden tab does not count
+}
+
 TEST_CASE("pause tab (row 199): the menu is up while the tab strip is open or opening and fresh") {
     CHECK(MenuUpFrom(2, 1000, 1000));
     CHECK(MenuUpFrom(1, 1000, 1000 + kMenuUpMs - 1));       // (opening; a frame or a few later)

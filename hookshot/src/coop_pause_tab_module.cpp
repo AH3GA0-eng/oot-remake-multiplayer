@@ -1807,6 +1807,7 @@ std::uint64_t g_strip_gen = 0;
 bool g_strip_looked = false;
 std::array<std::uint64_t, 4> g_game_tabs{};
 std::array<float, 4> g_game_tabs_x{};
+std::array<std::uint64_t, 4> g_game_words{};   // each game tab's T_Text_00: its drawn width says whether the tab shows a word
 std::array<std::uint64_t, kMinusTabs> g_minus_panes{}, g_minus_words{};
 // Ours sit under the strip's root (the pack's), the game's under N_MenuChange_00: the two frames apart by how far ours
 // were packed from where the game's step puts them (their own places read at the lookup against the fourth tab's).
@@ -1823,7 +1824,8 @@ void LookMinusPage(void* ctx, std::uint64_t layout, std::uint64_t gen);   // (be
 void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
     if (gen != g_strip_gen) {
         g_strip_gen = gen, g_strip_looked = false;
-        g_game_tabs = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_ok = false, g_minus_shown = false;
+        g_game_tabs = {}, g_game_words = {}, g_minus_panes = {}, g_minus_words = {}, g_minus_ok = false,
+        g_minus_shown = false;
         g_strip_btns = {}, g_strip_moved = false;
     }
     if (g_strip_looked || !calls || f.layout == 0) return;
@@ -1837,6 +1839,7 @@ void LookStrip(void* ctx, bool calls, const Facts& f, std::uint64_t gen) {
         if (IsPart(tab)) {
             g_game_tabs[static_cast<std::size_t>(i)] = tab;
             g_game_tabs_x[static_cast<std::size_t>(i)] = Read<float>(tab + 0x6c);
+            g_game_words[static_cast<std::size_t>(i)] = PaneIn(ctx, PartLayout(table, name), "T_Text_00");
         }
     }
     g_minus_ok = g_game_tabs[2] != 0;
@@ -1928,7 +1931,10 @@ void FollowMinus(void* ctx) {
         return;
     }
     // (the game's shown: slots 0..3 when Character Select's header shows slot 3, else 0..2)
-    const int game = g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0 ? 4 : 3;
+    // (a slot 3 shown but with no word draws nothing, and a tab counted for it left a one-tab gap before ours: it counts
+    // only with a word, the width the game's text pane draws, +0x13c)
+    const int game = GameTabsShown(g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0,
+                                   g_game_words[3] != 0 ? Read<float>(g_game_words[3] + kPaneTextWidth) : 0.0f);
     const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
     if (!std::isfinite(step) || step == 0.0f) return;
     const float first = g_game_tabs_x[0], last = g_game_tabs_x[static_cast<std::size_t>(game - 1)];

@@ -839,6 +839,14 @@ void SettingMove(int count, int dy, int* page, int* row, int per_page = kSetting
 // Row 199: the strip's last update says the menu is up: open or opening (state 1, 2) and seen within kMenuUpMs.
 inline constexpr std::uint64_t kMenuUpMs = 200;
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
+
+// The - strip's game tabs shown (3, or 4 with slot 3): slot 3 counts only when it is visible AND its word has a width.
+// Character Select's header leaves slot 3 visible but empty in a - menu without a Characters tab, and counting it left
+// an empty slot, one tab wide, between Map and our tabs (UI gate, 2026-11-22).
+inline constexpr std::uint64_t kPaneTextWidth = 0x13c;   // f32: a text pane's drawn width (docs/game-ui.md, checked)
+inline int GameTabsShown(bool slot3_visible, float slot3_word_width) {
+    return slot3_visible && slot3_word_width > 1.0f ? 4 : 3;
+}
 // Character Select's Customize screen while its own state reads open (1, 2): whether co-op takes it as open. Lane 062917
 // (0.11.9): his layout reads open again for about a second while the - menu closes (the strip at 3, closing), and an
 // opening taken there kept his rows' keys from the field. So an opening is taken only with the menu up, and only once the
