@@ -544,6 +544,7 @@ struct Actor {
     unsigned missed = 0;
     float yaw_said = NAN;  // turning floors: the yaw last logged (degrees)
     bool turn_seen = false;
+    std::string anim_said;  // the scream probe: the animation last logged
 };
 
 class Reader {
@@ -5858,7 +5859,11 @@ private:
             if (actor.name.find("PivotedFloor") != std::string::npos) {
                 TurnNote(r, a, actor);
             }
+            if (actor.name.starts_with("Enemy_ReDead") || actor.name.starts_with("Enemy_Gibdo")) {
+                ScreamNote(r, a, actor);
+            }
         }
+        LinkHitNote(r);
         for (auto it = actors_.begin(); it != actors_.end();) {
             if (seen.contains(it->first) || ++it->second.missed < 2) {
                 ++it;
@@ -5898,6 +5903,60 @@ private:
         actor.yaw_said = yaw;
         LOG_INFO(Core, "coop: objects: {} {:#x} yaw {:.1f} at {} ms", actor.name, a, yaw,
                  CoopEvery::NowUs() / 1000);
+    }
+
+    // Redead scream probe (enemy survey, 2026-11-21: the scream freezes only the owner's Link): a Redead's or
+    // Gibdo's animation as it changes, and every new hit our Link takes (who, how much, the hit's kind words
+    // +0x250.., our Link's animation), so a scream's freeze can be told apart: a hit with its own kind, or none.
+    // Debug walk only. Read only.
+    void ScreamNote(Reader& r, u64 a, Actor& actor) {
+        const auto anim = Animation(r, a);
+        const std::string name = anim ? anim->name : std::string();
+        if (name == actor.anim_said) {
+            return;
+        }
+        actor.anim_said = name;
+        const u64 link = TheLinkActor().load();
+        float apart = -1.0f;
+        if (link != 0) {
+            const auto la = r.Get<std::array<float, 3>>(link + kActorPosition);
+            const auto ea = r.Get<std::array<float, 3>>(a + kActorPosition);
+            if (la && ea) {
+                const float dx = (*la)[0] - (*ea)[0], dz = (*la)[2] - (*ea)[2];
+                apart = std::sqrt(dx * dx + dz * dz);
+            }
+        }
+        LOG_INFO(Core, "coop: scream: {} {:#x} plays '{}' (our Link {:.1f} m away)", actor.name, a, name, apart);
+    }
+
+    void LinkHitNote(Reader& r) {
+        const u64 link = TheLinkActor().load();
+        if (link == 0) {
+            return;
+        }
+        const auto table = r.Ptr(link + kActorComponents);
+        const auto life = table ? r.Ptr(*table + kComponentLife) : std::nullopt;
+        const auto id = life ? r.Get<u32>(*life + kLastHitId) : std::nullopt;
+        if (!id || *id == link_hit_said_) {
+            return;
+        }
+        const bool first = link_hit_said_ == 0xffffffffu;
+        link_hit_said_ = *id;
+        if (first) {
+            return;
+        }
+        const auto rec = r.Get<coop::protocol::HitRecord>(*life + kHitRecord);
+        const u64 attacker = r.Get<u64>(*life + kHitRecord).value_or(0);
+        std::string words;
+        if (rec) {
+            for (std::size_t i = 0; i < kPvpKindWords; ++i) {
+                words += fmt::format("{}{:08x}", i ? " " : "", (*rec)[CoopHitReplay::kRecKind + i]);
+            }
+        }
+        const auto anim = Animation(r, link);
+        LOG_INFO(Core, "coop: scream: our Link took hit {:#x} from {} ({:#x}), {} quarters, kind [{}], Link plays '{}'",
+                 *id, attacker != 0 ? r.Name(attacker) : std::string("nobody"), attacker,
+                 r.Get<s32>(*life + kLifeHurt).value_or(0), words, anim ? anim->name : std::string());
     }
 
     void LogPose(Reader& r, const char* what, u64 a, const Actor& actor) {
@@ -5979,6 +6038,7 @@ private:
     bool boss_own_said_ = false;  // row 130: the last 'boss copies run their own' line logged
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
     CoopPivot::Follower pivot_;
+    u32 link_hit_said_ = 0xffffffffu;  // the scream probe: our Link's last hit id seen
     u64 pivot_actor_ = 0;
     u64 pivot_look_ms_ = 0;
     std::optional<std::int32_t> pivot_dir_said_;

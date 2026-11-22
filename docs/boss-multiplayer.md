@@ -146,7 +146,13 @@ room under a player (the hallway block fits nowhere else); the water level stays
 
 Still to design (need a game run first):
 - Redead and Gibdo: the scream freezes only the owner's Link; every player in its range should freeze in their own
-  game.
+  game. The freeze is the Redead's own (`Enemy_ReDead_Shout`, `ParalysisEnableDistMin/Max`, `ParalysisEnableAngleDiff`
+  and their `InTown` values). Planned: if the freeze reaches the owner's Link as a hit (its kind words), each game
+  in range gives its own Link that hit (`HurtOurLinkNative`, as PvP does). Probe (debug walk, `coop: scream:`
+  lines: every Redead/Gibdo animation change and every hit our Link takes with its kind words): run `st-redead`
+  (Graveyard_Adult, both players 4 m from the three Redeads at 113 97 9) saw no scream in 50 s: they stayed in
+  `Wait`/`Sit`. What starts the scream (time of day, the player moving or looking) is still to find. Not for this
+  release.
 - Meg (Forest Temple): her three decoys move by her messages, which a copy never sends; which seat is real can
   differ between games. Match the decoys by seat and send the real one's seat.
 - Dead Hand: its hands follow Dead Hand's owner, so they grab only that player.
