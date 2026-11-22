@@ -583,6 +583,9 @@ public:
             for (const auto& k : CoopDungeon::Keys()) {
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
+            for (const auto& k : CoopDungeon::WorldKeys()) {  // row 220: overworld obstacles that stay done
+                session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
+            }
         }
         // Row 219 (#84): every one-time placement of the game as served (the kit's start lists them, a seed's
         // one-time pots too), shared from the start: the host's snapshot then carries one taken before a save +
