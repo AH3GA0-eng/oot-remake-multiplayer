@@ -2721,3 +2721,22 @@ TEST_CASE("pause tab (0.11.9): the - menu's Lobby and Multiplayer pages: every r
     CHECK(std::string(ActionWords(RowAction::kViewLocal)).size() > 3);
     CHECK(RowTexts(MinusPage::kMods, idle) == std::vector<std::string>(kRows));
 }
+
+TEST_CASE("pause tab: co-op that came with the game: short rows, and the Lobby's Host and Join views say why") {
+    // (menu-parity-0119, a lane shot: "Co-op came with the game" ran past both edges of its button; the right half
+    // of the Host and Join views was empty)
+    SessionView v;
+    v.s.by_launcher = true;
+    for (const View view : {View::kHost, View::kJoin, View::kSession, View::kPassword, View::kLan}) {
+        for (const std::string& row : RowTexts(view, v)) {
+            CHECK(row != "Co-op came with the game");
+            CHECK(row.size() <= kRowChars);
+        }
+    }
+    for (const View view : {View::kHost, View::kJoin}) {
+        const auto d = DetailLines(view, v);
+        CHECK(d[0].name == "Co-op came with the game");
+        CHECK(d[1].name == "Restart the game to change it");
+    }
+    CHECK(DetailLines(View::kHost, SessionView{})[0].name.empty());   // (not by the launcher: the rows say it all)
+}

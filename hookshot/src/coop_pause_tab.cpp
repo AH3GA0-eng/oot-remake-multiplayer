@@ -1144,7 +1144,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
     }
     case View::kLan: {
         if (v.s.in_one || v.s.by_launcher) {
-            rows[0] = v.s.by_launcher ? "Co-op came with the game" : "In a session already";
+            rows[0] = v.s.by_launcher ? "Co-op is on" : "In a session already";
             break;
         }
         // (the list shown and how many it keeps; A flips to the other one)
@@ -1157,7 +1157,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
     case View::kLanGame:
         rows[0] = v.lan_game;
         if (v.s.in_one || v.s.by_launcher) {
-            rows[1] = v.s.by_launcher            ? "Co-op came with the game"
+            rows[1] = v.s.by_launcher            ? "Co-op is on"
                       : !v.turned_away.empty() ? "Turned away: Leave first"
                                                : "In a session already";
             break;
@@ -1210,13 +1210,13 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         if (v.s.in_one || v.s.by_launcher) {
             rows[0] = v.s.wait_host               ? "Copy answer code"
                       : !v.turned_away.empty()   ? "Turned away: why"
-                      : v.s.by_launcher          ? "Co-op came with the game"
+                      : v.s.by_launcher          ? "Co-op is on"
                                                  : "Session details";
             rows[kJoinRowLeave] = v.confirm_leave ? (v.confirm_click ? "Click again to leave" : "A again: leave")
                                                   : "Leave the game";
             break;
         }
-        rows[0] = v.s.by_launcher            ? "Co-op came with the game"
+        rows[0] = v.s.by_launcher            ? "Co-op is on"
                   : !v.turned_away.empty() ? "Turned away: Leave first"
                   : v.s.in_one             ? "In a session already"
                                            : "Paste code and join";
@@ -1258,7 +1258,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
             rows[kHostRowStop] = v.confirm_leave ? (v.confirm_click ? "Click again to stop" : "A again: stop hosting")
                                                  : "Stop hosting";
         } else if (v.s.in_one || v.s.by_launcher) {
-            rows[0] = v.s.by_launcher ? "Co-op came with the game" : "In a friend's game";
+            rows[0] = v.s.by_launcher ? "Co-op is on" : "In a friend's game";
             rows[1] = "Leave it first: Join";
         } else {
             rows[0] = "Start hosting";
@@ -1316,7 +1316,7 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         } else if (v.s.in_one) {
             rows[0] = v.host_name.empty() ? "In a session" : "Joined " + v.host_name;
         } else {
-            rows[0] = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
+            rows[0] = v.s.by_launcher ? "Co-op is on" : "Not in a session";
         }
         if (v.s.wait_host) rows[1] = "Copy answer code";
         if (v.s.in_one && v.s.can_resync) rows[3] = "Resync from host";
@@ -1605,7 +1605,10 @@ bool RoomMatches(const std::string& room, const std::string& host, const std::st
 
 std::vector<ListLine> DetailLines(View view, const SessionView& v) {
     std::vector<ListLine> lines(kListRows);
-    if (view != View::kMain && view != View::kSession && view != View::kPassword) return lines;
+    // (menu-parity-0119, a lane shot: co-op that came with the game's start left the Lobby's Host and Join views with
+    // one row and an empty right half: they say there why nothing starts or stops here)
+    const bool launcher_view = v.s.by_launcher && (view == View::kHost || view == View::kJoin);
+    if (view != View::kMain && view != View::kSession && view != View::kPassword && !launcher_view) return lines;
     std::size_t at = 1;
     const auto add = [&](const std::string& name, const std::string& value) {
         if (at < lines.size()) lines[at++] = ListLine{FitTo(name, kListNameChars), FitTo(value, kListValueChars)};
@@ -1631,6 +1634,7 @@ std::vector<ListLine> DetailLines(View view, const SessionView& v) {
         header = "In a session";
     } else {
         header = v.s.by_launcher ? "Co-op came with the game" : "Not in a session";
+        if (v.s.by_launcher && why.empty()) why = "Restart the game to change it";
     }
     // (the header's value: hosting, who can reach this game. The header had none: the game's cursor frame, which
     // Longshot's mouse puts on the line under it, framed an empty box there, a tester's screenshot 2026-11-19)

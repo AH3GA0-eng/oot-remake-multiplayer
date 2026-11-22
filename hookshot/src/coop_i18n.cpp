@@ -974,6 +974,7 @@ constexpr Entry kzh_Hans[] = {
     {"Players: coming...", "人数：读取中…"},
     {"Not in a session", "不在房间中"},
     {"Co-op came with the game", "联机随游戏启动"},
+    {"Restart the game to change it", "重启游戏才能更改"},
     {"In a session already", "已在房间中"},
     {"Turned away: Leave first", "被拒：先离开"},
     // menu-parity-0119: Co-op settings' host rows, and the pause tab's rows that had no line
@@ -2236,6 +2237,7 @@ constexpr Entry kzh_Hant[] = {
     {"Players: coming...", "人數：讀取中…"},
     {"Not in a session", "不在房間中"},
     {"Co-op came with the game", "連線隨遊戲啟動"},
+    {"Restart the game to change it", "重新啟動遊戲才能更改"},
     {"In a session already", "已在房間中"},
     {"Turned away: Leave first", "被拒：先離開"},
     // menu-parity-0119: Co-op settings' host rows, and the pause tab's rows that had no line

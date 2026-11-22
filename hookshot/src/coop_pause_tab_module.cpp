@@ -3892,8 +3892,15 @@ std::uint64_t OnPad(std::uint64_t buttons, std::int32_t stick[4]) noexcept {
                 // (the page follows the game's cursor only once it moves to another row: where it was as the view
                 // came (the view's own row: in a session row 4, Local co-op's) or as the list gave the pad back (the row
                 // it was on all along) is no choice: a test run opened Co-op settings after a click on the header)
+                // (menu-parity-0119, a lane shot: Multiplayer > Local co-op showed Customize Link: the game puts its
+                // cursor back on row 0 a frame or two after the view comes, and that step was taken as a choice. Until
+                // the pad steps or kFocusSettleMs pass, a move of the game's own is only noted, not followed.)
+                static std::uint64_t focus_reset_ms = 0;
+                constexpr std::uint64_t kFocusSettleMs = 500;
                 const int focused = FocusedRow();
-                if (g_menu_focus_reset.exchange(false)) g_menu_focus_seen = focused;
+                if (g_menu_focus_reset.exchange(false)) g_menu_focus_seen = focused, focus_reset_ms = now;
+                const bool settled = up || down || now - focus_reset_ms >= kFocusSettleMs;
+                if (!list && focused != g_menu_focus_seen && !settled) g_menu_focus_seen = focused;
                 if (!list && focused != g_menu_focus_seen) {
                     g_menu_focus_seen = focused;
                     if (focused >= 0 && focused < kMenuTabs && focused != g_menu_tab.load()) {

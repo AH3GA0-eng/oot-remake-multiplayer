@@ -770,6 +770,7 @@ TEST_CASE("coop i18n: every native co-op row in every view and state has its Chi
             if (static_cast<std::size_t>(mv.selected) == i) CHECK_MESSAGE(!english(mv.help), mv.help);
         }
     }
+}
 
 TEST_CASE("coop i18n: the title's Host and Join pages, Who can join (title-join, title-toggle) and the voice words (hud-native)") {
     const CoopI18n::Lang* hans = ByCode("zh-Hans");
