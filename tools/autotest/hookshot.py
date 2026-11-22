@@ -1133,7 +1133,7 @@ def run(a):
             sock = "%s-%s" % (a.pipe, x) if WINDOWS else os.path.join(out, "control-%s.sock" % x)
             commands[x] = os.path.join(out, "commands-%s.txt" % x)
             open(commands[x], "w").close()
-            env = dict(os.environ, HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
+            env = dict(os.environ, OOT_COOP_KIT_START="1", HOS_CONTROL=sock, HOS_CONTROL_MEM="ro", LICHII_COOP_TEST_COMMANDS=commands[x])
             test_game_defaults(env)   # its own save, no crash ask on the title (TEST_GAME_DEFAULTS): a switch can undo it
             if a.server:
                 env["LICHII_COOP_SERVER"] = "127.0.0.1:%d" % a.port

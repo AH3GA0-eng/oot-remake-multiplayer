@@ -18,6 +18,9 @@ param(
     [switch]$Hookshot
 )
 $ErrorActionPreference = 'Stop'
+# The marker the co-op module looks for: a game started without it (its own start file by hand) says in the chat to use
+# Start Squadala (player report 225). Every game this script starts inherits it.
+$env:OOT_COOP_KIT_START = '1'
 . (Join-Path $PSScriptRoot 'coop-ini.ps1')
 . (Join-Path $PSScriptRoot 'kit-paths.ps1')
 . (Join-Path $PSScriptRoot 'hosting.ps1')
