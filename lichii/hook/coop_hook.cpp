@@ -137,6 +137,11 @@ namespace CoopHook {
 bool StartMapRefresh();  // rows 63/76: the game's HUD refresh after co-op writes a dungeon item (below)
 namespace {
 
+// Rows 239/240/241 (coop_char_slots.h LoadHold): a save load's start (patch 0024's load node), from the flags' step, for
+// the Character Select put-back's hold in the same frame's later step.
+std::atomic<bool> g_pick_load_started{false};
+CoopCharSlots::LoadHold g_pick_hold;
+
 // The game and build the addresses in coop/host are for.
 constexpr u64 kOcarinaProgramId = 0x0400486024DEC000ULL;
 // The builds it knows: coop_game_build.h (docs/game-builds.md).
@@ -1106,6 +1111,7 @@ public:
         if (const auto loads = CoopSave::TakeGameSaveLoads(); loads.starts != 0 || loads.loads != 0) {
             if (loads.starts != 0) {
                 session_->note_save_load_start();
+                g_pick_load_started = true;   // (rows 239/240/241: no Character Select put-back until Link settles)
             }
             if (loads.loads != 0) {
                 session_->note_save_loaded(loads.retry);
@@ -1782,9 +1788,30 @@ public:
             static CoopCharSlots::Others other_slots;
             static std::map<std::uint16_t, std::uint16_t> slot_files;
             static std::uint32_t slot_tick = 0;
-            if (view.game) {
+            static const std::uint32_t pick_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");
+            // Rows 239/240/241 (coop_char_slots.h FixSavePick): a saved pick with no model here is put right in the save
+            // file before the game reads it (the host's save a guest writes; the player's slots on every title).
+            static const bool save_fix_set = [] {
+                CoopSave::SetSaveFix([](std::vector<std::uint8_t>& progress) -> std::string {
+                    const auto fix = CoopCharSlots::FixSavePick(progress.data(), progress.size(), pick_hash,
+                                                                CoopPuppetConfig::CharacterFiles());
+                    if (!fix.changed) return {};
+                    return fmt::format("Character Select pick {} has no model here (NPC characters not downloaded): "
+                                       "stored as Link in the save, so the world loads",
+                                       fix.was.value_or(0));
+                });
+                return true;
+            }();
+            (void)save_fix_set;
+            if (g_pick_load_started.exchange(false)) g_pick_hold.LoadStarted();
+            const bool may_put_back = g_pick_hold.Frame(reading.has_value());
+            if (g_pick_hold.Stuck()) {
+                LOG_WARNING(Core, "coop: characters: a save load has not shown Link for a minute (the world may not "
+                                  "draw); the chat says what to do");
+                chat_.Add(CoopCharSlots::StuckLine(), true);
+            }
+            if (view.game && may_put_back) {
                 if (slot_tick++ % 600 == 0) slot_files = CoopPuppetConfig::CharacterFiles();   // (the pack's, every 10 s)
-                static const std::uint32_t pick_hash = coop::host::flag_hash("CharacterMenu_SelectedCharacter");
                 EmulatorMemory slot_memory(system.ApplicationMemory(), base_);
                 const auto pick = coop::host::GameFlags(slot_memory).get_int(pick_hash);
                 const auto step = own_slot.Check(pick, slot_files);
