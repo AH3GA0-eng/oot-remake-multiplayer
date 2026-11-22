@@ -5,6 +5,10 @@
 
 namespace CoopSnailCustom {
 
+namespace {
+constexpr std::size_t kTitleBytes = 61;   // (the title pane's room: the placeholder's)
+}  // namespace
+
 int Neighbour(int f, Dir dir) {
     if (f < 0 || f >= kOptions) return -1;
     const int side = f / kRows, i = f % kRows;
@@ -80,12 +84,16 @@ Texts Driver::Shown(const CoopI18n::Lang* lang) const {
     Texts t;
     if (v.rows.empty()) return t;
     t.title = CoopI18n::Tr(lang, v.rows[0].name);
-    if (!page_.editing() && page_.GroupsOffered() > 1) t.title += "  " + CoopI18n::Tr(lang, "Y: next page");
-    // (A opens the colour mixer whenever the set has colours, one page or several: its own condition, not the pages';
-    // a set with no colour option, the note row, has nothing to pick)
-    if (!page_.editing() && page_.GroupsOffered() >= 1) t.title += "  " + CoopI18n::Tr(lang, "A: pick exact hue");
-    // (the title's pane takes 61 bytes at most: the placeholder's room, seen in zh on the first page, 62 bytes, whose
-    // title stayed Character Select's own "Customize"; the hints go with two spaces, not three, to stay within it)
+    // (the title's pane takes 61 bytes at most: a longer text is refused by the game and Character Select's own "Customize"
+    // stays, seen in zh, 62 bytes, and counted for en page 4 (66) and zh page 4 (71). The page's name comes first; the Y
+    // hint (more than one page), then the A hint (any set with colours: it opens the mixer) follow only while the
+    // whole stays within it, the A hint dropped before the Y hint.)
+    const auto add = [&](const char* hint) {
+        const std::string more = "  " + CoopI18n::Tr(lang, hint);
+        if (t.title.size() + more.size() <= kTitleBytes) t.title += more;
+    };
+    if (!page_.editing() && page_.GroupsOffered() > 1) add("Y: page");
+    if (!page_.editing() && page_.GroupsOffered() >= 1) add("A: exact hue");
     for (int f = 0; f < kOptions; ++f) {
         const std::size_t r = static_cast<std::size_t>(f + 1);
         if (r >= v.rows.size()) break;
