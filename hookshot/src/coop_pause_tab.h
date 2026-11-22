@@ -843,9 +843,20 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
 // (0.11.9): his layout reads open again for about a second while the - menu closes (the strip at 3, closing), and an
 // opening taken there kept his rows' keys from the field. So an opening is taken only with the menu up, and only once the
 // strip has updated since the edge (`edge_ms`, when his state was first seen open; a frame's strip update may come after
-// his screen's, with the strip's state of the frame before); an open screen closes when the menu is no longer up.
+// his screen's, with the strip's state of the frame before); an open screen closes when the strip reads closing or
+// closed (not 1, 2). A strip only not seen for a while is a stall, not a close (cs-customize-0119, lane gc198-l5b: the
+// game's threads waited 645 ms for a core, the open screen was taken as closed and opened again on its first page, so
+// Y presses were lost): kWait, the screen kept as it is.
 enum class SnailEdge { kWait, kOpen, kClose };
 SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::uint64_t strip_seen_ms, std::uint64_t now_ms);
+// The pad while Character Select's Customize screen is taken as open, from when its screen last updated (`seen_ms`):
+// kDrive, co-op's keys; kPause, not updated for kSnailPauseMs (a stall, or gone without a close seen): the game gets
+// every key, co-op's page, focus and changes kept, and the next update drives it again; kGone, not updated for
+// kSnailGoneMs: closed (the look chosen worn and sent). Lane gc198-l5b: a 300 ms close here reopened the screen on page
+// 1 after each stall.
+inline constexpr std::uint64_t kSnailPauseMs = 300, kSnailGoneMs = 5000;
+enum class SnailPadState { kDrive, kPause, kGone };
+SnailPadState SnailPadFrom(std::uint64_t seen_ms, std::uint64_t now_ms);
 // One update ahead of `now`, from its step since `prev`, and not past `limit` when it heads for it. The module reads
 // the fourth tab's place and fades before the strip's own update, so they are one update old: the Character tab takes
 // them one update ahead to move with the fourth, not a frame after it.

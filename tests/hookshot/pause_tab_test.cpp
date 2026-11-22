@@ -2364,7 +2364,25 @@ TEST_CASE("pause tab (0.11.9, lane 062917): Character Select's Customize screen 
     CHECK(SnailEdgeFrom(false, 2000, 0, 2400, 2900) == SnailEdge::kWait);   // (closed, then no strip update at all)
     // Open while the menu closes: closed at once.
     CHECK(SnailEdgeFrom(true, 1000, 3, 3006, 3008) == SnailEdge::kClose);
-    CHECK(SnailEdgeFrom(true, 1000, 2, 3000, 3000 + kMenuUpMs) == SnailEdge::kClose);   // (no strip update since)
+    CHECK(SnailEdgeFrom(true, 1000, 0, 3006, 3008) == SnailEdge::kClose);
+}
+
+TEST_CASE("pause tab (cs-customize-0119, lane gc198-l5b): a stall keeps Character Select's Customize screen open") {
+    // The lane: the game's threads waited 645 ms for a core; the open screen was taken as closed and opened again on its
+    // first page, so 3 Y presses reached page 2 only. A strip not updated lately but last seen up is a stall: kept.
+    CHECK(SnailEdgeFrom(true, 1000, 2, 3000, 3000 + kMenuUpMs) == SnailEdge::kWait);
+    CHECK(SnailEdgeFrom(true, 1000, 1, 3000, 3000 + 645) == SnailEdge::kWait);
+    CHECK(SnailEdgeFrom(true, 1000, 2, 3700, 3705) == SnailEdge::kOpen);   // (the strip updates again: driven)
+    // Not yet open: a stall opens nothing (lane 062917's rule unchanged).
+    CHECK(SnailEdgeFrom(false, 1000, 2, 990, 1000 + kMenuUpMs) == SnailEdge::kWait);
+    // The pad: driven while his screen updates, the game's keys (co-op's page kept) in a stall, closed when long gone.
+    CHECK(SnailPadFrom(1000, 1000) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs) == SnailPadState::kDrive);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailPauseMs + 1) == SnailPadState::kPause);
+    CHECK(SnailPadFrom(1000, 1645) == SnailPadState::kPause);   // (the lane's stall: paused, not closed)
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs) == SnailPadState::kPause);
+    CHECK(SnailPadFrom(1000, 1000 + kSnailGoneMs + 1) == SnailPadState::kGone);
+    CHECK(SnailPadFrom(2000, 1000) == SnailPadState::kDrive);   // (a clock that went back)
 }
 
 TEST_CASE("pause tab: the fourth tab's place and fades taken one update ahead, not past where they head") {
