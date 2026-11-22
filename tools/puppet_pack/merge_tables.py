@@ -52,9 +52,9 @@ import sys
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from puppet_pack import byml, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs  # noqa: E402
+    from puppet_pack import byml, pause_menu, rstb, sarc, title_menu, tunic, tunic_extra, ui_pack, zs  # noqa: E402
 else:
-    from . import byml, pause_menu, rstb, sarc, tunic, tunic_extra, ui_pack, zs
+    from . import byml, pause_menu, rstb, sarc, title_menu, tunic, tunic_extra, ui_pack, zs
 
 LIST_FILE = "coop-mods.list"
 KEEP_DIR = "_coop-size-table"
@@ -690,6 +690,15 @@ def pack_edit(rel, name, theirs):
         else:
             return None
         return [edit(d) for d in theirs[name]]
+    # A randomizer seed (OOTRR 0.8: its Randomizer line in the title logo, Logo_USEU_0p, which Title_00.buil points
+    # at) and the pack both change the title layout; the seed's alone lost co-op's title rows (compat-0119). The title
+    # menu's rows go on the winner's copy, and its rows' texts on a Title_00.msbt the winner changed too.
+    if rel == title_menu.TITLE_ARCHIVE:
+        if name != title_menu.TITLE_LAYOUT:
+            return None
+        return [title_menu.add_menu(d) for d in theirs[name]]
+    if rel.startswith("Mals/") and name == title_menu.MSG_FILE:
+        return [title_menu.add_rows(d, title_menu.rows_for(rel)) for d in theirs[name]]
     if rel.startswith("Mals/") and name.endswith(".msbt"):
         ours = ui_pack.load_strings(ui_pack.language_of(rel)).get(name)
         if not ours:
