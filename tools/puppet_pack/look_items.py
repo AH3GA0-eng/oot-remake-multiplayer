@@ -296,6 +296,16 @@ def item_animation_param(members, item):
     return path, byml.loads(members[path])
 
 
+# Row 198 (gear-colour-198-3, lane gc198-l5b 2026-11-21): a copy with its own IsRetarget AnimationParam is still not
+# made by the game, even sized with RETARGET_ROOM (the b0654d0b pack: entry 5408 for 172 bytes; both games logged
+# 'shield copy Weapon_Shield_Hylian_Look1 was not made by the game'). The only difference from the last pack whose
+# shield copies were made (lane2 fresh-pg0118-8) is that param. A refused copy leaves the puppet in the game's own
+# shield, drawn in the viewer's colours, so the copies take the item's AnimationParam again: their colours are their
+# owner's, and row 184 (the shield's clips do not move a copy: it hangs turned on a puppet's back) is open again.
+# True gives the copies row 184's param back (a pack to try it with).
+COPY_RETARGET = False
+
+
 def copy_animation_param(members, item, actor):
     """Row 184: (member path, bytes) of a copy's own AnimationParam, or None when it needs none.
     A copy names a model project of its own (`<item>_Look<k>`, a blade copy's), and the game binds an
@@ -304,7 +314,10 @@ def copy_animation_param(members, item, actor):
     plays the adult's clips so). Without it the copy's own clips never move it (the child's Hylian
     Shield hung turned on a puppet's back, 0.11.7). So the copy's AnimationParam is the item's with
     IsRetarget true on every resource; the item's own file is not touched. An AnimationParam with no
-    resources (the swords') or with a `$parent` (not seen in the coloured items) gives None."""
+    resources (the swords') or with a `$parent` (not seen in the coloured items) gives None, and so does every
+    copy while COPY_RETARGET is off (row 198: the game refuses a copy with this param)."""
+    if not COPY_RETARGET:
+        return None
     found = item_animation_param(members, item)
     if found is None:
         return None
