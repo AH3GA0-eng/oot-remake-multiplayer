@@ -555,6 +555,11 @@ keyboard of its own. These layouts of `Common` can frame one (pane names, kind 1
   `N_Bg_00`, `P_MinusMenuBg_00`, `P_PlusMenuBg_00`, `N_MenuChangeTextIn_00`, `N_Text_00`, `T_Text_00`, `T_Text_01`).
   (checked)
 
+- Slot 3 of the - menu's strip (`Pa_Category_03`) can be visible and still draw nothing (Character Select's header, as
+  downloaded 2026-11-21: Key Items, Threads of Time, Map in slots 0 to 2). Counting it put one empty tab between Map
+  and ours (UI gate); it counts now only when its `T_Text_00` has a drawn width (+0x13c): `GameTabsShown`. Not yet seen
+  in a run with a Characters tab that shows a word. (inferred, from the shot and the code)
+
 ### The tab highlight
 
 - The pause menu's graph runs `OpenAppMenuOverlay.module`, whose `SeqOneShotOpenAppMenuOverlay` (vtable `0x84bd46a8`;
