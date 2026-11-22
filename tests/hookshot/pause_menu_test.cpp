@@ -596,7 +596,7 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     m.Open(Page::kSettings);
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
-                                               "Password on this network",
+                                               "Password on this network", "Difficulty",
                                                "Proximity voice chat", "Chat key", "Show players on map", "Names on map", "New Game+",
                                                "Saves", "Original game"});   // (no patch 0015: no input rows)
     View v = m.view();
@@ -608,8 +608,8 @@ TEST_CASE("pause tab: Settings: name, Link's look, players and voice chat (off u
     CHECK_FALSE(v.rows[6].on);   // (List my room: off unless turned on)
     CHECK_FALSE(v.rows[7].on);   // (Auto-rejoin too)
     CHECK(v.rows[8].value == "Needed");   // (the password on this network: needed unless chosen)
-    CHECK(v.rows[9].kind == RowKind::kToggle);
-    CHECK_FALSE(v.rows[9].on);   // the default
+    CHECK(v.rows[10].kind == RowKind::kToggle);
+    CHECK_FALSE(v.rows[10].on);   // the default
     // the name, typed
     m.Press(Input::kDecide);
     CHECK(m.typing());
@@ -681,10 +681,10 @@ TEST_CASE("pause tab: Settings: players on the map and their names, on unless tu
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
     View v = m.view();
-    REQUIRE(v.rows.size() == 16);   // (the port, relay, room, network password and chat key rows before them, New Game+, Saves and Original game after)
-    CHECK(v.rows[11].kind == RowKind::kToggle);
-    CHECK(v.rows[11].on);
+    REQUIRE(v.rows.size() == 17);   // (the port, relay, room, network password and chat key rows before them, New Game+, Saves and Original game after)
+    CHECK(v.rows[12].kind == RowKind::kToggle);
     CHECK(v.rows[12].on);
+    CHECK(v.rows[13].on);
     SelectRow(m, "Show players on map");
     m.Press(Input::kLeft);
     CHECK_FALSE(m.options().map_players);
@@ -753,13 +753,13 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(9);
+    m.Select(10);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(9, 1);   // the On half
+    m.Click(10, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(9, -1);
+    m.Click(10, -1);
     CHECK_FALSE(m.options().voice);
-    m.Click(9, 0);   // the name: selected only
+    m.Click(10, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
     m.Click(0, 0);   // an action: as A
     CHECK(m.typing());
@@ -847,7 +847,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(Selected(m) == "Chat key");   // (the rows came under it: the same row stays chosen)
     CHECK(Names(m) == std::vector<std::string>{"Your name", "Link's look", "Players when you host",
                                                "Port when you host", "Relay", "Room name", "List my room", "Auto-rejoin",
-                                               "Password on this network",
+                                               "Password on this network", "Difficulty",
                                                "Proximity voice chat", "Chat key", "Controller",
                                                "Keyboard and mouse", "Show players on map", "Names on map",
                                                "New Game+", "Saves", "Original game"});
@@ -875,7 +875,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 16);   // (with the port, the relay and room rows, the network password, two map rows, New Game+, Saves and Original game)
+    CHECK(Names(m).size() == 17);   // (with the port, the relay and room rows, the network password, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 
