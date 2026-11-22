@@ -399,7 +399,6 @@ bool LiveTextIn(void* ctx, std::uint64_t layout, const std::string& path, LiveSl
 // cannot be set (no placeholders: a start without the merge), co-op keeps his keys but the d-pad, B and - from the
 // game there, so none of his six dead rows changes anything. g_snail_mutex (the game's screen updates and the pad).
 constexpr int kSnailSlots = 13;   // 0 the title, 1..6 the labels, 7..12 the values
-constexpr std::uint64_t kSnailStaleMs = 300;
 std::mutex g_snail_mutex;
 CoopSnailCustom::Driver g_snail;
 bool g_snail_open = false, g_snail_fallback = false;
@@ -588,10 +587,13 @@ void SnailScreen(void* ctx, std::uint64_t screen) {
 // The pad while his screen is open: the buttons the game gets (or nothing to do: false).
 bool SnailPad(std::uint64_t in, std::uint64_t* out) {
     std::lock_guard lock(g_snail_mutex);
-    if (g_snail_open && NowMs() - g_snail_seen_ms > kSnailStaleMs) SnailClose("not seen");
+    const CoopPauseTab::SnailPadState seen = CoopPauseTab::SnailPadFrom(g_snail_seen_ms, NowMs());
+    if (g_snail_open && seen == CoopPauseTab::SnailPadState::kGone) SnailClose("not seen");
     const std::uint64_t down = in & ~g_snail_pad_last;
     g_snail_pad_last = in;
-    if (!g_snail_open) return false;
+    // (not updated lately: a stall, or gone unseen. The game gets every key; co-op's page, focus and changes are kept
+    // for the next update. Lane gc198-l5b: closed at 300 ms, each stall reopened it on page 1)
+    if (!g_snail_open || seen != CoopPauseTab::SnailPadState::kDrive) return false;
     using namespace CoopSnailCustom;
     constexpr std::uint64_t kDirs = kUp | kDown | kLeft | kRight | kStickUp | kStickDown | kStickLeft | kStickRight;
     std::uint64_t pass = kDirs | kB | kMinus | kPadPlus;

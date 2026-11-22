@@ -705,8 +705,17 @@ bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms) {
 
 SnailEdge SnailEdgeFrom(bool open, std::uint64_t edge_ms, int strip_state, std::uint64_t strip_seen_ms, std::uint64_t now_ms) {
     const bool up = MenuUpFrom(strip_state, strip_seen_ms, now_ms);
-    if (open) return up ? SnailEdge::kOpen : SnailEdge::kClose;
+    if (open) {
+        if (strip_state != 1 && strip_state != 2) return SnailEdge::kClose;
+        return up ? SnailEdge::kOpen : SnailEdge::kWait;   // (the strip not seen lately, still up: a stall)
+    }
     return up && strip_seen_ms > edge_ms ? SnailEdge::kOpen : SnailEdge::kWait;
+}
+
+SnailPadState SnailPadFrom(std::uint64_t seen_ms, std::uint64_t now_ms) {
+    const std::uint64_t since = now_ms >= seen_ms ? now_ms - seen_ms : 0;   // (a clock that went back: just seen)
+    if (since > kSnailGoneMs) return SnailPadState::kGone;
+    return since > kSnailPauseMs ? SnailPadState::kPause : SnailPadState::kDrive;
 }
 
 float Ahead(float prev, float now, float limit) {
