@@ -249,7 +249,8 @@ void RefreshSession(bool now) {
     if (now || NowMs() >= g_next_session_ms) {
         g_next_session_ms = NowMs() + 250;
         g_menu.SetSession(SessionNow());
-        g_menu.SetDifficulty(CoopDifficulty::Get(), static_cast<int>(CoopHook::PlayerList().size()));
+        const CoopDifficulty::State d = CoopDifficulty::Get();
+        g_menu.SetDifficulty({d.connected, d.can_edit, d.choice, d.values}, static_cast<int>(CoopHook::PlayerList().size()));
         g_menu.SetCharacter(CoopCharColours::ShownCharacter() != 0);   // (#308's Customize page: Link's colours wait)
     }
 }

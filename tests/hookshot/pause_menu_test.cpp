@@ -9,6 +9,7 @@
 
 #include "coop/protocol/join_password.hpp"
 #include "coop_colors.h"
+#include "coop_difficulty.h"
 #include "coop_pause_menu.h"
 #include "hos_coop_menu.h"
 
@@ -1884,7 +1885,7 @@ TEST_CASE("pause tab: Difficulty rows: Automatic, Easy, Normal, Hard, Custom as 
 
 TEST_CASE("pause tab: Settings: Difficulty: the host changes it, the sliders under Custom, guests and solo see it") {
     using CoopDifficulty::Preset;
-    CoopDifficulty::State st;
+    DifficultyState st;
     st.connected = true;
     st.can_edit = true;
     st.choice.auto_scale = false;   // the host chose Normal
@@ -1954,7 +1955,7 @@ TEST_CASE("pause tab: Settings: Difficulty: the host changes it, the sliders und
     CHECK_FALSE(m.TakeRequest());
 
     // A guest: the host's choice, dimmed, nothing asked.
-    CoopDifficulty::State guest = st;
+    DifficultyState guest = st;
     guest.can_edit = false;
     Menu g;
     g.Show(CoopTitleMenu::Options{});

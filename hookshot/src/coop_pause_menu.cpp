@@ -2,6 +2,7 @@
 #include "coop_pause_menu.h"
 
 #include "coop_browse.h"
+#include "coop_difficulty.h"
 
 #include <algorithm>
 #include <cctype>
@@ -2226,7 +2227,7 @@ void Menu::SetSaveSet(bool multiplayer) {
     mp_saves_ = multiplayer;
 }
 
-void Menu::SetDifficulty(const CoopDifficulty::State& state, int players) {
+void Menu::SetDifficulty(const DifficultyState& state, int players) {
     // (the host's change stays shown until the server says it, or the session is no longer the host's)
     if (difficulty_wish_) {
         const CoopDifficulty::Choice& w = *difficulty_wish_;
