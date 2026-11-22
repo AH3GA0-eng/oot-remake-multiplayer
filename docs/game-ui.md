@@ -557,8 +557,16 @@ keyboard of its own. These layouts of `Common` can frame one (pane names, kind 1
 
 - Slot 3 of the - menu's strip (`Pa_Category_03`) can be visible and still draw nothing (Character Select's header, as
   downloaded 2026-11-21: Key Items, Threads of Time, Map in slots 0 to 2). Counting it put one empty tab between Map
-  and ours (UI gate); it counts now only when its `T_Text_00` has a drawn width (+0x13c): `GameTabsShown`. Not yet seen
-  in a run with a Characters tab that shows a word. (inferred, from the shot and the code)
+  and ours (UI gate). The game's own code fills three - tabs; his fourth, Characters (his slot 0, the game's three
+  after it), is filled by his code patch, which a game has only when it was built with it (patches 0034/0035; the
+  game folder's `exefs_patches.txt` lists it). The 0.11.9 test kit's game was built without it (hs.py built pairs
+  without their mods): his header showed, slot 3 empty, no Characters tab. A check of slot 3's drawn word width
+  (`+0x13c`) still counted it there, so slot 3 now counts when it is visible and the game holds a mod's code:
+  `GameTabsShown`, `ModCodeBuiltIn`. Not yet seen in a run with his code built in. (inferred, from the files and the
+  owner's report)
+- The - strip's row (ours after the game's) is packed by the words' drawn widths with the tightest gap the game leaves
+  between two of its own words, centred where the game's tabs were (`TabRowX`): one game step apart, seven tabs ran
+  over the whole bar. (code; not yet seen in a run)
 
 ### The tab highlight
 
