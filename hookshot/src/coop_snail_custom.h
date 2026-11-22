@@ -22,6 +22,10 @@
 #include "coop_look.h"
 #include "coop_look_menu.h"
 
+namespace CoopI18n {
+struct Lang;
+}
+
 namespace CoopSnailCustom {
 
 inline constexpr int kOptions = 6, kRows = 3;   // his layout: two columns of three
@@ -55,7 +59,9 @@ public:
     // One pad read's new presses while his screen shows: the presses his screen still gets (the d-pad and the stick;
     // B and - unless the mixer is open); the rest are co-op's.
     std::uint64_t Pad(std::uint64_t down);
+    // His screen's texts in the game's language (CoopI18n::Current); Shown(lang) in that one (nullptr: English).
     Texts Shown() const;
+    Texts Shown(const CoopI18n::Lang* lang) const;
     int Focus() const { return focus_; }
     bool Editing() const { return page_.editing(); }
     // The look after a change, once.

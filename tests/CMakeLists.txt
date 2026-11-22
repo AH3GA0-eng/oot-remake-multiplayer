@@ -109,6 +109,8 @@ add_executable(coop_tests
   lichii/boss_native_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_native.cpp
   lichii/boss_scenes_test.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_boss_scenes.cpp
   lichii/teleport_test.cpp
+  lichii/hallway_test.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../lichii/hook/coop_hallway.cpp
   lichii/pvp_test.cpp
   lichii/pvp_native_test.cpp
   lichii/dbno_test.cpp

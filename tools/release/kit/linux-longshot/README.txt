@@ -6,6 +6,7 @@ EXPERIMENTAL: not yet tested on a real Linux PC or Steam Deck. Please tell us wh
    from it: 15 to 60 minutes, about 60 GB free, once. After that it starts in seconds, also from the "Squadala"
    entry it adds to your applications menu.
 3. In the game: Host or Join in the menu (Multiplayer). Host gives you a code to send your friends; Join takes a friend's code.
+Always start with "bash start-squadala.sh", never the longshot program in data/game: you do not need your own Longshot build (the kit builds its own game, with co-op inside), and a game started by hand has no co-op or only part of it.
 Steam Deck: do steps 1 and 2 in Desktop Mode (Konsole). Then in Steam: Games > "Add a Non-Steam Game to My Library" > Squadala.
    In Game Mode, Steam + X opens the keyboard for chat and codes.
 It updates itself (bash revert.sh goes back); every player needs the same version, on Linux or Windows. Needs a 64-bit PC with Vulkan 1.3 graphics.

@@ -35,6 +35,7 @@ Every kind of dungeon state, where the game keeps it and whether co-op shares it
 | Chests opened (small key, map, compass, boss key, items) | Key of the chest's placement, reset type 24 (140 dungeon chests) | **Yes, new** | One-time key: opened in one game, opened in all; never closes again |
 | Silver rupees and their counters | Keys (`Obj_RupeeToken_Silver` 85, `Obj_silverRupeeCounter_*` 17) | **Yes, new** | One-time keys |
 | Walls and floors blown or hammered open, webs burnt, red ice melted, ghost paintings, skull pots, falling floors | Keys of reset type 24 (`WallCrack`, `*_CrackWall_*`, `*_SpiderWeb_*`, `Obj_RedIce_*`, `Obj_FireTemple_HammerSlipPillar_*` …) | **Yes, new** | One-time keys |
+| Outside the dungeons (row 220): boulders blown up or thrown away, cracked walls, grotto covers, the Hyrule Field grottos' webs, Zora's Domain's red ice, a grotto's or the Graveyard's enemies beaten | Keys of reset type 24 (`Obj_BrokenRock_*` 60, `Obj_LiftRock_B` 46, `WallCrack` 15, `*_HidingHoleCover_A` 17, 12 webs, 2 red ice, 5 enemy counters, 1 crack wall: 158, `CoopDungeon::WorldKeys`) | **Yes, new** | One-time keys. Before, each stayed done only in the game that did it, and in that player's game too only until it loaded the host's save. Left out: Boss Rush (`DreamWorld`) and the minigames' targets |
 | Gold Skulltulas in dungeons, heart containers, the few hearts and rupees of type 24 | Keys | **Yes** (also as pickups, [items.md](items.md)) | One-time keys |
 | Water level (Water Temple) and other dungeon Ints | Named Int (`WaterTemple_Room00_WaterLevel`) | Yes | Live, last write wins |
 | Map, compass, boss key owned | Item: `DungeonInfo.<dungeon>.IsGetMap` / `IsGetCompass` / `IsGetBossKey` | Yes | OR: once anyone has it, everyone has it |
@@ -255,6 +256,37 @@ Issue 177 (player test 2026-11-11): the bridge and the webs vanished in the othe
 ### Lifts another player rides (jabu-lifts, player report #65; on unless `LICHII_COOP_LIFT_RIDE=0`; not yet run in a game)
 Jabu-Jabu's lift (`Obj_InsideJabu_Jabu_ElevatorLift_A_01`) and moving floor (`MoveFloor_A_01`) start on their logic plug `RideOnPlayer`, which their AI sets every frame from a physics contact with a player. Another player's puppet has no physics, so the lift rose in the rider's game only. The logic probe (`LICHII_COOP_LOGIC_PROBE=1`, `lichii/hook/coop_logic_probe.{h,cpp}`, reads only; scenario hs-logic-probe) lists an actor's plugs as the game's set-bool sees them. A plug's key is Murmur3(name) xor 7. Link on the lift sets `RideOnPlayer` (0xa4ab760d) 0 -> 1, stepping off 1 -> 0; `RideOnCharacter` stays 0.
 `CoopLiftRide` (`lichii/hook/coop_lift_ride.{h,cpp}`) calls the game's own set-bool, the execute of the AI node `ExecuteLogicSetBool` (main+0x2727540), on a node block of ours that names our lift and `RideOnPlayer`, value 1. It does so each frame while a fresh player of our scene stands on the lift: within 1.8 m across, 0.5 m below to 2.5 m above its place. It only sets 1, never 0: the lift's AI puts its own 0 back once nobody is on it. It skips a lift that is not present, has no live bool `RideOnPlayer` or is on already. Log: `coop: lift ride: another player is on our lift 0x...: its RideOnPlayer set through the game's set-bool` (once a lift). Open: whether the lift's logic reads our 1 before its AI's next contact check puts 0 back. Scenario hs-lift-ride (B on the lift, A watches its copy) answers it. The Deku Tree slingshot room's ladder and pillar have no such plug (probe), so they stay with the room's live event.
+
+## Twisting hallways (Forest Temple, 2026-11-21)
+
+Each of the Forest Temple's two twisting hallways (`Obj_ForestTemple_TwistedCorridor_A_01` west, `_A_02` east) turns
+when the eye above its door is shot (`Obj_ForestTemple_TwistRelief_A_01` in room 9, `_A_02` in room 23). The hit
+asks the event setting `ForestTemple_Room11_RoomSpin` or `ForestTemple_Room22_RoomSpin` (RSDB EventSetting), whose
+flow plays the twist `Dm_ForestTemple_0005` / `_0007` (`EventTriggerRelocateTwistCorridor`, turning the hallway
+round the player). In co-op the hallway is one for everyone, so it must never turn under another player standing in
+it (a player stuck inside a turned hallway, or turned twice: row 173).
+
+**The rule (`coop_hallway.h`, owner's decision 2026-11-21):** while a player who can move stands inside the hallway on
+the shooter's side, our game's ask of any of those four names is refused at the request (`HOS_COOP_WRAP_EVENT_REQUEST`,
+as a boss's second death is): no turn, no cutscene. The shooter's chat box says "The west hallway can't turn: Saria is
+in it.", and our chat to everyone says "Saria, step out of the west hallway: I want to turn it." (once every 4 s per
+hallway; the eye can be shot again at once). A player who is down, spectating or away (paused, in a menu, loading, in
+their own event, dead: the down-but-not-out code's `UnseenWhy`, the same set enemies do not see) never blocks it.
+
+- Inside is the hallway's trigger box from the map (an Area 5 x 5 x 21 at x -56.43 / 56.57, y 121.67, z -32.89),
+  0.5 wider, y 116 to 132 (the floor at 124.5, the turned floor above). The hallway a shot turns is the one on the
+  shooter's side of the temple (the eyes are at x -56.5 and 56.5).
+- Where the other players are is the last frame's map view (`CoopHook::CurrentMapView`: every player's scene and
+  place, as the map's markers).
+- The corridor's own state flags stay as they are (shared, held until the next load in a game whose player is in
+  the temple, "Held until the room loads").
+- Tests: `tests/lichii/hallway_test.cpp`. In a game: `hs-ft-twist-173` with B inside: A's eye does nothing, both lines.
+- The eye keeps still: it is an on/off animation object (`Obj_Base_OnOffAnim`, its `Twist` and `Twist_Keep` named in
+  its `ASCommand_OnOff`) with no AI of its own, an event member: the turn event plays its twist, so a refused turn
+  leaves it as it was. In a game (run 2026-11-21, `hs-ft-twist-173` with B inside): A's arrow hit the eye, the game
+  asked `ForestTemple_Room11_RoomSpin` 106 times over 2.5 s, every one refused; A's log "coop: hallway: The west
+  hallway can't turn: B is in it." and "said to the players inside: B, step out of the west hallway: I want to turn
+  it."; B's view of the hallway the same before and after. (The eye itself was not in the shots' frame.)
 
 ## Locked doors (branch `locked-doors`)
 

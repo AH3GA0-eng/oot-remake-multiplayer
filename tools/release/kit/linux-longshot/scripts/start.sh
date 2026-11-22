@@ -206,6 +206,7 @@ fi
 export HOS_WINDOW_TITLE=$title HOS_WM_CLASS=squadala
 [[ -f $DATA/squadala-icon.png ]] && cp -f -- "$DATA/squadala-icon.png" "$GAME/longshot.png" 2>/dev/null || true
 kit_steam_input_hint   # (player report 202: a Steam Controller outside Steam; a warning only)
+export OOT_COOP_KIT_START=1   # the marker the co-op module looks for (a game started by hand says to use start-squadala.sh)
 cd "$GAME"
 # Not exec'd: once the game closes (a crash too), its problems are sent when the player said yes (problem_report.py
 # after-game-bg starts it on its own and returns at once; nothing waits for the upload).

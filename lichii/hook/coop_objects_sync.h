@@ -441,6 +441,25 @@ inline constexpr std::uint64_t kEncounterWaitUs = 1'500'000;
 // fights' (Get_Stone*_DefeatBoss, SageOf*_DefeatBoss, Defeat_Ganon: the boss sync's). In a dungeon nothing changes:
 // its rooms keep their own kill counters and shutters, which may count a copy's death (not checked).
 bool CopyGoesWithoutDeath(std::string_view name, bool dungeon);
+// Row 212 (the owner's 0.11.8 playtest, gerudo-212): the same root through an owner change. The server's rules (an
+// owner busy or paused, a boss turn, the hitter, the near rule) handed player 2's cell guard to player 1, whose game
+// only had a copy: "now ours", so report 200's rule (a copy goes without a death) no longer held, the copy died as
+// player 1's own and player 1's cell logic ran the defeat event, the key drop and the carpenter's rescue for a fight
+// player 2 made. An encounter whose death our level logic answers with its own defeat event, and that our logic made
+// (not a copy), is listed with object_presence::own_logic: the server never gives it to a game that only has a copy.
+// Of the romfs's defeat and rescue entries that warp the Player (above), outside the boss fights only the Gerudo
+// Fortress cells' are such an encounter: Enemy_MiddleBoss_GerudoThief_0N in GerudoFortress_* (CarpenterSet_01..04;
+// DreamWorld's GerudoThiefStage is a boss stage: the boss sync's, unchanged).
+bool OwnLogicEncounter(std::string_view name, std::string_view scene);
+// Row 212: an actor each game runs on its own in this scene. Gerudo Fortress's four carpenters
+// (Npc_Hylia_013.._016_Adult, cell N holds Npc_Hylia_01(2+N)_Adult): each cell's logic
+// (GerudoFortress_Common_Level_CarpenterSet_0N) drives its carpenter from that game's own Found_*,
+// AppearGerudoThief_*, CloseShutter_* and the rescue (Dm_Gerudo_0020 with its settings, per game since report
+// 200), so a shared one put one game's carpenter (its pose, its owner's event: 'bound by the event' in the
+// rescuer's game) over another game's carpenter at another step. The rescue's results are shared flags
+// (report 99: DestroyGerudoThief_*, the keys, Saved_*, IsAfterHelpCarpenter_*, WarpPoint0N_ClearEvent), so each
+// game's own carpenter follows them natively. Elsewhere (Gerudo Valley's tent, Kakariko) they stay shared.
+bool IsOwnInScene(std::string_view name, std::string_view scene);
 inline constexpr std::uint64_t kEncounterStaleUs = 5'000'000;
 
 // An enemy animation that plays as it dies ("Die", "Dead_Fall",
@@ -1191,7 +1210,8 @@ public:
     // Report 200: the copy at `address` (a director's copy of another player's late encounter) is to die now, and
     // it is one that never dies by its own death here (CopyGoesWithoutDeath): it goes so from now on (deleted
     // with the dead ones, never given its killing life, left out of the boss sync; its kill stays remembered for an
-    // own one of ours, report 99). True for one that goes so.
+    // own one of ours, report 99). True for one that goes so. Row 219: also a placed copy of a seed's one-time
+    // flying pot (CoopPickups::IsOneTimeHolder): its death here would drop its item a second time.
     bool GoesWithoutDeath(std::uint64_t address, std::uint64_t now_us);
     bool GoneWithoutDeath(std::uint64_t address) const;
     std::uint8_t OwnerOf(const coop::protocol::ObjectId& id) const;

@@ -770,4 +770,29 @@ TEST_CASE("coop i18n: every native co-op row in every view and state has its Chi
             if (static_cast<std::size_t>(mv.selected) == i) CHECK_MESSAGE(!english(mv.help), mv.help);
         }
     }
+
+TEST_CASE("coop i18n: the title's Host and Join pages, Who can join (title-join, title-toggle) and the voice words (hud-native)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    for (const CoopI18n::Lang* lang : {hans, hant}) {
+        REQUIRE(lang != nullptr);
+        // each is a line of the table, not English
+        for (const char* en : {"Who can join", "Private", "Public", "Public, password", "Code", "Press again",
+                               "Enter a code or address", "Paste a code", "Type an address",
+                               "A: Join   B: Back   Y: Refresh", "Joins the game with this password.",
+                               "Paste a code or type an address first.", "talking", "muted"}) {
+            const std::string tr = CoopI18n::Tr(lang, en);
+            CHECK_MESSAGE(tr != en, en);
+        }
+    }
+    CHECK(CoopI18n::Tr(hans, "Who can join") == "谁能加入");
+    CHECK(CoopI18n::Tr(hant, "Who can join") == "誰能加入");
+    CHECK(CoopI18n::Tr(hans, "Private") == "私人");
+    CHECK(CoopI18n::Tr(hant, "Public") == "公開");
+    CHECK(CoopI18n::Tr(hans, "Page 2 of 3 (ZL/ZR)") == "第 2/3 页（ZL/ZR）");
+    CHECK(CoopI18n::Tr(hant, "Page 1 of 2 (ZL/ZR)") == "第 1/2 頁（ZL/ZR）");
+    CHECK(CoopI18n::Tr(hans, "Room  forest-4821") == "房间  forest-4821");
+    CHECK(CoopI18n::Tr(hant, "Room  forest-4821") == "房間  forest-4821");
+    CHECK(CoopI18n::Tr(hans, "Join Saria again") == "再次加入 Saria");
+    CHECK(CoopI18n::Tr(hans, "Let in Saria") == "放行 Saria");
 }

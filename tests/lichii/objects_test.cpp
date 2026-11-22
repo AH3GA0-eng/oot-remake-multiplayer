@@ -7728,6 +7728,97 @@ TEST_CASE("objects: report 200, a copy of another game's encounter goes without 
     CHECK_FALSE(own.GoesWithoutDeath(0x700, 10 * kMs));
 }
 
+// Row 212 (the owner's 0.11.8 playtest): player 2's cell guard was handed to player 1 (whose game only had a copy) by
+// the server's owner rules; it died there as player 1's own and player 1's cell logic ran the defeat event, the key
+// and the carpenter's rescue. Our own cell guard is listed with own_logic (the server keeps it with such a game); a
+// copy of another game's, another enemy, or a guard outside the fortress is not. The fortress's carpenters are each
+// game's own (never listed, never copied); elsewhere they stay shared.
+TEST_CASE("objects: row 212, our own fortress cell guard is listed with own_logic, the carpenters are not shared") {
+    using CoopObjects::IsOwnInScene;
+    using CoopObjects::OwnLogicEncounter;
+    constexpr const char* kFortress = "GerudoFortress_Adult";
+    CHECK(OwnLogicEncounter("Enemy_MiddleBoss_GerudoThief_01", kFortress));
+    CHECK(OwnLogicEncounter("Enemy_MiddleBoss_GerudoThief_04", kFortress));
+    CHECK_FALSE(OwnLogicEncounter("Enemy_MiddleBoss_GerudoThief_01", "GerudoThiefStage"));  // DreamWorld: the boss sync's
+    CHECK_FALSE(OwnLogicEncounter("Enemy_Stalchild", kFortress));
+    for (const char* carpenter :
+         {"Npc_Hylia_013_Adult", "Npc_Hylia_014_Adult", "Npc_Hylia_015_Adult", "Npc_Hylia_016_Adult"}) {
+        CAPTURE(carpenter);
+        CHECK(IsOwnInScene(carpenter, kFortress));
+        CHECK_FALSE(IsOwnInScene(carpenter, "GerudoValley_Adult"));  // the tent: shared as before
+        CHECK_FALSE(IsOwnInScene(carpenter, "KakarikoVillage_Child"));
+    }
+    CHECK_FALSE(IsOwnInScene("Npc_Gerudo_013", kFortress));  // the patrol guards: issue 191's guard sync
+    CHECK_FALSE(IsOwnInScene("Npc_Hylia_012_Adult", kFortress));
+
+    constexpr const char* kGuard = "Enemy_MiddleBoss_GerudoThief_03";
+    const auto flags_of = [](const std::vector<proto::ObjectPresent>& present, std::uint64_t hash) {
+        std::optional<std::uint8_t> f;
+        for (const auto& p : present) {
+            for (const auto& e : p.objects) {
+                if (e.id.value == hash) f = e.flags;
+            }
+        }
+        return f;
+    };
+    // Our own guard (our cell logic made it) and another enemy, in the fortress and elsewhere.
+    for (const bool fortress : {true, false}) {
+        CAPTURE(fortress);
+        Sync own;
+        const std::string scene = fortress ? kFortress : kScene;
+        const auto present = All<proto::ObjectPresent>(
+            Tick(own, 0, {Enemy(0x100, 0x11, 8, 1.0f, kGuard), Enemy(0x200, 0x22, 2, 5.0f)}, 1, scene));
+        const auto guard = flags_of(present, 0x11);
+        const auto other = flags_of(present, 0x22);
+        REQUIRE(guard);
+        REQUIRE(other);
+        CHECK(((*guard & proto::object_presence::own_logic) != 0) == fortress);
+        CHECK((*other & proto::object_presence::own_logic) == 0);
+    }
+
+    // A copy of player 1's guard (the director made it here): never listed so.
+    {
+        const proto::ObjectId id{proto::ObjectKind::placed, 0, 0x5a17c0de0b1e0212ULL};
+        proto::ObjectSpawn relayed;
+        relayed.player_number = 1;
+        relayed.id = id;
+        relayed.actor = kGuard;
+        relayed.state.position = proto::Vec3{1.0f, 0.0f, 0.0f};
+        Sync b;
+        b.SetDeleteEvents(true);
+        b.SetPlayer(proto::Vec3{0.0f, 0.0f, 0.0f});
+        Tick(b, 0, {}, 2, kFortress);
+        b.Receive(relayed);
+        Tick(b, 100 * kMs, {}, 2, kFortress);
+        Tick(b, 100 * kMs + kEncounterWaitUs, {}, 2, kFortress);
+        Tick(b, 100 * kMs + 2 * kEncounterWaitUs, {}, 2, kFortress);
+        const auto creates = b.Creates();
+        REQUIRE(creates.size() == 1);
+        b.Bind({{creates[0].key, 0x900}});
+        std::vector<proto::ObjectPresent> present;
+        for (int i = 0; i < 3; ++i) {
+            const auto step = Tick(b, (200 + 400 * i) * kMs + 2 * kEncounterWaitUs,
+                                   {Enemy(0x900, ~0ULL, 8, 1.0f, kGuard)}, 2, kFortress);
+            for (const auto& p : All<proto::ObjectPresent>(step)) present.push_back(p);
+        }
+        REQUIRE(b.IdOf(0x900));
+        if (const auto f = flags_of(present, id.value)) {
+            CHECK((*f & proto::object_presence::own_logic) == 0);
+        }
+    }
+
+    // The carpenter in the fortress: not shared (never listed); in Gerudo Valley: shared as before.
+    for (const bool fortress : {true, false}) {
+        CAPTURE(fortress);
+        Sync sync;
+        const auto present = All<proto::ObjectPresent>(
+            Tick(sync, 0, {Enemy(0x300, 0x33, 1, 2.0f, "Npc_Hylia_015_Adult"), Enemy(0x200, 0x22, 2, 5.0f)}, 1,
+                 fortress ? kFortress : "GerudoValley_Adult"));
+        CHECK(flags_of(present, 0x22).has_value());
+        CHECK(flags_of(present, 0x33).has_value() == !fortress);
+    }
+}
+
 TEST_CASE("boss turns: a sample's attack bits: read and attacking, read and between moves, not read (nothing)") {
     using CoopObjects::AttackBits;
     CHECK(AttackBits(true) == (proto::object_state::attack_read | proto::object_state::attacking));

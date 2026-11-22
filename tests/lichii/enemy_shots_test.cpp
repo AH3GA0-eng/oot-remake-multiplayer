@@ -138,9 +138,12 @@ TEST_CASE("enemy shots: the nearest maker's owner decides") {
     CHECK(es::Decide("ScrubDeku_DekuNut", {41.0f, 1.0f, 2.0f}, shooters) == Verdict::keep);
     // No shooters at all (objects sync off): each game its own.
     CHECK(es::Decide("Octorok_Bullet", {0.0f, 1.0f, 2.0f}, {}) == Verdict::keep);
-    // A boss shot is given to its boss from far off.
-    const std::vector<Shooter> boss{{"Enemy_DungeonBoss_Dodongo", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
-    CHECK(es::Decide("DungeonBossDodongo_Bullet_Fire", {20.0f, 0.0f, 0.0f}, boss) == Verdict::hide);
+    // A boss shot is given to its boss from far off (one that is no split shot: the Flare Dancer's).
+    const std::vector<Shooter> boss{{"Enemy_MiddleBoss_FlareDancer", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
+    CHECK(es::Decide("FlareDancer_Bullet_Fire", {20.0f, 0.0f, 0.0f}, boss) == Verdict::hide);
+    // King Dodongo's fire is a split shot: each game keeps its own.
+    const std::vector<Shooter> king{{"Enemy_DungeonBoss_Dodongo", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
+    CHECK(es::Decide("DungeonBossDodongo_Bullet_Fire", {20.0f, 0.0f, 0.0f}, king) == Verdict::keep);
     // The Lost Woods stage scrubs are each game's own (not shared): kept.
     const std::vector<Shooter> stage{{"Enemy_Scrub_Deku", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
     CHECK(es::Decide("ScrubForestStage_DekuNut", {1.0f, 0.0f, 0.0f}, stage) == Verdict::keep);
@@ -176,7 +179,14 @@ TEST_CASE("enemy shots: Phantom Ganon's thunder and rally ball are split shots: 
     CHECK(es::IsSplitShot("PhantomGanon_Bullet_Thunder_Shockwave"));
     CHECK(es::IsSplitShot("DungeonBossPhantomGanon_Bullet_LightBall"));  // stage 2's rally ball
     CHECK(es::IsSplitShot("DungeonBossGanondrof_Bullet_LightBall"));     // (Ganondorf's rally the same)
-    CHECK_FALSE(es::IsSplitShot("Ganondorf_Bullet_Spread"));             // his other shots stay one, shared
+    CHECK(es::IsSplitShot("Ganondorf_Bullet_Spread"));                   // every boss shot, each game's own
+    CHECK(es::IsSplitShot("Twinrova_Bullet_IceBeam"));
+    CHECK(es::IsSplitShot("KotakeKoumeTwinrova_Bullet_GuardBreakFire"));
+    CHECK(es::IsSplitShot("Ganon_Bullet_ShockSquirt_Weak"));
+    CHECK(es::IsSplitShot("DungeonBossGanon_Bullet_ShockWave"));
+    CHECK(es::IsSplitShot("DungeonBossDodongo_Bullet_StrongFire"));
+    CHECK(es::IsSplitShot("Enemy_MoblinClub_ShockWave"));               // a mob's ground wave too
+    CHECK_FALSE(es::IsSplitShot("Twinrova_Bullet_IceBeam_MirrorShieldReflect"));  // Link's, sent back
     CHECK_FALSE(es::IsSplitShot("Octorok_Bullet"));
     CHECK_FALSE(es::IsSplitShot("Item_Bomb"));
     const std::vector<es::Shooter> theirs{{"Enemy_DungeonBoss_PhantomGanon", {0.0f, 5.0f, 0.0f}, Owner::theirs, 0x1000}};
