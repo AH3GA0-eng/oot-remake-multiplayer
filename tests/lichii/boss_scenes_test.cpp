@@ -50,7 +50,7 @@ std::vector<Request> Took(const char* name) {
 } // namespace
 
 TEST_CASE("boss scenes: ten bosses, every intro and death event known, no mini-boss") {
-    CHECK(CoopBossScenes::Bosses().size() == 12);  // and two mid-fight stage changes (their own case)
+    CHECK(CoopBossScenes::Bosses().size() == 13);  // and three mid-fight stage changes (their own case)
     std::set<std::string_view> names;
     for (const auto& b : CoopBossScenes::Bosses().first(10)) {
         names.insert(b.intro);
@@ -271,6 +271,8 @@ TEST_CASE("boss scenes: the settings a boss's own logic asks start its intro and
     // Mid-fight: never Ganon's death; its own stage change (shared as an intro of its own, entry 11).
     CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_Boss_GetMasterSword") ==
           std::optional(std::pair{std::uint8_t{11}, CoopBossScenes::Kind::intro}));
+    CHECK(CoopBossScenes::OfEvent("InsideGanonCastle_Dungeon_BossBind0") ==
+          std::optional(std::pair{std::uint8_t{12}, CoopBossScenes::Kind::intro}));
     CHECK_FALSE(CoopBossScenes::OfEvent(""));
 
     Director a, b;

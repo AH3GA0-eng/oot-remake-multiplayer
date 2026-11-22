@@ -517,6 +517,12 @@ bool IsBossPart(std::string_view name);
 // A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
 // (its life, its hits, its slots and animations, its own native boss sync entry).
 bool IsBossOrPart(std::string_view name);
+// Enemy survey: one-on-one fighters given the group's boss bit (server-side boss turns and rules) while their AI
+// stays on the plain path: Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos,
+// the club Moblin.
+bool FightsAsBoss(std::string_view name);
+// An enemy that keeps its target (no attack read sent, so no turns): Anubis, which mirrors its target.
+bool KeepsTarget(std::string_view name);
 // Boss turns (0.11.8): a sample's object_state bits for an enemy's attack as its game read it (Seen::attacking):
 // attack_read whenever it was read, attacking with it while the attack runs; 0 when not read.
 std::uint8_t AttackBits(std::optional<bool> attacking);

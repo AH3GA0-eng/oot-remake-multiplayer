@@ -39,6 +39,9 @@ constexpr std::array<Boss, kBossCount> kBosses{{
     // An older game ignores a boss number it does not know.
     {"Twinrova (the sisters merge)", "SageOfSpirit_BossChange", "", -1, {}, {}},
     {"Ganon (the sword falls)", "InsideGanonCastle_Dungeon_Boss_GetMasterSword", "", -1, {}, {}},
+    // Enemy survey: Ganon's second half asks InsideGanonCastle_Dungeon_BossBind0 (Zelda binds him for the last
+    // blow): played in one game only, the other's Ganon was never bound.
+    {"Ganon (bound for the last blow)", "InsideGanonCastle_Dungeon_BossBind0", "", -1, {}, {}},
 }};
 
 const CoopBoss::Room* RoomOf(const Boss& b) {

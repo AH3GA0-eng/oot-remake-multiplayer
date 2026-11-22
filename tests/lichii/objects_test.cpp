@@ -3389,6 +3389,29 @@ TEST_CASE("objects: group rules for parts and bosses") {
     CHECK_FALSE(IsBoss("Enemy_Dodongo"));
 }
 
+TEST_CASE("objects: one-on-one fighters fight boss-style on the server, Anubis keeps its target (enemy survey)") {
+    using CoopObjects::GroupInput;
+    const auto id = [](std::uint64_t v) { return proto::ObjectId{proto::ObjectKind::placed, 0, v}; };
+    for (const char* name : {"Enemy_IronKnuckle_Black", "Enemy_IronKnuckle_Silver", "Enemy_Poe_Amy", "Enemy_Poe_Beth",
+                             "Enemy_Poe_Joelle", "Enemy_Stalfos", "Enemy_Stalfos_Weak", "Enemy_Lizalfos",
+                             "Enemy_Dinolfos", "Enemy_Wolfos_White", "Enemy_Moblin_Club"}) {
+        CAPTURE(name);
+        CHECK(CoopObjects::FightsAsBoss(name));
+        CHECK_FALSE(CoopObjects::IsBossOrPart(name));  // their AI keeps the plain path
+        const auto groups = CoopObjects::GroupsOf(std::vector<GroupInput>{{id(1), name, {0, 0, 0}}});
+        REQUIRE(groups.size() == 1);
+        CHECK(groups[0] == proto::ObjectGroupEntry{id(1), id(1), proto::object_group::boss});
+    }
+    for (const char* name : {"Enemy_Wolfos", "Enemy_Moblin", "Enemy_Keese", "Enemy_Stalfos_Dictionary",
+                             "Enemy_Stalfos_Haribote"}) {
+        CAPTURE(name);
+        CHECK_FALSE(CoopObjects::FightsAsBoss(name));
+    }
+    CHECK(CoopObjects::KeepsTarget("Enemy_Anubis"));
+    CHECK(CoopObjects::KeepsTarget("Enemy_Anubis_MagicField"));
+    CHECK_FALSE(CoopObjects::KeepsTarget("Enemy_Stalfos"));
+}
+
 TEST_CASE("objects: GroupsOf picks the root by name, then the nearest in reach") {
     using CoopObjects::GroupInput;
     const auto id = [](std::uint64_t v) { return proto::ObjectId{proto::ObjectKind::placed, 0, v}; };

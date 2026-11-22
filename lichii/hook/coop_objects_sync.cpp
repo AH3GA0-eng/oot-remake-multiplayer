@@ -526,6 +526,28 @@ std::uint8_t AttackBits(std::optional<bool> attacking) {
                                      (*attacking ? proto::object_state::attacking : 0));
 }
 
+bool FightsAsBoss(std::string_view name) {
+    // Enemy survey (2026-11-21): one-on-one fighters that are no Enemy_MiddleBoss_ actor. Boss-style on the server
+    // only (the group's boss bit: 40 m turns, a downed owner left at once, the longer fight lock); their AI keeps
+    // the plain path (not IsBossOrPart: the native boss sync was never tried on them).
+    if (name.find("_Dictionary") != std::string_view::npos || name.find("_Haribote") != std::string_view::npos) {
+        return false;
+    }
+    static constexpr std::array<std::string_view, 9> kFighters{
+        "Enemy_IronKnuckle_", "Enemy_Poe_Amy", "Enemy_Poe_Beth", "Enemy_Poe_Joelle", "Enemy_Stalfos",
+        "Enemy_Lizalfos",     "Enemy_Dinolfos", "Enemy_Wolfos_White", "Enemy_Moblin_Club"};
+    for (const std::string_view f : kFighters) {
+        if (name.starts_with(f)) return true;
+    }
+    return false;
+}
+
+bool KeepsTarget(std::string_view name) {
+    // Enemy survey: Anubis mirrors its target's moves; passed between players every attack, nobody can line it up.
+    // No attack read is sent, so the server never turns it: it stays with whoever moves it (the near rule).
+    return name.starts_with("Enemy_Anubis");
+}
+
 bool IsBossOrPart(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -596,7 +618,7 @@ std::vector<proto::ObjectGroupEntry> GroupsOf(
     for (const GroupInput& m : walk) {
         const GroupPart* part = PartOf(m.name);
         if (part == nullptr) {
-            if (IsBossOrPart(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
+            if (IsBossOrPart(m.name) || FightsAsBoss(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
             continue;
         }
         const GroupInput* root = nullptr;
@@ -1489,7 +1511,7 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
-    state.state = AttackBits(o.attacking);  // boss turns: its game's own Attack attribute
+    state.state = AttackBits(KeepsTarget(o.name) ? std::nullopt : o.attacking);  // boss turns (not Anubis)
     if (o.own_event_until > now_us) {
         state.state = static_cast<std::uint8_t>(state.state.value_or(0) | proto::object_state::in_event);  // S2
     }
