@@ -3650,6 +3650,45 @@ TEST_CASE("report 138: an owner that lets go gives the enemy to a player who can
   CHECK(h.session.object_owner(placed(7)) == owned(2, 2));
 }
 
+TEST_CASE("enemy survey: an enemy mid-attack (a grab, a hold) is never moved by a chase, capped at 8 s") {
+  // (life 12 as the harness's: no life change, so no fight lock)
+  {  // its owner's attack runs: 2's chase waits for its end
+    OwnerHarness h;
+    h.stand(1, 34);
+    h.stand(2, 60);
+    h.run(4 * kSecond);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(12, true)}, kChannelObjectSamples);
+    h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    for (int i = 0; i < 4; ++i) {
+      h.receive(1, ObjectSample{0, placed(7), 0, attack_state(12, true)}, kChannelObjectSamples);
+      h.run(kSecond);
+    }
+    CHECK(h.asks() == 0);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(12, false)}, kChannelObjectSamples);
+    h.run(kSecond);
+    REQUIRE(h.asks() == 1);
+    CHECK(messages_to<HandoverAsk>(h, 1)[0] == HandoverAsk{placed(7), 0, 2});
+  }
+  {  // an owner that keeps saying "attacking" holds it no longer than attack_hold_max_us
+    OwnerHarness h;
+    h.stand(1, 34);
+    h.stand(2, 60);
+    h.run(4 * kSecond);
+    h.receive(1, ObjectSample{0, placed(7), 0, attack_state(12, true)}, kChannelObjectSamples);
+    h.receive(2, chasing_in("Field", {placed(7)}), kChannelOwnership);
+    for (int i = 0; i < 7; ++i) {
+      h.receive(1, ObjectSample{0, placed(7), 0, attack_state(12, true)}, kChannelObjectSamples);
+      h.run(kSecond);
+    }
+    CHECK(h.asks() == 0);
+    for (int i = 0; i < 3; ++i) {
+      h.receive(1, ObjectSample{0, placed(7), 0, attack_state(12, true)}, kChannelObjectSamples);
+      h.run(kSecond);
+    }
+    CHECK(h.asks() == 1);
+  }
+}
+
 TEST_CASE("issue 101: a chase shorter than 500 ms, or one the owner's enemy shares, moves nothing") {
   {
     OwnerHarness h;

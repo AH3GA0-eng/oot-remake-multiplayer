@@ -123,6 +123,39 @@ and a shot or a grab is real only in the owner's game (a copy's own shots are re
 - **Not placed from the test saves:** Barinade (a save at Jabu-Jabu's boss is needed), Ganondorf (his stage did
   not place him).
 
+## Whole-game survey (2026-11-21): every enemy, room event and push puzzle
+
+Three surveys of the romfs (every map, actor pack and event flow) for places tonight's fixes apply. Applied without
+a game run (unit tests only), for players to check:
+
+| What | Where it went | Check in a game |
+| --- | --- | --- |
+| Never mid-attack: no enemy changes owner by a chase, the near rule or a nearer player while its owner's attack runs (a grab or hold stays on its victim), at most 8 s | server `attack_hold_max_us`, `mid_attack` | B hits a Like Like holding A: A freed, A moves after |
+| Boss-style turns for one-on-one fighters: Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos, the club Moblin (40 m, a downed owner left at once); their AI stays on the plain path | `FightsAsBoss` in `GroupsOf` | "boss turns:" lines for them in the server log |
+| Anubis keeps its target (it mirrors the player moving it) | `KeepsTarget` in `Sync::StateOf` | the mirror follows one player |
+| Ganon bound for the last blow (`InsideGanonCastle_Dungeon_BossBind0`) shared like the other stage changes | `coop_boss_scenes` entry 12 | both games' Ganon bound |
+| The Flare Dancer's fireballs split | `kSplit` | each player gets their own fire |
+| The Goron City statue's moves shared | `IsMovable` | both see it pushed |
+| Capstans' turns shared (Spirit Temple mirrors, Shadow Temple room 1 statue) | `IsCapstan` shifters | the turn shows; the beam and the "correct" check in the game that follows |
+| Per-player room flags no longer shared: the Dark Link rooms' passage flags, the Shadow lifts' crush flag | `coop_dungeon.cpp` | B in room 22/23 while A passes a Dark Link door; B on the boat while A is crushed |
+
+Found and left as they are: Octorok and Deku Scrub shots stay shared (the player shot at sends them back); the
+Wallmaster carry-back and the Gerudo Fortress loss are per player; every block puzzle's answer counter is shared;
+no other actor reads its state only at load (the turning floor's fix fits nowhere else); no other event turns a
+room under a player (the hallway block fits nowhere else); the water level stays a change for everyone.
+
+Still to design (need a game run first):
+- Redead and Gibdo: the scream freezes only the owner's Link; every player in its range should freeze in their own
+  game.
+- Meg (Forest Temple): her three decoys move by her messages, which a copy never sends; which seat is real can
+  differ between games. Match the decoys by seat and send the real one's seat.
+- Dead Hand: its hands follow Dead Hand's owner, so they grab only that player.
+- Lizalfos/Dinolfos pairs and Wolfos packs: each game's pair logic sees a held copy ally; both may attack at once.
+- Water Temple: planes and waterfalls shown by `WaterTemple_WaterLevelChange01/03` may follow only at load.
+- Shadow Temple's falling pillar (`Dm_ShadowTemple_0015`): a player who did not join keeps the old room until
+  a reload.
+- Volvagia's falling rocks have no actor of their own to split.
+
 ## Order of work
 
 1. **Turns between attacks** (Dauro's `boss-turns-0119`, merged in our branch): prove in every boss's every stage

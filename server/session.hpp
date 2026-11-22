@@ -273,6 +273,12 @@ struct SessionConfig {
   // samples read no attacks (no attack_read: an older build) keeps its boss, as before the turns. A boss in a
   // phase with no attack (Phantom Ganon in his paintings, Gohma on the ceiling) is never handed over there.
   std::uint64_t boss_turn_edge_us = 1'000'000;
+  // Never mid-attack (enemy survey, 2026-11-21): while an enemy's owner says its attack runs, no rule but a turn
+  // (which waits for the attack's end) and an unfit owner moves it: not a nearer player, not a chase, not the
+  // near rule. A grab or hold (Like Like, Redead, Wallmaster, Floormaster, Dead Hand, a Bubble) stays on the
+  // player it holds until it lets go. Capped at this long from the attack's start, so an enemy that keeps
+  // saying "attacking" is not held for good. 0: off.
+  std::uint64_t attack_hold_max_us = 8'000'000;
   // Row 149 (King Dodongo rolling forever): a boss (a group's root) whose
   // owner's samples keep one animation, one action verb and one life this
   // long is stuck in that move. Its owner's game re-chooses after about 25 s
@@ -805,6 +811,7 @@ class Session {
     bool attacking = false;           // in its attack sequence
     std::uint16_t attack_epoch = 0;   // the epoch those two are of
     std::uint64_t attack_ended_at = 0;  // its newest attack's end in that epoch; 0: none
+    std::uint64_t attack_began_at = 0;  // when its running attack began (attack_hold_max_us); 0: none
   };
   using Objects = std::map<protocol::ObjectId, Object>;
 
@@ -995,6 +1002,8 @@ class Session {
   bool in_fight(const Object& o, std::uint64_t now_us) const;
   // The owner hit it itself within boss_owner_hit_hold_us (issue 150).
   bool owner_hit_lately(const Object& o, std::uint64_t now_us) const;
+  // attack_hold_max_us: its owner's attack runs (never moved but by a turn or an unfit owner).
+  bool mid_attack(const Object& o, std::uint64_t now_us) const;
   // Boss turns (boss_turn_us): the player whose turn it is now, if a boss
   // root in its fight is due for one at a calm moment.
   std::optional<ConnectionId> next_turn(Object& o, ConnectionId owner, std::uint64_t now_us);
