@@ -140,7 +140,7 @@ TEST_CASE("snail customize: his screen's texts in the game's language, as co-op'
     const auto t = d.Shown(hans);
     CHECK(t.title.find("Y: page") == std::string::npos);
     CHECK(t.title.find("Y：翻页") != std::string::npos);
-    CHECK(t.title.find("A：色相") != std::string::npos);
+    CHECK(t.title.find("A：调色") != std::string::npos);
     CHECK(t.labels[0] == CoopI18n::Tr(hans, "Eye Colour"));
     CHECK(t.labels[0] != "Eye Colour");
     CHECK(t.labels[1] == CoopI18n::Tr(hans, "Kokiri Tunic"));
