@@ -31,7 +31,7 @@ TEST_CASE("snail customize: his six options show co-op's parts, ZL / ZR step the
     d.Open(start, 0);
     REQUIRE(d.Active());
     auto t = d.Shown();
-    CHECK(t.title == "Link (page 1 of 4)   Y: next page");
+    CHECK(t.title == "Link (page 1 of 4)   Y: next page   A: pick exact hue");
     CHECK(t.labels[0] == "Eye Colour");
     CHECK(t.labels[1] == "Kokiri Tunic");
     CHECK(t.labels[3] == "Goron Tunic");   // (his right column)
@@ -51,7 +51,7 @@ TEST_CASE("snail customize: his six options show co-op's parts, ZL / ZR step the
     // Y: the Shields page, the same six places.
     CHECK(d.Pad(kY) == 0);
     t = d.Shown();
-    CHECK(t.title == "Shields (page 2 of 4)   Y: next page");
+    CHECK(t.title == "Shields (page 2 of 4)   Y: next page   A: pick exact hue");
     CHECK(t.labels[0] == "Hylian Shield Frame");
     CHECK(t.labels[5] == "Deku Shield");
     // B and -: his (back to his picker).
@@ -138,6 +138,7 @@ TEST_CASE("snail customize: his screen's texts in the game's language, as co-op'
     const auto t = d.Shown(hans);
     CHECK(t.title.find("Y: next page") == std::string::npos);
     CHECK(t.title.find("Y：下一页") != std::string::npos);
+    CHECK(t.title.find("A：选择精确色相") != std::string::npos);
     CHECK(t.labels[0] == CoopI18n::Tr(hans, "Eye Colour"));
     CHECK(t.labels[0] != "Eye Colour");
     CHECK(t.labels[1] == CoopI18n::Tr(hans, "Kokiri Tunic"));
@@ -147,7 +148,7 @@ TEST_CASE("snail customize: his screen's texts in the game's language, as co-op'
     CHECK(t.values[1] == CoopI18n::Tr(hans, "Game's own"));
     CHECK(t.values[3] == d.Shown(nullptr).values[3]);   // (#123456 stays)
     // English (no table): the same texts as before.
-    CHECK(d.Shown(nullptr).title == "Link (page 1 of 4)   Y: next page");
+    CHECK(d.Shown(nullptr).title == "Link (page 1 of 4)   Y: next page   A: pick exact hue");
     CHECK(d.Shown(nullptr).values[4] == "Red");
 }
 
