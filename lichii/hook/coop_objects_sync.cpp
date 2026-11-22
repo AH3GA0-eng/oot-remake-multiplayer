@@ -550,6 +550,12 @@ std::uint8_t AttackBits(std::optional<bool> attacking) {
                                      (*attacking ? proto::object_state::attacking : 0));
 }
 
+bool KeepsTarget(std::string_view name) {
+    // Enemy survey: Anubis mirrors its target's moves; passed between players every attack, nobody can line it up.
+    // No attack read is sent, so the server never turns it: it stays with whoever moves it (the near rule).
+    return name.starts_with("Enemy_Anubis");
+}
+
 bool IsBossOrPart(std::string_view name) {
     if (name.find("_Dictionary") != std::string_view::npos) return false;
     if (name.starts_with("Enemy_DungeonBoss_") || name.starts_with("Enemy_MiddleBoss_")) {
@@ -1535,7 +1541,7 @@ proto::ObjectState Sync::StateOf(Object& o, std::uint64_t now_us) {
     if (o.life) {
         state.life = proto::ObjectLife{*o.life, o.max};
     }
-    state.state = AttackBits(o.attacking);  // boss turns: its game's own Attack attribute
+    state.state = AttackBits(KeepsTarget(o.name) ? std::nullopt : o.attacking);  // boss turns (not Anubis)
     if (o.own_event_until > now_us) {
         state.state = static_cast<std::uint8_t>(state.state.value_or(0) | proto::object_state::in_event);  // S2
     }

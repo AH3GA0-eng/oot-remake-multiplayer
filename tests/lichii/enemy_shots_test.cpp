@@ -138,9 +138,9 @@ TEST_CASE("enemy shots: the nearest maker's owner decides") {
     CHECK(es::Decide("ScrubDeku_DekuNut", {41.0f, 1.0f, 2.0f}, shooters) == Verdict::keep);
     // No shooters at all (objects sync off): each game its own.
     CHECK(es::Decide("Octorok_Bullet", {0.0f, 1.0f, 2.0f}, {}) == Verdict::keep);
-    // A boss shot is given to its boss from far off (one that is no split shot: the Flare Dancer's).
+    // The Flare Dancer's fireballs are split shots too (enemy survey): each game keeps its own, from far off too.
     const std::vector<Shooter> boss{{"Enemy_MiddleBoss_FlareDancer", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
-    CHECK(es::Decide("FlareDancer_Bullet_Fire", {20.0f, 0.0f, 0.0f}, boss) == Verdict::hide);
+    CHECK(es::Decide("FlareDancer_Bullet_Fire", {20.0f, 0.0f, 0.0f}, boss) == Verdict::keep);
     // King Dodongo's fire is a split shot: each game keeps its own.
     const std::vector<Shooter> king{{"Enemy_DungeonBoss_Dodongo", {0.0f, 0.0f, 0.0f}, Owner::theirs}};
     CHECK(es::Decide("DungeonBossDodongo_Bullet_Fire", {20.0f, 0.0f, 0.0f}, king) == Verdict::keep);
@@ -180,6 +180,10 @@ TEST_CASE("enemy shots: Phantom Ganon's thunder and rally ball are split shots: 
     CHECK(es::IsSplitShot("DungeonBossPhantomGanon_Bullet_LightBall"));  // stage 2's rally ball
     CHECK(es::IsSplitShot("DungeonBossGanondrof_Bullet_LightBall"));     // (Ganondorf's rally the same)
     CHECK(es::IsSplitShot("Ganondorf_Bullet_Spread"));                   // every boss shot, each game's own
+    CHECK(es::IsSplitShot("FlareDancer_Bullet_FireBall"));               // the Flare Dancer's (enemy survey)
+    CHECK(es::IsSplitShot("FlareDancer_Bullet_FireDanceBall"));
+    CHECK_FALSE(es::IsSplitShot("Octorok_Bullet"));     // sent back by the player shot at: shared
+    CHECK_FALSE(es::IsSplitShot("ScrubDeku_DekuNut"));
     CHECK(es::IsSplitShot("Twinrova_Bullet_IceBeam"));
     CHECK(es::IsSplitShot("KotakeKoumeTwinrova_Bullet_GuardBreakFire"));
     CHECK(es::IsSplitShot("Ganon_Bullet_ShockSquirt_Weak"));
