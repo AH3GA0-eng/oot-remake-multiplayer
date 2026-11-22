@@ -2350,11 +2350,17 @@ TEST_CASE("census (the - menu research): screens first seen, state changes, gone
           std::vector<std::string>{"census: screen 0x4bebaa8 seen, state 1"});   // back: seen anew
 }
 
-TEST_CASE("the - strip counts slot 3 only with a mod's code in the game, so no empty slot sits before our tabs") {
+TEST_CASE("the - strip counts slot 3 only with Character Select's code in the game, so no empty slot before ours") {
   CHECK(GameTabsShown(false, false) == 3);   // the game's own - menu: slot 3 hidden
   CHECK(GameTabsShown(true, false) == 3);    // Character Select's header without his code (0.11.9 kit): no gap
   CHECK(GameTabsShown(true, true) == 4);     // his code built in: his Characters tab and the game's three
-  CHECK(GameTabsShown(false, true) == 3);    // a mod's code, but no fourth tab shown
+  CHECK(GameTabsShown(false, true) == 3);    // his code, but no fourth tab shown
+  // His header with only another mod's code (or his patch refused as for another version): still no gap
+  // (review-0119-b: the slot follows his code, not any mod's)
+  CHECK(GameTabsShown(true, SnailCodeBuiltIn("Other mod\tE0.ips\t1\tcode\t\n")) == 3);
+  CHECK(GameTabsShown(true, SnailCodeBuiltIn("OoT Character Select\tE0.ips\t1\tunsupported\tanother version\n")) == 3);
+  CHECK(GameTabsShown(true, SnailCodeBuiltIn("Other mod\tx.ips\t1\tcode\t\nOoT Character Select\tE0.ips\t2\tcode\t\n")) ==
+        4);
 }
 
 TEST_CASE("exefs_patches.txt: a code patch the game was built with") {

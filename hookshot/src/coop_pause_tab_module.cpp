@@ -1915,12 +1915,14 @@ void ApplyMinus(void* ctx, const Facts& f, const Page::Do& d) {
     }
 }
 
-// Whether the game holds a mod's code (the game folder's exefs_patches.txt lists a code patch: GameTabsShown), read
-// once: the list changes only with a game build, which needs the game started again.
-bool ModCodeInGame() {
+// Whether the game holds Character Select's code (the game folder's exefs_patches.txt lists a code patch of his:
+// GameTabsShown; only his code fills slot 3, another mod's code does not), read once: the list changes only with a
+// game build, which needs the game started again.
+bool SnailCodeInGame() {
     static const bool built = [] {
-        const bool yes = ModCodeBuiltIn(CoopPause::ExefsList());
-        LOG_INFO(Core, "coop: pause tab: a mod's code in the game (exefs_patches.txt): {} (the - strip's slot 3 {})",
+        const bool yes = SnailCodeBuiltIn(CoopPause::ExefsList());
+        LOG_INFO(Core, "coop: pause tab: Character Select's code in the game (exefs_patches.txt): {} (the - strip's "
+                       "slot 3 {})",
                  yes ? "yes" : "no", yes ? "counts when shown" : "never counts: the game's code fills three - tabs");
         return yes;
     }();
@@ -1950,7 +1952,7 @@ void FollowMinus(void* ctx) {
     // (the game's shown: slots 0..3 when a mod's code fills slot 3 (Character Select's Characters tab), else 0..2:
     // GameTabsShown)
     const int game = GameTabsShown(g_game_tabs[3] != 0 && (Read<std::uint32_t>(g_game_tabs[3] + 0xa8) & 1u) != 0,
-                                   ModCodeInGame());
+                                   SnailCodeInGame());
     const float step = g_game_tabs_x[1] - g_game_tabs_x[0];
     if (!std::isfinite(step) || step == 0.0f) return;
     const float first = g_game_tabs_x[0], last = g_game_tabs_x[static_cast<std::size_t>(game - 1)];

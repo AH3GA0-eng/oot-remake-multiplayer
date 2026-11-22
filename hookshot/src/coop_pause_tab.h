@@ -848,14 +848,15 @@ inline constexpr std::uint64_t kMenuUpMs = 200;
 bool MenuUpFrom(int strip_state, std::uint64_t seen_ms, std::uint64_t now_ms);
 
 // The - strip's game tabs shown (3, or 4 with slot 3). The game's own code fills three - tabs; a fourth (Character
-// Select's Characters, in slot 0, his others after it) is filled only by a mod's code patch, built into the game
+// Select's Characters, in slot 0, his others after it) is filled only by his code patch, built into the game
 // (patches 0034/0035; the game folder's exefs_patches.txt lists it). His header alone (his layout, as in a game built
 // without his code: the 0.11.9 test kit) leaves slot 3 visible and empty, and counting it put an empty slot between Map
 // and our tabs. The width its word drew (tab-gap-0119) did not tell it: the owner's 0.11.9 kit still had the gap.
-// So slot 3 counts when it is visible and the game holds a mod's code (charsel-tab-0119).
+// So slot 3 counts when it is visible and the game holds his code (SnailCodeBuiltIn: another mod's code fills no tab;
+// review-0119-b) (charsel-tab-0119).
 inline constexpr std::uint64_t kPaneTextWidth = 0x13c;   // f32: a text pane's drawn width (docs/game-ui.md, checked)
-inline int GameTabsShown(bool slot3_visible, bool mod_code_built_in) {
-    return slot3_visible && mod_code_built_in ? 4 : 3;
+inline int GameTabsShown(bool slot3_visible, bool snail_code_built_in) {
+    return slot3_visible && snail_code_built_in ? 4 : 3;
 }
 // Whether exefs_patches.txt (nx2/exefs_patches.py write_list: '#' comment, then "mod<TAB>file<TAB>hash<TAB>kind<TAB>
 // note" a patch file) lists a code patch the game was built with.
