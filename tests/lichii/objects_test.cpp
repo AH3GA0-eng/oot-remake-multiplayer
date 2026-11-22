@@ -3469,6 +3469,55 @@ TEST_CASE("objects: one-on-one fighters stay plain enemies (no boss group), Anub
     CHECK_FALSE(CoopObjects::KeepsTarget("Enemy_Stalfos"));
 }
 
+TEST_CASE("objects: a pair or pack of one family is one group under its lowest id (pair survey)") {
+    using CoopObjects::GroupInput;
+    const auto id = [](std::uint64_t v) { return proto::ObjectId{proto::ObjectKind::placed, 0, v}; };
+    constexpr std::uint8_t kBoss = proto::object_group::boss;
+    CHECK(CoopObjects::PackFamily("Enemy_Lizalfos") == "lizalfos");
+    CHECK(CoopObjects::PackFamily("Enemy_Dinolfos") == "lizalfos");
+    CHECK(CoopObjects::PackFamily("Enemy_Wolfos_White") == "wolfos");
+    CHECK(CoopObjects::PackFamily("Enemy_Stalfos_Weak") == "stalfos");
+    CHECK(CoopObjects::PackFamily("Enemy_Lizalfos_Dictionary").empty());
+    CHECK(CoopObjects::PackFamily("Enemy_Stalfos_Haribote").empty());
+    CHECK(CoopObjects::PackFamily("Enemy_MiddleBoss_Lizalfos").empty());  // a boss of its own already
+    CHECK(CoopObjects::PackFamily("Enemy_Keese").empty());
+    {  // a Lizalfos pair 5 m apart: one group, boss-style; one 40 m off stays alone (boss-style as before)
+        const std::vector<GroupInput> walk{{id(4), "Enemy_Lizalfos", {0, 0, 0}},
+                                           {id(9), "Enemy_Dinolfos", {5, 0, 0}},
+                                           {id(2), "Enemy_Lizalfos", {40, 0, 0}}};
+        const auto g = CoopObjects::GroupsOf(walk);
+        REQUIRE(g.size() == 3);
+        CHECK(g[0] == proto::ObjectGroupEntry{id(2), id(2), kBoss});
+        CHECK(g[1] == proto::ObjectGroupEntry{id(4), id(4), kBoss});
+        CHECK(g[2] == proto::ObjectGroupEntry{id(9), id(4), kBoss});
+    }
+    {  // three plain Wolfos: one group under the lowest id, no boss bit; the root itself sends nothing new
+        const std::vector<GroupInput> walk{{id(7), "Enemy_Wolfos", {0, 0, 0}},
+                                           {id(3), "Enemy_Wolfos", {10, 0, 0}},
+                                           {id(5), "Enemy_Wolfos", {20, 0, 0}}};
+        const auto g = CoopObjects::GroupsOf(walk);
+        REQUIRE(g.size() == 2);
+        CHECK(g[0] == proto::ObjectGroupEntry{id(5), id(3), 0});
+        CHECK(g[1] == proto::ObjectGroupEntry{id(7), id(3), 0});
+    }
+    {  // a white Wolfos in a plain pack: the whole pack fights boss-style, its plain root too
+        const std::vector<GroupInput> walk{{id(3), "Enemy_Wolfos", {0, 0, 0}},
+                                           {id(6), "Enemy_Wolfos_White", {4, 0, 0}}};
+        const auto g = CoopObjects::GroupsOf(walk);
+        REQUIRE(g.size() == 2);
+        CHECK(g[0] == proto::ObjectGroupEntry{id(3), id(3), kBoss});
+        CHECK(g[1] == proto::ObjectGroupEntry{id(6), id(3), kBoss});
+    }
+    {  // the root gone (killed): a member linked to it goes on its own, once
+        const std::vector<GroupInput> walk{{id(9), "Enemy_Wolfos", {5, 0, 0}}};
+        const std::map<proto::ObjectId, proto::ObjectId> linked{{id(9), id(4)}};
+        const auto g = CoopObjects::GroupsOf(walk, linked);
+        REQUIRE(g.size() == 1);
+        CHECK(g[0] == proto::ObjectGroupEntry{id(9), id(9), 0});
+        CHECK(CoopObjects::GroupsOf(walk).empty());  // never linked: a lone wolf sends nothing
+    }
+}
+
 TEST_CASE("objects: GroupsOf picks the root by name, then the nearest in reach") {
     using CoopObjects::GroupInput;
     const auto id = [](std::uint64_t v) { return proto::ObjectId{proto::ObjectKind::placed, 0, v}; };
