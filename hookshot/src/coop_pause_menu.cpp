@@ -167,6 +167,12 @@ Row Toggle(std::string name, bool on) {
     return r;
 }
 
+// `units` of 1/`per` as a number with halves, as /dbno takes and the rows show it: (25, 10) "2.5", (12, 4) "3".
+std::string Halves(int units, int per) {
+    const int twice = units * 2 / per;
+    return std::to_string(twice / 2) + (twice % 2 ? ".5" : "");
+}
+
 // A CoopInput label ("Controller: 2 - Xbox Wireless Controller") as a choice row: the words after ": " are the value.
 Row InputChoice(const char* name, const std::string& label) {
     const auto colon = label.find(": ");
@@ -296,6 +302,74 @@ struct Menu::Line {
     Act act = Act::kNone;
     std::string help;
 };
+
+// Co-op settings' host rows (row 226's audit, menu-parity-0119): the game's kind, join approval and the session's
+// rules, after the other rows a host sets (players, port, room name, the same-network password). Not in a session:
+// what the next Host uses (the kind, approval and PvP saved in coop-options.ini; down but not out is the server's
+// own until a host changes it, so its rows wait for a session). In one: the rules in force, the host's to change,
+// a guest's dimmed (fixed): a press says why.
+void Menu::HostRuleLines(std::vector<Line>& out, bool guest) const {
+    const bool live = session_.rules;
+    const char* const kHostOnly = "Only the host changes this; it shows what the host chose.";
+    Row kind = Choice("Game", options_.public_game ? "Public game" : "Private game");
+    kind.fixed = guest;
+    kind.left = kind.right = !guest;   // (a value that cannot change: no arrows around it)
+    out.push_back({kind, Act::kGameKind,
+                   guest ? std::string(kHostOnly)
+                   : session_.hosting && options_.public_game != session_.public_game
+                       ? std::string("Applies at your next Host: stop hosting, then start again.")
+                       : std::string(options_.public_game ? kPublicHelp : kPrivateHelp)});
+    Row approve = Toggle("Approve joins", options_.approve_joins);
+    approve.fixed = guest;
+    out.push_back({approve, Act::kApproveJoins,
+                   guest ? std::string(kHostOnly)
+                         : std::string("On: each player who asks to join waits until you let them in or refuse them "
+                                       "(Let in on Your game, or /allow and /deny in the chat). Applies at your next "
+                                       "Host.")});
+    Row pvp = Toggle("PvP", live ? session_.pvp : options_.pvp);
+    pvp.fixed = guest;
+    out.push_back({pvp, Act::kPvp,
+                   guest ? std::string(kHostOnly)
+                         : std::string("On: sword hits, arrows and other attacks hurt the other players too, both "
+                                       "ways. In a game you host it changes at once for everyone (as /pvp on and "
+                                       "/pvp off); else it is used at your next Host.")});
+    Row dbno = Toggle("Down but not out", live ? session_.dbno : true);
+    dbno.fixed = guest || !live;
+    const std::string dbno_help =
+        !live   ? std::string("Set while you host: these rules are the session's, and each game starts with them on.")
+        : guest ? std::string(kHostOnly)
+                : std::string("On: a player who loses their last heart goes down and crawls instead of a Game Over, "
+                              "and another player holds A beside them to revive them (as /dbno on and /dbno off).");
+    out.push_back({dbno, Act::kDbno, dbno_help});
+    if (!live || !session_.dbno) {
+        return;   // (its three values: only while they are in force, so a dimmed list never runs on)
+    }
+    Row time = Choice("Bleed-out time", std::to_string(session_.dbno_bleed_s) + " s");
+    Row hold = Choice("Revive hold", Halves(session_.dbno_revive_tenths, 10) + " s");
+    Row hearts = Choice("Revive hearts", Halves(session_.dbno_revive_life, 4));
+    for (Row* r : {&time, &hold, &hearts}) r->fixed = dbno.fixed, r->left = r->right = !dbno.fixed;
+    const bool mine = live && !guest;
+    out.push_back({time, Act::kDbnoTime,
+                   mine ? std::string("How long a downed player has before the Game Over if nobody revives them (10 "
+                                      "to 240 seconds, as /dbno time).")
+                        : dbno_help});
+    out.push_back({hold, Act::kDbnoHold,
+                   mine ? std::string("How long A is held beside a downed player to revive them (0.5 to 10 seconds, "
+                                      "as /dbno hold).")
+                        : dbno_help});
+    out.push_back({hearts, Act::kDbnoHearts,
+                   mine ? std::string("The hearts a revived player gets back (0.5 to 20, as /dbno hearts).")
+                        : dbno_help});
+}
+
+std::size_t Menu::HostRulesRow() const {
+    if (page_ != Page::kSettings) return 0;
+    const auto lines = Lines();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].act == Act::kGameKind) return i;
+    }
+    return 0;
+}
 
 std::vector<Menu::Line> Menu::Lines() const {
     const bool mine = InSession() && !session_.by_launcher;
@@ -578,6 +652,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                        Act::kSameNetwork,
                        "Not needed: when you host, players from a private address join without the join password. "
                        "Only on a network you trust: a tunnel, a VPN or a port forward can bring others in that way."});
+        HostRuleLines(out, guest);
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
@@ -1658,7 +1733,15 @@ void Menu::Decide(Act act) {
     case Act::kAutoRejoin:
     case Act::kOriginal:
     case Act::kGameKind:
+    case Act::kApproveJoins:
+    case Act::kPvp:
+    case Act::kDbno:
         Change(act, 0);   // (a toggle: A flips it)
+        break;
+    case Act::kDbnoTime:
+    case Act::kDbnoHold:
+    case Act::kDbnoHearts:
+        Change(act, 1);
         break;
     case Act::kNone:
         break;
@@ -1768,6 +1851,38 @@ void Menu::Change(Act act, int step) {
         options_.original_game = step > 0 ? true : step < 0 ? false : !options_.original_game;
         request_ = Request{Request::Kind::kSave, {}};
         break;
+    case Act::kApproveJoins:
+        options_.approve_joins = step > 0 ? true : step < 0 ? false : !options_.approve_joins;
+        request_ = Request{Request::Kind::kSave, {}};
+        break;
+    case Act::kPvp: {
+        const bool now = session_.rules ? session_.pvp : options_.pvp;
+        const bool want = step > 0 ? true : step < 0 ? false : !now;
+        options_.pvp = want;   // (the next Host's too: the module saves the options with the chat line)
+        request_ = session_.rules ? Request{Request::Kind::kChat, want ? "/pvp on" : "/pvp off"}
+                                  : Request{Request::Kind::kSave, {}};
+        break;
+    }
+    case Act::kDbno:
+        if (session_.rules) {
+            const bool want = step > 0 ? true : step < 0 ? false : !session_.dbno;
+            request_ = Request{Request::Kind::kChat, want ? "/dbno on" : "/dbno off"};
+        }
+        break;
+    case Act::kDbnoTime:      // (steps of 5 seconds, 10 to 240, round)
+    case Act::kDbnoHold:      // (steps of half a second, 0.5 to 10)
+    case Act::kDbnoHearts: {  // (steps of half a heart, 0.5 to 20)
+        if (!session_.rules) break;
+        const bool time = act == Act::kDbnoTime, hold = act == Act::kDbnoHold;
+        const int lo = time ? 10 : hold ? 5 : 2, hi = time ? 240 : hold ? 100 : 80, by = time ? 5 : hold ? 5 : 2;
+        const int at = time ? session_.dbno_bleed_s : hold ? session_.dbno_revive_tenths : session_.dbno_revive_life;
+        int next = (std::clamp(at, lo, hi) / by) * by + (step < 0 ? -by : by);
+        if (next > hi) next = lo;
+        if (next < lo) next = hi;
+        request_ = Request{Request::Kind::kChat, std::string(time ? "/dbno time " : hold ? "/dbno hold " : "/dbno hearts ") +
+                                                     Halves(next, time ? 1 : hold ? 10 : 4)};
+        break;
+    }
     case Act::kSaveSet:   // (Navi) two choices: either arrow flips it
         mp_saves_ = !mp_saves_;
         request_ = Request{Request::Kind::kSaveSet, mp_saves_ ? "multiplayer" : "solo"};

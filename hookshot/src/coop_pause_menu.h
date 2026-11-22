@@ -71,7 +71,11 @@ struct Request {
                       kController, kKeyboard, kLookParts, kCopyVpn,
                       kNgPlus,     // (Navi) kNgPlus: `text` is the New Game+ level chosen (coop_ngplus.h)
                       kSaveSet,    // (Navi) kSaveSet: `text` "multiplayer" or "solo" (CoopSave::ChooseSaveSet)
-                      kSetPassword, kAllow, kDeny, kRefreshFound };
+                      kSetPassword, kAllow, kDeny, kRefreshFound,
+                      // kChat: `text` is a chat command line ("/pvp on", "/dbno time 60"), sent as the chat box sends
+                      // it (CoopHook::SendChat), so a host row and the command are one path and the chat line says
+                      // what changed; the server takes it from the host only.
+                      kChat };
     Kind kind = Kind::kHost;
     std::string text;
 };
@@ -96,6 +100,12 @@ struct Session {
     std::vector<std::string> lines;   // what it is doing or what went wrong, in plain words
     std::string password;      // the host's join password while it hosts ("" none): shown on A, never logged
     std::vector<std::string> asking;  // who asks to join this host now, oldest first (CoopLobby::Asking)
+    // The session's rules in force (the server's, as CoopPvp::On and CoopDbno::Current hear them), for the host rows
+    // of Co-op settings; `rules` false: not heard yet (not in a session), the rows show what the next Host uses.
+    bool rules = false;
+    bool pvp = false;
+    bool dbno = true;
+    int dbno_bleed_s = 45, dbno_revive_tenths = 50, dbno_revive_life = 12;
 
     bool operator==(const Session&) const = default;
 };
@@ -230,6 +240,8 @@ public:
     const std::string& join_port() const { return join_port_; }
     const Session& session() const { return session_; }
     View view() const;
+    // Co-op settings' first host row (Game): where the pause tab's Host settings row opens the page (0 elsewhere).
+    std::size_t HostRulesRow() const;
 
 private:
     enum class Act {
@@ -241,7 +253,8 @@ private:
         kSameNetwork, kGameKind,
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh,
-        kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal
+        kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal,
+        kApproveJoins, kPvp, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;
@@ -249,6 +262,7 @@ private:
     void TitleListLines(std::vector<Line>& out, bool off) const;
     void TitleCodeLines(std::vector<Line>& out, bool off) const;
     void TitleHostLines(std::vector<Line>& out, bool host, bool guest) const;
+    void HostRuleLines(std::vector<Line>& out, bool guest) const;
     bool Selectable(const Line& line) const;
     void Go(Page page, Act select = Act::kNone);
     void Clamp();

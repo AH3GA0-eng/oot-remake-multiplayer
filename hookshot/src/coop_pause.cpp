@@ -18,6 +18,7 @@
 #include "coop_auto_rejoin.h"
 #include "coop_char_colours.h"
 #include "coop_colors.h"
+#include "coop_dbno_game.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
 #include "coop_host_menu.h"
@@ -33,6 +34,7 @@
 #include "coop_original.h"
 #include "coop_pause_files.h"
 #include "coop_pause_tab.h"
+#include "coop_pvp_game.h"
 #include "coop_room_list.h"
 #include "coop_runtime.h"
 #include "coop_ngplus.h"
@@ -241,6 +243,16 @@ CoopPauseMenu::Session SessionNow() {
         s.code = st.state == HOS_COOP_WAIT_HOST ? st.answer : "";
     }
     s.lines = StatusLines(st, seen);
+    // (the session's rules in force, the server's: Co-op settings' host rows show them, and change them for a host)
+    if (seen.connected) {
+        const CoopDbno::Rules rules = CoopDbno::Current();
+        s.rules = true;
+        s.pvp = CoopPvp::On();
+        s.dbno = rules.on;
+        s.dbno_bleed_s = rules.bleed_s;
+        s.dbno_revive_tenths = rules.revive_tenths;
+        s.dbno_revive_life = rules.revive_life;
+    }
     return s;
 }
 
@@ -917,6 +929,14 @@ void Act(const Request& r) {
         RefreshSession(true);
         break;
     }
+    case Request::Kind::kChat: {   // (a host row of Co-op settings: its chat command, one path with the chat box)
+        const bool sent = CoopHook::SendChat(r.text);
+        LOG_INFO(Core, "coop: multiplayer tab: host rule {}{}", r.text, sent ? "" : " (not sent)");
+        Save();   // (PvP's choice is the next Host's too)
+        g_menu.SetNote({sent ? std::string("Sent: the chat says what changed.") : std::string("Not sent: co-op is not connected.")});
+        RefreshSession(true);
+        break;
+    }
     case Request::Kind::kRefreshFound:   // (the Find page's list asked again: the relay's rooms, or this network's games)
         if (g_native && g_menu.title()) {   // (the title's list: both kinds)
             CoopRoomList::AskNow();
@@ -1472,6 +1492,12 @@ void NativeGo(CoopPauseMenu::Page page) {
     if (!g_native) return;
     g_menu.Open(page);
     Settle();
+}
+
+void NativeSelectHostRules() {
+    std::lock_guard lock(g_mutex);
+    if (!g_native || g_menu.page() != CoopPauseMenu::Page::kSettings) return;
+    g_menu.Select(g_menu.HostRulesRow());
 }
 
 void CloseNative() {

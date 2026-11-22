@@ -896,17 +896,23 @@ TEST_CASE("title menu: Skip title screen is free solo and held while co-op does 
     CHECK(std::string(SkipTitleHold(join)) == "co-op is joining");
 }
 
-TEST_CASE("title menu: approve_joins (the host's) is read from coop-options.ini, off without a line, never rewritten") {
+TEST_CASE("title menu: approve_joins (the host's) is read from coop-options.ini, off without a line, kept as written") {
     CHECK_FALSE(Options::Read("", "").approve_joins);
     CHECK_FALSE(Options::Read("", "# approve_joins = on\r\n").approve_joins);
     CHECK_FALSE(Options::Read("", "approve_joins = off\r\n").approve_joins);
     CHECK(Options::Read("", "approve_joins = on\r\n").approve_joins);
-    // No row edits it: the line stays as the player wrote it.
-    const Options o = Options::Read("", "approve_joins = yes\r\n");
+    // Unchanged, the line stays as the player wrote it; Co-op settings' Approve joins row writes a change.
+    Options o = Options::Read("", "approve_joins = yes\r\n");
     CHECK(o.approve_joins);
     std::string coop, options = "approve_joins = yes\r\n";
     o.Write(coop, options);
     CHECK(IniGet(options, "approve_joins") == "yes");
+    o.approve_joins = false;
+    o.Write(coop, options);
+    CHECK_FALSE(Options::Read("", options).approve_joins);
+    o.approve_joins = true;
+    o.Write(coop, options);
+    CHECK(IniGet(options, "approve_joins") == "on");
 }
 
 TEST_CASE("title menu: auto_rejoin is off unless coop-options.ini turns it on, and the page's row writes it") {
