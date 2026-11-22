@@ -91,6 +91,7 @@ TEST_CASE("snail customize: a character with no colour options shows that, and i
     const auto t = d.Shown();
     CHECK(t.labels[0] == CoopLookMenu::kNoColourOptions);
     CHECK(t.title.find("Y:") == std::string::npos);
+    CHECK(t.title.find("A:") == std::string::npos);   // (no colour option: no hue to pick)
     d.Pad(kZR), d.Pad(kA), d.Pad(kY);
     CHECK_FALSE(d.TakeChange());
     CHECK_FALSE(d.Editing());
