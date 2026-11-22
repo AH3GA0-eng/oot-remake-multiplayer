@@ -18,6 +18,7 @@
 #include "coop_auto_rejoin.h"
 #include "coop_char_colours.h"
 #include "coop_colors.h"
+#include "coop_difficulty.h"
 #include "coop_hook.h"
 #include "coop_hookshot.h"
 #include "coop_host_menu.h"
@@ -248,6 +249,7 @@ void RefreshSession(bool now) {
     if (now || NowMs() >= g_next_session_ms) {
         g_next_session_ms = NowMs() + 250;
         g_menu.SetSession(SessionNow());
+        g_menu.SetDifficulty(CoopDifficulty::Get(), static_cast<int>(CoopHook::PlayerList().size()));
         g_menu.SetCharacter(CoopCharColours::ShownCharacter() != 0);   // (#308's Customize page: Link's colours wait)
     }
 }
@@ -927,6 +929,14 @@ void Act(const Request& r) {
             CoopLanNet::Forget();
         }
         break;
+    case Request::Kind::kDifficulty: {   // the host's choice, for everyone (the chat says it once the server has)
+        const auto choice = CoopDifficulty::ParseChoice(r.text);
+        if (!choice || !CoopDifficulty::Set(*choice)) {
+            g_menu.SetNote({"Only the host can change the difficulty, while hosting."});
+        }
+        LOG_INFO(Core, "coop: multiplayer tab: difficulty {}", choice && CoopDifficulty::Get().can_edit ? "asked" : "refused");
+        break;
+    }
     case Request::Kind::kNgPlus: {   // (Navi) New Game+ (coop_ngplus.h)
         CoopNgPlus::SetLevel(std::atoi(r.text.c_str()));
         g_menu.SetNgPlus(CoopNgPlus::Level(), CoopNgPlus::Unlocked(), CoopNgPlus::Hearts());

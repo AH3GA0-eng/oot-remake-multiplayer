@@ -1855,3 +1855,131 @@ TEST_CASE("pause tab: the title's Host opens on its choices, hosts on Start host
     CHECK(pub[0].rfind("Room", 0) == 0);
     CHECK(std::find(pub.begin(), pub.end(), std::string("Code")) == pub.end());
 }
+
+TEST_CASE("pause tab: Difficulty rows: Automatic, Easy, Normal, Hard, Custom as the host's choice") {
+    using CoopDifficulty::Choice;
+    using CoopDifficulty::Preset;
+    Choice c;   // (the server's start: automatic)
+    CHECK(DifficultyIndex(c) == 0);
+    c.auto_scale = false;
+    CHECK(DifficultyIndex(c) == 2);   // (normal)
+    const CoopDifficulty::Values hard = coop::protocol::preset_difficulty(Preset::hard);
+    // Each row's choice, and round both ways.
+    CHECK(DifficultyAt(c, hard, 0).auto_scale);
+    CHECK(DifficultyAt(c, hard, 1).preset == Preset::easy);
+    CHECK_FALSE(DifficultyAt(c, hard, 1).auto_scale);
+    CHECK(DifficultyAt(c, hard, 3).preset == Preset::hard);
+    CHECK(DifficultyAt(c, hard, 5).auto_scale);    // (past Custom: Automatic)
+    CHECK(DifficultyAt(c, hard, -1).preset == Preset::custom);
+    // Custom from Hard starts at Hard's values (the sliders open where the game is).
+    const Choice custom = DifficultyAt(DifficultyAt(c, hard, 3), hard, 4);
+    CHECK(custom.preset == Preset::custom);
+    CHECK(custom.custom.hp_pct == 200);
+    CHECK(custom.custom.damage_pct == 150);
+    CHECK(custom.custom.count_pct == 150);
+    for (int i = 0; i < kDifficultyRows; ++i) {
+        CHECK(DifficultyIndex(DifficultyAt(c, hard, i)) == i);
+    }
+}
+
+TEST_CASE("pause tab: Settings: Difficulty: the host changes it, the sliders under Custom, guests and solo see it") {
+    using CoopDifficulty::Preset;
+    CoopDifficulty::State st;
+    st.connected = true;
+    st.can_edit = true;
+    st.choice.auto_scale = false;   // the host chose Normal
+    st.values = {};
+    Menu m;
+    m.Show(CoopTitleMenu::Options{});
+    m.SetSession(Hosting(2));
+    m.SetDifficulty(st, 2);
+    m.Open(Page::kSettings);
+    const auto names = Names(m);
+    const auto pw = std::find(names.begin(), names.end(), "Password on this network");
+    REQUIRE(pw != names.end());
+    CHECK(pw[1] == "Difficulty");   // (among the host's rows)
+    REQUIRE(RowNamed(m.view(), "Difficulty") != nullptr);
+    CHECK(RowNamed(m.view(), "Difficulty")->value == "Normal");
+    CHECK(RowNamed(m.view(), "Difficulty")->kind == RowKind::kChoice);
+    CHECK_FALSE(RowNamed(m.view(), "Difficulty")->fixed);
+    CHECK(RowNamed(m.view(), "Enemy life") == nullptr);   // (not Custom)
+    SelectRow(m, "Difficulty");
+    CHECK(m.view().help.find("life 100%, damage 100%, enemies 100%") != std::string::npos);
+    m.Press(Input::kRight);   // Normal -> Hard
+    auto r = m.TakeRequest();
+    REQUIRE(r);
+    CHECK(r->kind == Request::Kind::kDifficulty);
+    auto asked = CoopDifficulty::ParseChoice(r->text);
+    REQUIRE(asked);
+    CHECK(asked->preset == Preset::hard);
+    CHECK_FALSE(asked->auto_scale);
+    CHECK(SelectedValue(m) == "Hard");   // (shown until the server says it)
+    m.SetDifficulty(st, 2);              // (the server has not said it yet: still Hard)
+    CHECK(SelectedValue(m) == "Hard");
+    m.Press(Input::kRight);              // Hard -> Custom, at Hard's values
+    r = m.TakeRequest();
+    REQUIRE(r);
+    asked = CoopDifficulty::ParseChoice(r->text);
+    REQUIRE(asked);
+    CHECK(asked->preset == Preset::custom);
+    CHECK(asked->custom.hp_pct == 200);
+    // The server says it: the three sliders show its values.
+    st.choice = *asked;
+    st.values = coop::protocol::clamp_difficulty(asked->custom);
+    m.SetDifficulty(st, 2);
+    const View v = m.view();
+    for (const char* name : {"Difficulty", "Enemy life", "Enemy damage", "Enemies"}) {
+        INFO(name);
+        REQUIRE(RowNamed(v, name) != nullptr);
+        CHECK(Fits(*RowNamed(v, name)));
+    }
+    CHECK(RowNamed(v, "Enemy life")->value == "200%");
+    CHECK(RowNamed(v, "Enemies")->value == "150%");
+    SelectRow(m, "Enemy life");
+    m.Press(Input::kLeft);   // 200 -> 175
+    r = m.TakeRequest();
+    REQUIRE(r);
+    asked = CoopDifficulty::ParseChoice(r->text);
+    REQUIRE(asked);
+    CHECK(asked->custom.hp_pct == 175);
+    CHECK(asked->custom.damage_pct == 150);
+    CHECK(SelectedValue(m) == "175%");
+    SelectRow(m, "Enemies");
+    for (int i = 0; i < 10; ++i) {   // (to its end, 300%: no request past it)
+        m.Press(Input::kRight);
+        (void)m.TakeRequest();
+    }
+    CHECK(SelectedValue(m) == "300%");
+    m.Press(Input::kRight);
+    CHECK_FALSE(m.TakeRequest());
+
+    // A guest: the host's choice, dimmed, nothing asked.
+    CoopDifficulty::State guest = st;
+    guest.can_edit = false;
+    Menu g;
+    g.Show(CoopTitleMenu::Options{});
+    g.SetSession(Joined());
+    g.SetDifficulty(guest, 2);
+    g.Open(Page::kSettings);
+    REQUIRE(RowNamed(g.view(), "Difficulty") != nullptr);
+    CHECK(RowNamed(g.view(), "Difficulty")->fixed);
+    CHECK(RowNamed(g.view(), "Difficulty")->value == "Custom");
+    CHECK(RowNamed(g.view(), "Enemy life") == nullptr);
+    SelectRow(g, "Difficulty");
+    CHECK(g.view().help.find("Only the host can change it") != std::string::npos);
+    CHECK(g.view().help.find("life 200%") != std::string::npos);
+    g.Press(Input::kRight);
+    g.Press(Input::kDecide);
+    CHECK_FALSE(g.TakeRequest());
+
+    // Solo (co-op idle): the row says who chooses it; nothing asked.
+    Menu s;
+    s.Show(CoopTitleMenu::Options{});
+    s.Open(Page::kSettings);
+    REQUIRE(RowNamed(s.view(), "Difficulty") != nullptr);
+    CHECK(RowNamed(s.view(), "Difficulty")->fixed);
+    SelectRow(s, "Difficulty");
+    CHECK(s.view().help.find("The host chooses it") != std::string::npos);
+    s.Press(Input::kRight);
+    CHECK_FALSE(s.TakeRequest());
+}

@@ -656,3 +656,22 @@ TEST_CASE("coop i18n: a character not downloaded (Snail's Character Select, coop
           "玩家 3 用的角色你还没下载，显示为林克（在套件启动时按 N，即可获取 Snail 的 NPC 角色）。");
     CHECK(CoopI18n::Tr(hant, "Player 3" + other).rfind("玩家 3 用的角色你還沒下載", 0) == 0);
 }
+
+TEST_CASE("coop i18n: Difficulty's rows, /difficulty and the Commands page's new lines (row 226)") {
+    const CoopI18n::Lang* hans = ByCode("zh-Hans");
+    const CoopI18n::Lang* hant = ByCode("zh-Hant");
+    for (const char* row : {"Difficulty", "Automatic", "Enemy life", "Enemy damage", "Enemies"}) {
+        INFO(row);
+        CHECK(CoopI18n::Tr(hans, row) != row);
+        CHECK(CoopI18n::Tr(hant, row) != row);
+    }
+    CHECK(CoopI18n::Tr(hans, "Difficulty") == "难度");
+    CHECK(CoopI18n::Tr(hant, "Enemy damage") == "敵人傷害");
+    CHECK(CoopI18n::Tr(hans, "Only the host can change it.") == "只有房主能更改。");
+    CHECK(CoopI18n::Tr(hant, "The host only: how long a downed player waits for a revive, 10 to 240 seconds.")
+              .rfind("僅房主：", 0) == 0);
+    CHECK(CoopI18n::Tr(hans, "difficulty: only the host can change it") == "难度：只有房主能更改");
+    // The values line the help starts with, the chat's own shape (a preset's name translated in it).
+    CHECK(CoopI18n::Tr(hans, "Difficulty: Hard: life 200%, damage 150%, enemies 150%") !=
+          "Difficulty: Hard: life 200%, damage 150%, enemies 150%");
+}
