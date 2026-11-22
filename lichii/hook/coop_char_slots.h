@@ -80,14 +80,27 @@ private:
     std::array<std::uint16_t, kNumbers> told_{};
 };
 
-// Rows 239/240/241 (0.11.9, black-join-0119): a SAVE stored with a pick whose model is not here (a host's save worn
-// with one of Snail's NPC characters, or the player's own save from before the NPC download was opt-in) never showed
-// the world. The mod's load sequence starts building Link from the saved number as the load begins; Own's put-back
-// came on that load's first frame, mid-sequence, and the sequence never finished: the same frame at 60 fps for good
-// (E'tykalu's logs: "pick 93 ... back to 0" then ~106 draws a frame and one load revert a frame, 25 minutes). So:
-// 1. the pick is put right in the save FILE before the game reads it (FixSavePick: the host's save a guest writes, and
-//    the player's own slots each time the title comes up);
-// 2. Own's put-back never runs from a save load's start until Link has been in play for LoadHold::kSettleFrames.
+// Rows 239/240/241 (0.11.9, black-join-0119): a pick whose model is not here (one of Snail's NPC characters on a kit
+// with his UI-only part: a host's save worn with one, or a pick from before the NPC download was opt-in) and the
+// world never drew after a save load: the same frame at 60 fps for good. 0.11.9's Own ran only inside a co-op session
+// and only in play: a solo game never had it (the friend's log: co-op off, the UI-only part, the black frame), and a
+// guest had it only from the load's first frame (E'tykalu's logs). LANE1: the put-back made on the TITLE, before
+// Continue, loads Link with the world (black-join-0119, runs bj-title*). So Own now runs on every frame of the
+// module, co-op on or off, on the title too (coop_hook.cpp PickGuardFrame); the save files are put right as well
+// (FixSavePick, below).
+
+// Player_<Age>_C<digits>...: an NPC character's model file in the Character Select mod's romfs/Model (its UI-only part
+// ships Player_<Age>_Cba_Animation, which is not one).
+inline bool IsNpcModelName(const std::string& name) {
+    for (const char* prefix : {"Player_Child_C", "Player_Adult_C"}) {
+        const std::string p(prefix);
+        if (name.size() > p.size() && name.compare(0, p.size(), p) == 0 && name[p.size()] >= '0' &&
+            name[p.size()] <= '9') {
+            return true;
+        }
+    }
+    return false;
+}
 
 // The saved game's records (tools/autotest/save_flags.py, all little-endian): magic 0x01020304, the pool's offset at
 // 8, from 0x20 a table of 8-byte records. A record whose first word is 0 opens a type (its second word the type id,
@@ -141,51 +154,6 @@ inline SaveFix FixSavePick(std::uint8_t* data, std::size_t size, std::uint32_t p
     for (int i = 0; i < 4; ++i) data[*at + static_cast<std::size_t>(i)] = 0;
     out.changed = true;
     return out;
-}
-
-// Own's put-back held from a save load's start until Link has been in play for kSettleFrames frames in a row after it
-// (the mod's load sequence done). Also the watchdog: a load whose Link never comes for kStuckFrames says so once.
-class LoadHold {
-public:
-    static constexpr std::uint32_t kSettleFrames = 60;
-    static constexpr std::uint32_t kStuckFrames = 60 * 60;   // a minute at 60 fps
-    void LoadStarted() {
-        held_ = true;
-        settled_ = 0;
-        waiting_ = 0;
-        told_stuck_ = false;
-    }
-    // Each frame: `link` is Link in play (the player's reading). True when Own may put a pick back this frame.
-    bool Frame(bool link) {
-        if (!held_) return true;
-        if (link) {
-            waiting_ = 0;
-            if (++settled_ >= kSettleFrames) held_ = false;
-        } else {
-            settled_ = 0;
-            ++waiting_;
-        }
-        return !held_;
-    }
-    // Once per load: Link has not come for kStuckFrames since the load started (or since it last went).
-    bool Stuck() {
-        if (!held_ || told_stuck_ || waiting_ < kStuckFrames) return false;
-        told_stuck_ = true;
-        return true;
-    }
-    bool held() const { return held_; }
-
-private:
-    bool held_ = false;
-    bool told_stuck_ = false;
-    std::uint32_t settled_ = 0;
-    std::uint32_t waiting_ = 0;
-};
-
-// The chat line when a load has not shown Link for a minute (LoadHold::Stuck).
-inline std::string StuckLine() {
-    return "The game has been loading for a minute. If the screen stays black, close the game, start it again with "
-           "Start Squadala and send /bugreport.";
 }
 
 }  // namespace CoopCharSlots

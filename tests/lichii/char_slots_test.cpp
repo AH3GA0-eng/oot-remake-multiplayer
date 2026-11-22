@@ -154,19 +154,36 @@ TEST_CASE("char slots: not a save, or a table out of order: never written") {
     CHECK_FALSE(CoopCharSlots::SaveIntAt(nullptr, 0, kPick));
 }
 
-TEST_CASE("char slots: no put-back from a save load's start until Link has settled, a stuck load is told once") {
-    CoopCharSlots::LoadHold hold;
-    CHECK(hold.Frame(false));   // no load yet: free
-    CHECK(hold.Frame(true));
-    hold.LoadStarted();
-    CHECK_FALSE(hold.Frame(true));   // the load's first frames, even with a Link read (the title's, the old scene's)
-    for (std::uint32_t i = 0; i < 10; ++i) CHECK_FALSE(hold.Frame(false));
-    for (std::uint32_t i = 1; i < CoopCharSlots::LoadHold::kSettleFrames; ++i) CHECK_FALSE(hold.Frame(true));
-    CHECK(hold.Frame(true));   // settled
-    CHECK(hold.Frame(false));  // and stays free until the next load
-    hold.LoadStarted();
-    for (std::uint32_t i = 0; i < CoopCharSlots::LoadHold::kStuckFrames; ++i) CHECK_FALSE(hold.Frame(false));
-    CHECK(hold.Stuck());
-    CHECK_FALSE(hold.Stuck());   // once per load
-    CHECK_FALSE(hold.Frame(false));
+TEST_CASE("char slots: an NPC model file is told from the UI part's own files (no pack: UI-only means no NPC)") {
+    CHECK(CoopCharSlots::IsNpcModelName("Player_Child_C091.Player_Child.bfres.zs"));
+    CHECK(CoopCharSlots::IsNpcModelName("Player_Adult_C000.Player_Adult.bfres.zs"));
+    CHECK_FALSE(CoopCharSlots::IsNpcModelName("Player_Child_Cba_Animation.Skeleton.bfres.zs"));
+    CHECK_FALSE(CoopCharSlots::IsNpcModelName("Player_Child.Player_Child.bfres.zs"));
+    CHECK_FALSE(CoopCharSlots::IsNpcModelName("Player_Child_C"));
+    CHECK_FALSE(CoopCharSlots::IsNpcModelName("Player_Dark_Animation.Skeleton.bfres.zs"));
+}
+
+TEST_CASE("char slots: every load kind starts from a checked pick (the guard runs every frame, title included)") {
+    // The same Own across the title, a load and play: a missing pick set on the title (Character Select's page, a
+    // host's save, a Game Over or System Load back to the title) is put back on the first frame it is read, before any
+    // Continue; the mod re-storing it at a load's start is put back again on that frame.
+    Own own;
+    CHECK_FALSE(own.Check(0, kFiles).set);           // title, Link
+    const auto title = own.Check(93, kFiles);        // a pick made on the title with no model here
+    REQUIRE(title.set);
+    CHECK(*title.set == 0);
+    CHECK(title.say);
+    CHECK_FALSE(own.Check(0, kFiles).set);           // put back: the load starts from Link
+    const auto again = own.Check(93, kFiles);        // the mod re-stores it at the load's start
+    REQUIRE(again.set);
+    CHECK(*again.set == 0);
+    CHECK_FALSE(own.Check(12, kFiles).set);          // an installed pick is kept (Try Again, System Load, a join)
+    const auto later = own.Check(93, kFiles);        // a missing one after it: back to the last installed pick
+    REQUIRE(later.set);
+    CHECK(*later.set == 12);
+    // No pack and no NPC model in the mod (the UI-only part): every NPC pick goes back to Link.
+    Own ui_only;
+    const auto ui = ui_only.Check(93, kNone);
+    REQUIRE(ui.set);
+    CHECK(*ui.set == 0);
 }
