@@ -778,4 +778,6 @@ With up to 16 players a server cannot send every `PLAYER_POSE` to everyone: a po
 | Same scene, farther | every one | every 3rd |
 | Another scene | every 6th (10 a second: the player list and markers) | none (nothing to draw) |
 
+"Same scene" in this table is the same place in either era (`coop/protocol/scene_place.hpp`): a child in `Graveyard_Child` and an adult in `Graveyard_Adult` draw each other's puppet, so they get each other's streams as in one scene (row 221; before, the adult's poses never reached the child and the puppet slid with the wrong animations). The same place rule holds for everything else between two players: `VOICE_FRAME`, `LIFT_ASK`, `PVP_STRIKE` and its `PVP_RESULT`, and the games' revive and spectate picks. Objects, flags, world breaks, dungeon events and bosses keep the exact scene: the two eras are two worlds.
+
 A pose lists its moving bones with their whole values, not changes since the last one, so a pose left out costs a step of the animation, never a wrong bone. A server can also cap the pose bytes it sends a second (`pose_upload_bytes_per_second`, shared evenly by the players; 0 for none): past a player's share its poses wait for the next one. The counts are in the server's stats (`interest_skipped`, `upload_capped`, `stream_bytes`).

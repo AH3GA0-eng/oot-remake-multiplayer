@@ -1,6 +1,7 @@
 #include "session.hpp"
 
 #include "coop/protocol/animation_words.hpp"
+#include "coop/protocol/scene_place.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1065,7 +1066,7 @@ void Session::on_lift(ConnectionId id, Connection& c, Message& message,
     ++stats_.lifts_dropped;
     return;
   }
-  if (std::holds_alternative<LiftAsk>(message) && !place_known_in(c, it->second.scene, now_us)) {
+  if (std::holds_alternative<LiftAsk>(message) && !place_known_near(c, it->second.scene, now_us)) {
     LiftAnswer no;
     no.player_number = to_number;
     no.lifter = c.number;
@@ -1111,7 +1112,7 @@ void Session::on_pvp_strike(ConnectionId id, Connection& c, Message& message,
   const auto it = target ? connections_.find(*target) : connections_.end();
   if (!pvp_ || !c.pvp_native || it == connections_.end() || *target == id ||
       !it->second.pvp_native || it->second.scene.empty() ||
-      !place_known_in(c, it->second.scene, now_us) || !set_sender(message, c.number)) {
+      !place_known_near(c, it->second.scene, now_us) || !set_sender(message, c.number)) {
     ++stats_.pvp_strikes_dropped;
     return;
   }
@@ -1152,7 +1153,7 @@ void Session::on_pvp_result(ConnectionId id, Connection& c, Message& message,
     return;
   }
   pending.erase(match);
-  send_to_scene(c.scene, id, kChannelOwnership, message);
+  send_to_place(c.scene, id, kChannelOwnership, message);  // the attacker may be in the other era's scene
   ++stats_.pvp_results_relayed;
   ++stats_.relayed;
 }
@@ -2100,6 +2101,12 @@ bool Session::place_known_in(const Connection& c, const std::string& scene,
   return !(now_us > c.position_at && now_us - c.position_at > config_.position_stale_us);
 }
 
+bool Session::place_known_near(const Connection& c, const std::string& scene,
+                               std::uint64_t now_us) const {
+  if (!same_place(c.scene, scene) || !c.position) return false;
+  return !(now_us > c.position_at && now_us - c.position_at > config_.position_stale_us);
+}
+
 std::optional<double> Session::distance_to(const Connection& c, const Object& o,
                                            std::uint64_t now_us) const {
   if (!c.position || !o.last_state || !o.last_state->position) return std::nullopt;
@@ -2903,7 +2910,7 @@ void Session::on_voice(ConnectionId id, const Connection& c, VoiceFrame& m,
   const bool end = (m.flags & voice::end) != 0;
   const bool ranged = config_.voice_range_m > 0.0f && !end && placed(c);
   for (auto& [other, o] : connections_) {
-    if (other == id || o.state != State::joined || o.scene != c.scene) continue;
+    if (other == id || o.state != State::joined || !same_place(o.scene, c.scene)) continue;  // either era
     if (end) {
       o.voices_heard.erase(c.number);
       actions_.push_back(SendAction{other, kChannelVoice, bytes});
@@ -2927,6 +2934,17 @@ void Session::on_voice(ConnectionId id, const Connection& c, VoiceFrame& m,
   }
   ++stats_.voice_relayed;
   ++stats_.relayed;
+}
+
+void Session::send_to_place(const std::string& scene, std::optional<ConnectionId> except,
+                            std::uint8_t channel, const Message& m) {
+  std::vector<std::uint8_t> bytes;
+  if (encode(m, bytes) != Error::none) return;
+  for (const auto& [id, c] : connections_) {
+    if ((except && same_game(id, *except)) || c.state != State::joined) continue;
+    if (!same_place(c.scene, scene)) continue;
+    actions_.push_back(SendAction{id, channel, bytes});
+  }
 }
 
 void Session::send_to_scene(const std::string& scene, std::optional<ConnectionId> except,
@@ -3611,7 +3629,9 @@ void Session::send_streamed(ConnectionId from, const Connection& sender, std::ui
   const std::size_t n = sender.number <= kMaxPlayers ? sender.number : 0;
   for (auto& [id, r] : connections_) {
     if (same_game(id, from) || r.parent || r.state != State::joined) continue;
-    const bool same = sender.scene.empty() || r.scene.empty() || sender.scene == r.scene;
+    // By place, not scene (row 221): a child and an adult in the two eras of one place draw each other's puppet,
+    // which needs every pose and sample, as in one scene. Another place: markers only.
+    const bool same = sender.scene.empty() || r.scene.empty() || same_place(sender.scene, r.scene);
     bool near = same;
     if (same && sender.position && r.position) {
       const auto& a = *sender.position;
