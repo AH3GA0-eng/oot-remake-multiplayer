@@ -2,6 +2,7 @@
 #include "coop_pause_menu.h"
 
 #include "coop_browse.h"
+#include "coop_difficulty.h"
 
 #include <algorithm>
 #include <cctype>
@@ -205,6 +206,23 @@ const std::vector<Command>& Commands() {
         {"/tp <player>", "The same as /teleport."},
         {"/pvp", "Says whether players can hurt each other (PvP) in this game."},
         {"/pvp on, /pvp off", "The host only: lets players hurt each other, or stops it, for everyone."},
+        // Down but not out (docs/play-online.md "Down but not out"; lichii/hook/coop_dbno.cpp Parse).
+        {"/dbno", "Says the down-but-not-out rules in this game: on or off, the bleed-out time, the revive hold and the "
+                  "hearts a revived player gets."},
+        {"/dbno on, /dbno off",
+         "The host only: on, a player out of hearts goes down and another player can revive them; off, the game's "
+         "own death. For everyone."},
+        {"/dbno time 60", "The host only: how long a downed player waits for a revive, 10 to 240 seconds."},
+        {"/dbno hold 5", "The host only: how long A is held to revive, 0.5 to 10 seconds (halves allowed)."},
+        {"/dbno hearts 3", "The host only: the hearts a revived player gets (halves allowed)."},
+        // Difficulty (docs/play-online.md "Difficulty"; lichii/hook/coop_difficulty.cpp ParseCommand).
+        {"/difficulty", "Says the difficulty in this game: enemies' life, the damage they deal and how many there are."},
+        {"/difficulty hard",
+         "The host only: auto, easy, normal or hard, for everyone. Auto: more as more players join. The same as "
+         "Difficulty in Co-op settings while you host."},
+        {"/difficulty custom 150 125 200",
+         "The host only: your own values in percent: life 25 to 500, damage 25 to 400, enemies 100 to 300, in steps "
+         "of 25."},
         // The Lobby (docs/play-online.md "Lobby"): the same as the Lobby tab's buttons.
         {"/kick <player>", "The host only: takes that player out of the game. They can join again."},
         {"/ban <player>",
@@ -237,6 +255,26 @@ std::vector<std::string> MicChoices(const std::vector<std::string>& listed, cons
         out.push_back(chosen);
     }
     return out;
+}
+
+int DifficultyIndex(const CoopDifficulty::Choice& choice) {
+    if (choice.auto_scale) {
+        return 0;
+    }
+    return 1 + std::clamp(static_cast<int>(choice.preset), 0, kDifficultyRows - 2);   // (easy 0 ... custom 3)
+}
+
+CoopDifficulty::Choice DifficultyAt(const CoopDifficulty::Choice& now, const CoopDifficulty::Values& in_force,
+                                    int index) {
+    index = ((index % kDifficultyRows) + kDifficultyRows) % kDifficultyRows;
+    if (index == 0) {
+        return CoopDifficulty::WithAuto(now, true);
+    }
+    const auto preset = static_cast<CoopDifficulty::Preset>(index - 1);
+    if (preset == CoopDifficulty::Preset::custom && DifficultyIndex(now) != index) {
+        return CoopDifficulty::WithSlider(now, in_force, CoopDifficulty::Slider::hp, 0);   // (custom: where it is now)
+    }
+    return CoopDifficulty::WithPreset(now, preset);
 }
 
 std::string TitleGameName(const std::string& name, const std::string& host, std::size_t rest) {
@@ -650,6 +688,7 @@ std::vector<Menu::Line> Menu::Lines() const {
                        "Not needed: when you host, players from a private address join without the join password. "
                        "Only on a network you trust: a tunnel, a VPN or a port forward can bring others in that way."});
         HostRuleLines(out, guest);
+        DifficultyLines(out);   // (the host's rows: the host changes them, everyone else sees them)
         out.push_back({Toggle("Proximity voice chat", options_.voice), Act::kVoice,
                        "Talk with players near your Link through your microphone; they sound quieter the farther away "
                        "they are. Off: you neither send nor hear voices."});
@@ -1720,6 +1759,10 @@ void Menu::Decide(Act act) {
     case Act::kKeyboard:
     case Act::kNgPlus:
     case Act::kSaveSet:
+    case Act::kDifficulty:
+    case Act::kDifficultyLife:
+    case Act::kDifficultyDamage:
+    case Act::kDifficultyCount:
         Change(act, 1);
         break;
     case Act::kVoice:
@@ -1884,6 +1927,29 @@ void Menu::Change(Act act, int step) {
         mp_saves_ = !mp_saves_;
         request_ = Request{Request::Kind::kSaveSet, mp_saves_ ? "multiplayer" : "solo"};
         break;
+    case Act::kDifficulty:
+    case Act::kDifficultyLife:
+    case Act::kDifficultyDamage:
+    case Act::kDifficultyCount: {   // (the host's: the server says it to everyone, the chat says it then)
+        if (!difficulty_.connected || !difficulty_.can_edit) {
+            break;
+        }
+        const CoopDifficulty::Choice now = DifficultyShown();
+        const CoopDifficulty::Values in_force = DifficultyValuesShown();
+        const int way = step < 0 ? -1 : 1;
+        const CoopDifficulty::Choice next =
+            act == Act::kDifficulty ? DifficultyAt(now, in_force, DifficultyIndex(now) + way)
+            : CoopDifficulty::WithSlider(now, in_force,
+                                         act == Act::kDifficultyLife     ? CoopDifficulty::Slider::hp
+                                         : act == Act::kDifficultyDamage ? CoopDifficulty::Slider::damage
+                                                                         : CoopDifficulty::Slider::count,
+                                         way);
+        if (!(next == now)) {
+            difficulty_wish_ = next;
+            request_ = Request{Request::Kind::kDifficulty, CoopDifficulty::FormatChoice(next)};
+        }
+        break;
+    }
     case Act::kNgPlus:   // (Navi) Off, NG+ 1 ... the highest unlocked, round
         if (ngplus_unlocked_ > 0) {
             const int span = ngplus_unlocked_ + 1;
@@ -2271,6 +2337,79 @@ std::vector<Menu::Found> Menu::FoundShown() const {
 
 void Menu::SetSaveSet(bool multiplayer) {
     mp_saves_ = multiplayer;
+}
+
+void Menu::SetDifficulty(const DifficultyState& state, int players) {
+    // (the host's change stays shown until the server says it, or the session is no longer the host's)
+    if (difficulty_wish_) {
+        const CoopDifficulty::Choice& w = *difficulty_wish_;
+        const bool said = state.choice.auto_scale == w.auto_scale &&
+                          (w.auto_scale || (state.choice.preset == w.preset &&
+                                            (w.preset != CoopDifficulty::Preset::custom ||
+                                             state.values == coop::protocol::clamp_difficulty(w.custom))));
+        if (said || !state.connected || !state.can_edit) {
+            difficulty_wish_.reset();
+        }
+    }
+    difficulty_ = state;
+    difficulty_players_ = players;
+}
+
+CoopDifficulty::Choice Menu::DifficultyShown() const {
+    return difficulty_wish_ ? *difficulty_wish_ : difficulty_.choice;
+}
+
+CoopDifficulty::Values Menu::DifficultyValuesShown() const {
+    return difficulty_wish_ ? coop::protocol::difficulty_in_force(
+                                  *difficulty_wish_, static_cast<std::size_t>(std::max(difficulty_players_, 1)))
+                            : difficulty_.values;
+}
+
+// The Difficulty rows: the host's choice with its arrows (and Custom's three sliders), or the guest's, read only.
+void Menu::DifficultyLines(std::vector<Line>& out) const {
+    static const char* const kNames[kDifficultyRows] = {"Automatic", "Easy", "Normal", "Hard", "Custom"};
+    if (!difficulty_.connected) {   // (not in a game, or a server that says none: the game as it is)
+        Row r = Choice("Difficulty", "Normal");
+        r.left = r.right = false;
+        r.fixed = true;
+        out.push_back({r, Act::kDifficulty,
+                       InSession() ? std::string("This game's server does not say a difficulty: enemies as in the game.")
+                                   : std::string("The host chooses it for everyone while hosting: Automatic, Easy, "
+                                                 "Normal, Hard or Custom. Playing alone, enemies are as in the game "
+                                                 "(New Game+ aside).")});
+        return;
+    }
+    const CoopDifficulty::Choice shown = DifficultyShown();
+    const CoopDifficulty::Values values = DifficultyValuesShown();
+    // (the values in force, then the row's own words: each a line of the table, put together here, as Voice mode's)
+    const std::string now =
+        "Difficulty: " +
+        CoopDifficulty::Describe(shown, values, static_cast<std::size_t>(std::max(difficulty_players_, 1)));
+    const auto help = [&now](const char* rest) {
+        const std::string first = CoopI18n::Tr(now);
+        return first + (first == now ? ". " : "。") + CoopI18n::Tr(rest);
+    };
+    Row r = Choice("Difficulty", kNames[DifficultyIndex(shown)]);
+    if (!difficulty_.can_edit) {
+        r.left = r.right = false;
+        r.fixed = true;
+        out.push_back({r, Act::kDifficulty, help("Only the host can change it.")});
+        return;
+    }
+    out.push_back({r, Act::kDifficulty,
+                   help("For everyone in your game: enemies' life, the damage they deal and how many there are. "
+                        "Automatic: more as more players join. Custom: your own values on the rows below. Also "
+                        "/difficulty in the chat.")});
+    if (shown.auto_scale || shown.preset != CoopDifficulty::Preset::custom) {
+        return;
+    }
+    const auto percent = [](std::uint16_t v) { return std::to_string(v) + "%"; };
+    out.push_back({Choice("Enemy life", percent(values.hp_pct)), Act::kDifficultyLife,
+                   "How much life enemies and bosses have: 25% to 500% of the game's, in steps of 25."});
+    out.push_back({Choice("Enemy damage", percent(values.damage_pct)), Act::kDifficultyDamage,
+                   "How much damage enemies and bosses deal to players: 25% to 400% of the game's, in steps of 25."});
+    out.push_back({Choice("Enemies", percent(values.count_pct)), Act::kDifficultyCount,
+                   "How many enemies: 100% is the game's, 200% one more beside each, up to 300%, in steps of 25."});
 }
 
 void Menu::SetNgPlus(int level, int unlocked, int hearts) {

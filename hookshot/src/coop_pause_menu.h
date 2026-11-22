@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 
+#include "coop/protocol/difficulty.hpp"
 #include "coop_look.h"
 #include "coop_look_menu.h"
 #include "coop_title_menu.h"
@@ -49,6 +50,21 @@ constexpr std::size_t kTitleRowBytes = 40;
 // A game's name on a title row that has `rest` bytes after it ("1/4  Public", " asks for a password"), so the row's own
 // words are never the part cut: "room (host)" when it fits, else without " (host)", else the name cut, "..." at its end.
 std::string TitleGameName(const std::string& name, const std::string& host, std::size_t rest);
+// The Host page's Difficulty row (docs/play-online.md "Difficulty"): Automatic, Easy, Normal, Hard, Custom, in
+// that order (0-4), as the host's choice shows it, and the choice at one of them. Custom from another starts at the
+// values in force, so the sliders open where the game is.
+// (protocol types only here: coop_difficulty.h uses std::max, which a file with windows.h before this one breaks)
+constexpr int kDifficultyRows = 5;
+int DifficultyIndex(const coop::protocol::DifficultyChoice& choice);
+coop::protocol::DifficultyChoice DifficultyAt(const coop::protocol::DifficultyChoice& now,
+                                              const coop::protocol::DifficultyValues& in_force, int index);
+// The session's difficulty as CoopDifficulty::Get says it (its State, field for field).
+struct DifficultyState {
+    bool connected = false;   // in a session, and the server has said its difficulty
+    bool can_edit = false;    // we host
+    coop::protocol::DifficultyChoice choice;
+    coop::protocol::DifficultyValues values;
+};
 
 struct Request {
     // kHost: start the server and join it. kJoin: `text` is the code or the
@@ -75,7 +91,8 @@ struct Request {
                       // kChat: `text` is a chat command line ("/pvp on", "/dbno time 60"), sent as the chat box sends
                       // it (CoopHook::SendChat), so a host row and the command are one path and the chat line says
                       // what changed; the server takes it from the host only.
-                      kChat };
+                      kChat,
+                      kDifficulty };   // kDifficulty: `text` the host's new choice (CoopDifficulty::FormatChoice)
     Kind kind = Kind::kHost;
     std::string text;
 };
@@ -187,6 +204,9 @@ public:
     void SetNgPlus(int level, int unlocked, int hearts);
     // (Navi) The Settings page's Saves row: solo or multiplayer saves (CoopSave::MultiplayerSaves).
     void SetSaveSet(bool multiplayer);
+    // The session's difficulty (CoopDifficulty::Get) and its players: the Settings page's Difficulty rows, among
+    // the host's rows (the host changes it there; everyone else sees it, dimmed).
+    void SetDifficulty(const DifficultyState& state, int players);
     // Character Select (coop_char_colours.h ShownCharacter): this game shows a character, not Link, so the
     // Customize page says Link's colours wait for Link (#308's live display; the character keeps its own).
     void SetCharacter(bool picked) { character_ = picked; }
@@ -254,7 +274,8 @@ private:
         kOpenCustomize, kNgPlus, kSaveSet,
         kOpenFind, kFindList, kFindSearch, kFindGame, kFindFilter, kFindSort, kFindRefresh,
         kShowPassword, kNewPassword, kLetIn, kRefuse, kListRoom, kAutoRejoin, kOriginal,
-        kApproveJoins, kPvp, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts
+        kApproveJoins, kPvp, kDbno, kDbnoTime, kDbnoHold, kDbnoHearts,
+        kDifficulty, kDifficultyLife, kDifficultyDamage, kDifficultyCount
     };
     struct Line;   // a row, what it does and its help
     std::vector<Line> Lines() const;
@@ -302,6 +323,12 @@ private:
     std::optional<std::vector<std::string>> microphones_;
     int ngplus_level_ = 0, ngplus_unlocked_ = 0, ngplus_hearts_ = 0;   // (Navi) New Game+ (SetNgPlus)
     bool mp_saves_ = false;   // (Navi) the Saves row (SetSaveSet)
+    DifficultyState difficulty_;   // SetDifficulty
+    int difficulty_players_ = 0;
+    std::optional<coop::protocol::DifficultyChoice> difficulty_wish_;   // the host's change, until the server says it
+    coop::protocol::DifficultyChoice DifficultyShown() const;
+    coop::protocol::DifficultyValues DifficultyValuesShown() const;
+    void DifficultyLines(std::vector<Line>& out) const;
     bool character_ = false;  // SetCharacter
     bool title_ = false;      // SetTitle
     std::string picked_;      // the title: the game picked on the list that asks for a password ("": none)

@@ -2058,6 +2058,9 @@ public:
         if (CoopDbno::OnChat(text, *session_)) {
             return true;  // /dbno: the same
         }
+        if (CoopDifficulty::OnChat(text, *session_)) {
+            return true;  // /difficulty: the same
+        }
         if (CoopLobby::OnChat(text, *session_)) {
             return true;  // /kick, /ban, /mute, /unmute, /allow, /deny (the Lobby): the same
         }
