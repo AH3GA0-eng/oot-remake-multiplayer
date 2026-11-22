@@ -135,6 +135,19 @@ Logs: `world: <hash> <name> came to rest where another player left it; its base 
 
 **A block whose room loads later** (tracker row 166, the 0.11.6 Dodongo playtest: blocks were not where another player had pushed them for a player who was not in the room). The late game first sees the block where the map put it, its push node started there: +0x108 holds the map's place and +0xfc the grid cell. The block was put at the shared rest, but the node check called that "mid-push" (only one of the two at the old place), so the node's own start never ran (`push node busy (mid-push here)`, then `its next push may start from the old place`, in the guest's log). The game's own logic then started the next push from the map's place. Now a follow our player never touched (`BlockFix::untouched`: our own move of it never gave way to another game's, `Object::contested`) cannot be mid-push in our game, so its node's start runs again unless both places already hold the new rest. A follow our player was part of keeps the strict check. The same goes for a push already under way when the room loads (its moves are followed the same way) and for every block kind with a push node (the MovableBox family, the slider box). The Armos statues have no push-node fix (not `IsPushBlock`), as before.
 
+### Blocks: diagnostics for "only one player could push" and "solved for one player only" (2026-11-21)
+
+Two player reports from the Forest Temple: only the first player could push the blocks (a session log on 11-19:
+one PC sent every block move, the other none), and a block puzzle worked only for its starter. No test save was
+before an unsolved block puzzle, so both get log lines that name the cause in the next play session:
+
+- `world: <hash> <name>: our Link is at it while it follows another player's move (theirs is live | settling at
+  their rest place); a push of ours now is undone` (at most every 10 s, our Link within 2 m): our game still puts
+  the block where the other player's move says, so our push cannot take.
+- After another player's push came to rest here: `world: <hash> <name> rests D m from its answer spot (x z); its
+  on-answer port reads 0x..` (the node's goal +0x4c and its `IsOnAnswerPos` port +0x1f0, read only): whether the
+  block our puzzle manager counts is on its spot in our game.
+
 ### Blocks: the push node (issue 147, world-objects-2)
 
 Why the anchor move above is not enough: the place a push starts from is kept in the block's AI node, not in the actor, its components or its physics root. Read from main (build e0f3ccfaf50065ae; disassembled, nothing run):

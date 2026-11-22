@@ -288,6 +288,38 @@ their own event, dead: the down-but-not-out code's `UnseenWhy`, the same set ene
   hallway can't turn: B is in it." and "said to the players inside: B, step out of the west hallway: I want to turn
   it."; B's view of the hallway the same before and after. (The eye itself was not in the shots' frame.)
 
+## The turning floor (Forest Temple basement, 2026-11-21)
+
+The basement ring under the main hall (room 27) is one actor, `Obj_ForestTemple_PivotedFloor_A_01` at 0 59.5 -3.5: a
+capstan with two bars (the model's bones `GrabPoint_01` / `_02`, local -9.55 0.65 3.96 and its mirror). A player grabs
+a bar and pushes; each push turns the floor an eighth of a lap (`CapstanParam` `PushPerLap` 8) in about 1.4 s, played by
+its own AI (`AnimeDriven`; the controller rumbles while it turns). Its direction is the int flag
+`ForestTemple_SageOfForest_PivotedFloor_A_01` (its `InitialDirIndexGameDataPath`), which co-op already shared.
+
+- **The problem:** the floor reads the flag only when the room loads. Set under a loaded floor (run `st-pivot`), nothing
+  moved; a real push in A (run `st-pivot3`) turned A's floor while B's, a quarter lap away, stayed where it was: two
+  layouts of the same walls until B left and came back.
+- **What a push does** (run `st-pivot3`, the yaw of the actor's own 3x3 at +0x328 logged): A's yaw 0 to -45 in even
+  steps over 1.4 s, and the flag 0 to 7 as it stopped; a second push -45 to -90 and the flag 6. The yaw is 45 x the
+  direction.
+- **The fix** (`lichii/hook/coop_pivot.h`, glue in `coop_objects.cpp` `Pivot` and the Mover's `TurnFloor`; on unless
+  `LICHII_COOP_PIVOT=0`): each game finds the floor while its player is in the Forest Temple and compares its yaw with
+  the shared direction. When they differ and the floor has rested at one of its eight places for 0.6 s, our game turns
+  its own floor the short way at the game's speed (45 degrees in 1.4 s): once a game frame its 3x3 is written and the
+  game's set-matrix call (the `ExecuteActorForceSetMtx` path, docs/objects.md) hands it to the physics, so the walls'
+  collision turns too. A floor that is moving (our own player's push, however slowly it starts) or stopped part way
+  (a player holding the bar) is never touched.
+- **Players inside** are not waited for (the design: "blocking them in is better, since it's close and an easy
+  unblock"): the walls turn round them, and another push lets them out.
+- **In a game** (run `st-pivot3`, 2026-11-21): A pushed twice; B logged "the direction flag reads 7", "our floor turned
+  from 0.0 to -45.0 (direction 7) over 1400 ms", then the same from -45 to -90 for flag 6; B's yaw went down in the
+  same even steps, and B's view showed the ring's doorway replaced by a window section. A's own pushes were never
+  touched. B's floor AI did not turn it back.
+- **Not checked yet:** a push in the game that followed (B grabbing a bar after its floor was turned for it: its AI
+  may still count from the direction it loaded with), and the AI's `RequestDeathInPassage` (what a turn does to a
+  player standing in a doorway gap) in the game that follows, where the AI does not run the turn.
+- Tests: `tests/lichii/pivot_test.cpp`.
+
 ## Locked doors (branch `locked-doors`)
 
 A small-key door is a door set (`Logic/Module/DungeonDoorSingleWithChainLockSet`, `DungeonSwitchShutter…WithChainLockSet`, placed as `AiGroups`) with a lock actor, `Obj_DoorChainLock_*` (98 placements: Fire 16, Gerudo Training Ground 18, Forest 11, Shadow 10, Spirit 10, Water 9, Well 4, Gerudo Fortress cells 4, Ganon's Castle 3, the rest in the Dream World). The lock's AI (`AI/DoorChainLock.root.ainb`) spends the key (`OneShotDungeonUseSmallKey`), saves "open" in a bool it makes from its placement (`QueryGetIsGenerateAutogenGameDataFromGameBancParam`, `OneShotSetGameDataBool`) and deletes itself (`OneShotDeathRequestDeath`). That bool is no placement key and no name we could hash, so it is not in the shared list; only some rooms also write a named flag (Forest `…_LockOpne`, Spirit `…_Unlocked*`, Ice Cavern, the Well).

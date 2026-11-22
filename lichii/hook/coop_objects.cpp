@@ -96,6 +96,8 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 #include "coop/host/game_flags.hpp"
+#include "coop_hook.h"
+#include "coop_pivot.h"
 #include "coop/host/game_items.hpp"
 #include "coop/host/session.hpp"
 #include "coop/net/client.hpp"
@@ -540,6 +542,8 @@ struct Actor {
     u64 hash = 0;
     std::optional<std::array<s32, 4>> life;  // life, max, copy of life, copy of max
     unsigned missed = 0;
+    float yaw_said = NAN;  // turning floors: the yaw last logged (degrees)
+    bool turn_seen = false;
 };
 
 class Reader {
@@ -712,6 +716,18 @@ public:
         want_ms_ = CoopFrameClock::PresentAgeUs() != 0 ? CoopFrameClock::PresentAtMs() : SteadyMs();
     }
 
+    // The basement's turning floor (coop_pivot.h): turned to `t` from the next game frame on, one write a frame
+    // through the game's set-matrix call (its collision turns with it) until the turn is done.
+    void TurnFloor(u64 main, u64 actor, const std::array<float, 3>& at, const CoopPivot::Turn& t) {
+        std::lock_guard lock(mutex_);
+        main_ = main;
+        floor_ = FloorTurn{actor, at, t};
+    }
+    void StopFloor() {
+        std::lock_guard lock(mutex_);
+        floor_.reset();
+    }
+
     // deku-visuals-b (issue 147): run the game's own push-node start on a
     // block another game moved (CoopWorld::BlockNode::kStart_fn), on the
     // next game frame, after that frame's pose writes. `node` is checked by
@@ -852,6 +868,7 @@ public:
                 WriteHolds(guest);
             }
             work_ = poses_;
+            floor_due_ = floor_.has_value();
             std::erase_if(follow_, [this](const auto& f) {  // jitter-b: copies no longer followed
                 return std::none_of(work_.begin(), work_.end(),
                                     [&f](const Pose& p) { return p.actor == f.first && p.velocity; });
@@ -1087,6 +1104,27 @@ public:
             c.x[0] = a;
             c.x[1] = 0;
             return c;
+        }
+        // The turning floor (coop_pivot.h), once a frame while a turn is driven: its 3x3 for the turn's yaw now,
+        // its own place kept; the last write is the turn's end.
+        if (floor_due_) {
+            floor_due_ = false;
+            const FloorTurn f = *floor_;
+            const u64 now = SteadyMs();
+            if (f.turn.Done(now)) {
+                floor_.reset();
+            }
+            if (main_ != 0 && Alive(guest, f.actor)) {
+                const float yaw = f.turn.At(now) * 0.01745329f;
+                const float sn = std::sin(yaw), cs = std::cos(yaw);
+                const std::array<float, 12> m{f.at[0], f.at[1], f.at[2], cs, 0.0f, sn, 0.0f, 1.0f, 0.0f, -sn, 0.0f, cs};
+                guest.Write(f.actor + kActorPosition, m.data(), sizeof(m));
+                CoopPuppet::Call c;
+                c.function = main_ + kSetMatrix;
+                c.x[0] = f.actor;
+                c.x[1] = 0;
+                return c;
+            }
         }
         // Poses last: the cave makes at most CoopSvc::kCallsPerFrame calls a
         // frame for everyone, and a scene may hold more copies than are left.
@@ -1441,6 +1479,13 @@ private:
     CoopHitReplay::Replayer replayer_;  // the hit replay: its own locks (Step runs it under mutex_)
     u64 main_ = 0;
     std::vector<Pose> poses_;
+    struct FloorTurn {
+        u64 actor = 0;
+        std::array<float, 3> at{};
+        CoopPivot::Turn turn;
+    };
+    std::optional<FloorTurn> floor_;  // the turning floor's turn being driven (coop_pivot.h)
+    bool floor_due_ = false;          // this game frame's write not made yet
     std::unordered_map<u64, CoopFollow::Follower> follow_;  // jitter-b: by actor
     std::unordered_map<u64, coop::protocol::Vec3> drawn_;    // issue 239: the Follower's last place, by actor
     std::unordered_map<u64, coop::protocol::Vec3> steps_;    // issue 239: its last step
@@ -1792,6 +1837,79 @@ public:
         if (debug_) {
             Reader r(system.ApplicationMemory());
             Walk(r);
+        }
+        Pivot(system);
+    }
+
+    // The Forest Temple basement's turning floor (coop_pivot.h): found once a second while we are in the temple
+    // and it is not known; each scan its yaw and the shared direction go to the follower, whose turns the Mover
+    // drives. On unless LICHII_COOP_PIVOT=0.
+    void Pivot(Core::System& system) {
+        static const bool on = EnvOnUnlessZero("LICHII_COOP_PIVOT");
+        if (!on || main_ == 0) {
+            return;
+        }
+        const u64 now_ms = static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 std::chrono::steady_clock::now().time_since_epoch())
+                                                 .count());
+        const auto forget = [this] {
+            if (pivot_actor_ != 0) {
+                pivot_actor_ = 0;
+                pivot_.Reset();
+                pivot_dir_said_.reset();
+                TheMover().StopFloor();
+            }
+        };
+        if (!CoopHook::CurrentMapView(pivot_view_) || pivot_view_.scene != "ForestTemple") {
+            forget();
+            return;
+        }
+        Reader r(system.ApplicationMemory());
+        if (pivot_actor_ != 0) {
+            const auto state = r.Get<u32>(pivot_actor_ + kActorState);
+            if (!state || (*state != kStateAlive && *state != kStateAsleep) || r.Name(pivot_actor_) != CoopPivot::kActor) {
+                forget();
+            }
+        }
+        if (pivot_actor_ == 0) {
+            if (now_ms < pivot_look_ms_) {
+                return;
+            }
+            pivot_look_ms_ = now_ms + 1000;
+            std::vector<u64> list;
+            if (!List(r, list)) {
+                return;
+            }
+            for (const u64 a : list) {
+                if (r.Name(a) == CoopPivot::kActor) {
+                    pivot_actor_ = a;
+                    break;
+                }
+            }
+            if (pivot_actor_ == 0) {
+                return;
+            }
+            LOG_INFO(Core, "coop: pivot: the turning floor {:#x} found (turned to the shared direction from now on)",
+                     pivot_actor_);
+        }
+        const auto m = r.Get<std::array<float, 9>>(pivot_actor_ + kActorRotation);
+        const auto at = r.Get<std::array<float, 3>>(pivot_actor_ + kActorPosition);
+        if (!m || !at) {
+            return;
+        }
+        const float yaw = std::atan2((*m)[2], (*m)[8]) * 57.29578f;
+        CoopHook::EmulatorMemory memory(system.ApplicationMemory(), main_);
+        const auto dir = coop::host::GameFlags(memory).get_int(CoopPivot::kFlagHash);
+        if (dir != pivot_dir_said_) {
+            LOG_INFO(Core, "coop: pivot: the direction flag reads {} (yaw {:.1f}; our floor at {:.1f})",
+                     dir ? std::to_string(*dir) : std::string("nothing"),
+                     dir ? CoopPivot::YawOfDir(*dir) : 0.0f, yaw);
+            pivot_dir_said_ = dir;
+        }
+        if (const auto t = pivot_.Look(now_ms, yaw, dir)) {
+            TheMover().TurnFloor(main_, pivot_actor_, *at, *t);
+            LOG_INFO(Core, "coop: pivot: our floor turned from {:.1f} to {:.1f} (direction {}) over {} ms", t->from,
+                     t->to, dir.value_or(0), t->ms);
         }
     }
 
@@ -2351,6 +2469,23 @@ public:
                                               *node, fix.from, fix.to, fix.untouched)
                                         : CoopWorld::RestScan{};
                 if (node && !stale.busy) {
+                    // Puzzle diagnostics (a player report: a block puzzle solved for one player only): where the
+                    // block rests against its goal (node +0x4c, its link Gimmick_AnswerPosAnchor) and what its
+                    // IsOnAnswerPos port (+0x1f0, docs/world.md) holds here. Read only.
+                    float goal[3] = {NAN, NAN, NAN};
+                    for (int i = 0; i < 3; ++i) {
+                        if (const auto w = r.Get<u32>(*node + CoopWorld::BlockNode::kGoal + 4u * i)) {
+                            std::memcpy(&goal[i], &*w, 4);
+                        }
+                    }
+                    if (std::isfinite(goal[0]) && std::isfinite(goal[2])) {
+                        const float dx = fix.to[0] - goal[0], dz = fix.to[2] - goal[2];
+                        const auto port = r.Get<u64>(*node + 0x1f0);
+                        LOG_INFO(Core, "coop: world: {:016x} {} rests {:.2f} m from its answer spot ({:.2f} {:.2f}); "
+                                       "its on-answer port reads {:#x}",
+                                 fix.hash, fix.name, std::sqrt(dx * dx + dz * dz), goal[0], goal[2],
+                                 port.value_or(0));
+                    }
                     if (!stale.writes.empty()) {
                         TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to, fix.untouched);
                         LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "
@@ -5721,6 +5856,9 @@ private:
             if (IsShared(actor.name)) {  // enemies and breakables
                 Life(r, a, actor);
             }
+            if (actor.name.find("PivotedFloor") != std::string::npos) {
+                TurnNote(r, a, actor);
+            }
         }
         for (auto it = actors_.begin(); it != actors_.end();) {
             if (seen.contains(it->first) || ++it->second.missed < 2) {
@@ -5732,6 +5870,35 @@ private:
             it = actors_.erase(it);
         }
         first_ = false;
+    }
+
+    // The Forest Temple basement's turning floor (Obj_ForestTemple_PivotedFloor_A_01, docs/dungeon.md "The
+    // turning floor"): its yaw from its 3x3 (+0x328), said when it has turned 5 degrees or more since the last
+    // line, with the time, so a push's turn (its steps and how long one takes) can be read from the log. Read only.
+    void TurnNote(Reader& r, u64 a, Actor& actor) {
+        const auto m = r.Get<std::array<float, 9>>(a + kActorRotation);
+        if (!actor.turn_seen) {
+            actor.turn_seen = true;
+            if (m) {
+                LOG_INFO(Core, "coop: objects: {} {:#x} first turn read: 3x3 {:.3f} {:.3f} {:.3f} / {:.3f} {:.3f} {:.3f} / "
+                               "{:.3f} {:.3f} {:.3f}",
+                         actor.name, a, (*m)[0], (*m)[1], (*m)[2], (*m)[3], (*m)[4], (*m)[5], (*m)[6], (*m)[7], (*m)[8]);
+            } else {
+                LOG_INFO(Core, "coop: objects: {} {:#x} first turn read: its 3x3 cannot be read", actor.name, a);
+            }
+        }
+        if (!m || !std::isfinite((*m)[2]) || !std::isfinite((*m)[8])) {
+            return;
+        }
+        const float yaw = std::atan2((*m)[2], (*m)[8]) * 57.29578f;
+        float moved = std::isnan(actor.yaw_said) ? 180.0f : std::fabs(yaw - actor.yaw_said);
+        moved = std::min(moved, 360.0f - moved);
+        if (moved < 5.0f) {
+            return;
+        }
+        actor.yaw_said = yaw;
+        LOG_INFO(Core, "coop: objects: {} {:#x} yaw {:.1f} at {} ms", actor.name, a, yaw,
+                 CoopEvery::NowUs() / 1000);
     }
 
     void LogPose(Reader& r, const char* what, u64 a, const Actor& actor) {
@@ -5812,6 +5979,11 @@ private:
     u64 drift_at_ = 0;
     bool boss_own_said_ = false;  // row 130: the last 'boss copies run their own' line logged
     CoopEvery::Every scan_{CoopEvery::kTwoFramesUs};
+    CoopPivot::Follower pivot_;
+    u64 pivot_actor_ = 0;
+    u64 pivot_look_ms_ = 0;
+    std::optional<std::int32_t> pivot_dir_said_;
+    CoopHook::MapView pivot_view_;
     CoopEvery::Every cheat_every_{CoopEvery::kSecondUs};
     CoopCheatItems::State cheat_state_;
     CoopEvery::Every share_every_{CoopEvery::kTwoFramesUs};

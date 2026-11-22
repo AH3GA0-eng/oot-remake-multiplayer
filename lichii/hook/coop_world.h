@@ -527,6 +527,8 @@ public:
     static constexpr std::uint64_t kRemoteHoldUs = 600'000;  // no move this long: the mover stopped
     static constexpr std::uint64_t kSettleUs = 500'000;      // a rest place is held this long
     static constexpr std::uint64_t kQuietUs = 1'500'000;     // after following: no claim while it settles
+    static constexpr float kAtBlockM = 2.0f;                  // push diagnostics: our Link this near a block
+    static constexpr std::uint64_t kAtBlockNoteUs = 10'000'000;
     static constexpr std::uint64_t kBehindUs = 100'000;      // copies show the mover this late
     static constexpr std::size_t kKeepSamples = 16;
     static constexpr float kSignReachM = 1.5f;  // a swing this near a sign (level) is sent
@@ -762,6 +764,7 @@ private:
         std::uint32_t place_seen = 0;      // the rest place we last took (Remote::place_serial)
         std::optional<coop::protocol::Vec3> follow_from;  // where it rested before another game moved it
         bool contested = false;            // row 166: our own move of it gave way to another game's (this follow)
+        std::uint64_t at_it_noted_us = 0;  // our Link at it while it follows another's move: last noted (push diagnostics)
         std::uint64_t settle_us = 0;       // when we took it
         std::uint64_t quiet_until = 0;
         // deku-visuals-b: where it rested before the last followed push

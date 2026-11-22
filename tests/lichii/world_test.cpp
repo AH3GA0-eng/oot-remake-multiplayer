@@ -3190,3 +3190,22 @@ TEST_CASE("world: row 166: an untouched block's node runs its start again unless
     PutFloats(d, kNode + CoopWorld::BlockNode::kStart, {-51.06f, 79.27f, 45.6f});
     CHECK(CoopWorld::NodeRestWords(d.Reader(), kNode, from, to, true).writes.empty());
 }
+
+TEST_CASE("world: our Link at a block another player still moves is said once every 10 s (push diagnostics)") {
+    WorldSync w;
+    const proto::Vec3 at_it{1.5f, 2.0f, 3.0f};
+    Walk(w, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, at_it);
+    w.Receive(MoveOf(0x50, 2000 * kMs, 1.2f));
+    auto out = Walk(w, 2050 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})}, at_it);
+    CHECK(Said(out, "our Link is at it while it follows another player's move (theirs is live)"));
+    w.Receive(MoveOf(0x50, 2100 * kMs, 1.4f));
+    out = Walk(w, 2150 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.4f, 2.0f, 3.0f})}, at_it);
+    CHECK_FALSE(Said(out, "our Link is at it"));  // once every 10 s
+    // Far from it: never said.
+    WorldSync far;
+    Walk(far, 1000 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox)}, proto::Vec3{20.0f, 2.0f, 3.0f});
+    far.Receive(MoveOf(0x50, 2000 * kMs, 1.2f));
+    CHECK_FALSE(Said(Walk(far, 2050 * kMs, {Thing(0x100, 0x50, std::nullopt, kBox, {1.2f, 2.0f, 3.0f})},
+                          proto::Vec3{20.0f, 2.0f, 3.0f}),
+                     "our Link is at it"));
+}
