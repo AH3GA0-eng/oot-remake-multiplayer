@@ -521,6 +521,11 @@ bool IsBossOrPart(std::string_view name);
 // stays on the plain path: Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos,
 // the club Moblin.
 bool FightsAsBoss(std::string_view name);
+// Pair/pack survey: the family of enemies that fight together by messages between their AIs ("lizalfos" for
+// Lizalfos and Dinolfos, "stalfos", "wolfos"; empty: none). GroupsOf puts one family within kPackReach in one group
+// (root: the lowest id), so the pack has one owner and its teamwork runs in one game.
+std::string_view PackFamily(std::string_view name);
+inline constexpr float kPackReach = 25.0f;
 // An enemy that keeps its target (no attack read sent, so no turns): Anubis, which mirrors its target.
 bool KeepsTarget(std::string_view name);
 // Boss turns (0.11.8): a sample's object_state bits for an enemy's attack as its game read it (Seen::attacking):

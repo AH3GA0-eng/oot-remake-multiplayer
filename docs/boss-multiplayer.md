@@ -132,6 +132,7 @@ a game run (unit tests only), for players to check:
 | --- | --- | --- |
 | Never mid-attack: no enemy changes owner by a chase, the near rule or a nearer player while its owner's attack runs (a grab or hold stays on its victim), at most 8 s | server `attack_hold_max_us`, `mid_attack` | B hits a Like Like holding A: A freed, A moves after |
 | Boss-style turns for one-on-one fighters: Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos, the club Moblin (40 m, a downed owner left at once); their AI stays on the plain path | `FightsAsBoss` in `GroupsOf` | "boss turns:" lines for them in the server log |
+| Packs under one owner: Lizalfos/Dinolfos, Stalfos and Wolfos of one family within 25 m are one group (root: the lowest id), so their teamwork (messages between their AIs: `IsRequestingCoop`, `IsDisableMeleeBattle`...) runs whole in one game and a turn moves the pack together; boss-style when any of them fights as a boss | `PackFamily` in `GroupsOf` | one owner for both of a pair; one attacks at a time |
 | Anubis keeps its target (it mirrors the player moving it) | `KeepsTarget` in `Sync::StateOf` | the mirror follows one player |
 | Ganon bound for the last blow (`InsideGanonCastle_Dungeon_BossBind0`) shared like the other stage changes | `coop_boss_scenes` entry 12 | both games' Ganon bound |
 | The Flare Dancer's fireballs split | `kSplit` | each player gets their own fire |
@@ -153,14 +154,28 @@ Still to design (need a game run first):
   (Graveyard_Adult, both players 4 m from the three Redeads at 113 97 9) saw no scream in 50 s: they stayed in
   `Wait`/`Sit`. What starts the scream (time of day, the player moving or looking) is still to find. Not for this
   release.
-- Meg (Forest Temple): her three decoys move by her messages, which a copy never sends; which seat is real can
-  differ between games. Match the decoys by seat and send the real one's seat.
-- Dead Hand: its hands follow Dead Hand's owner, so they grab only that player.
-- Lizalfos/Dinolfos pairs and Wolfos packs: each game's pair logic sees a held copy ally; both may attack at once.
-- Water Temple: planes and waterfalls shown by `WaterTemple_WaterLevelChange01/03` may follow only at load.
-- Shadow Temple's falling pillar (`Dm_ShadowTemple_0015`): a player who did not join keeps the old room until
-  a reload.
-- Volvagia's falling rocks have no actor of their own to split.
+- Meg (Forest Temple): her decoys (`Enemy_MiddleBoss_Poe_Meg_Dummy`, no BSA, MaxLife 1, own AI) are made anew
+  each cycle and get ids by order (`SceneSpawnId`), so three made in one frame can match differently between games;
+  each game also rolls its own layout at Appear, and a copy's decoy AI fights the Mover. Likely cause: per-game
+  layouts plus decoys matched by order (not missing messages: a copy's Meg runs her action modules). Smallest fix,
+  medium confidence: `MinionMaker` maps the decoy to Meg, so only Meg's owner keeps decoys and shares them (as
+  Gohma's eggs); risk: the copy's Meg remakes them in a loop. Fuller: match by `MegDummy_SeatId` (blackboard layout
+  to find live). First step: log decoy ids, orders and places per game in a two-game run.
+- Dead Hand: its hands are boss parts of Dead Hand (`PartRules` kSummoned), so they follow his owner and grab only
+  that player. Smallest fix, medium confidence: drop that rule and keep Dead Hand a boss by name in
+  `IsBossOrPart`; each hand then goes to its nearest player. Risk: a hand's grab sends `MessageAppear` to its own
+  game's Dead Hand, held in a game that does not own him, so he may not rise there. Later: hand Dead Hand to a
+  grabbing hand's owner (a summoner link the server does not follow).
+- Water Temple and others: placements whose `Presence.FlagName` is a shared flag that changes during play (the
+  water level's planes and waterfall, the Shadow tower's pillar and rubble, Bottom of the Well's water, the Forest
+  Temple's room 7 water and elevator, Ice Cavern pots, a Jabu-Jabu air wall) are probably read only at a scene
+  load. No proven live fix: deleting or making a placement live is proven for enemies, not for terrain collision.
+  First step: a log line when such a flag changes with our Link near a gated piece; then a live check.
+- Shadow Temple's falling pillar (`Dm_ShadowTemple_0015`): part of the presence item above.
+- Volvagia's falling rocks: made by the arena (`Obj_FallingRockManager_A_03`, a pool of `Obj_FallingRock_A_06`),
+  aimed at the local Link (`QueryDungeonGetPlayerPos`), switched on by Volvagia's `FallRockActivate` /
+  `FallRockEffectActivate` plugs; co-op does not touch them. So each game may already drop its own rocks at its
+  own Link; whether a copy game switches them on is to check live (log rocks falling per game).
 
 ## Order of work
 

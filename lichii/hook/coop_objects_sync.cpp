@@ -542,6 +542,21 @@ bool FightsAsBoss(std::string_view name) {
     return false;
 }
 
+std::string_view PackFamily(std::string_view name) {
+    // Pair/pack survey (2026-11-21): these fight together by messages each one's AI writes into its ally's
+    // blackboard (Lizalfos/Dinolfos: SetBattlingAllyFromReferenceLink, IsRequestingCoop, IsReceivedCoop*Message;
+    // Wolfos: AllAlliesDisableMelee, tag WolfosAlly, IsDisableMeleeBattle). A copy's held brain sends none, so
+    // with two owners each game runs half a pair with no partner. One family near together is one group: one
+    // owner, the whole pack's teamwork in one game, and a turn moves the pack together.
+    if (name.find("_Dictionary") != std::string_view::npos || name.find("_Haribote") != std::string_view::npos) {
+        return {};
+    }
+    if (name.starts_with("Enemy_Lizalfos") || name.starts_with("Enemy_Dinolfos")) return "lizalfos";
+    if (name.starts_with("Enemy_Stalfos")) return "stalfos";
+    if (name.starts_with("Enemy_Wolfos")) return "wolfos";
+    return {};
+}
+
 bool KeepsTarget(std::string_view name) {
     // Enemy survey: Anubis mirrors its target's moves; passed between players every attack, nobody can line it up.
     // No attack read is sent, so the server never turns it: it stays with whoever moves it (the near rule).
@@ -618,6 +633,44 @@ std::vector<proto::ObjectGroupEntry> GroupsOf(
     for (const GroupInput& m : walk) {
         const GroupPart* part = PartOf(m.name);
         if (part == nullptr) {
+            if (const std::string_view family = PackFamily(m.name); !family.empty()) {
+                // A pack (PackFamily): the root is the lowest id of its family within kPackReach (every game picks
+                // the same); a root linked before stays out to kGroupKeep times the reach.
+                const GroupInput* root = nullptr;
+                if (const auto was = linked.find(m.id); was != linked.end()) {
+                    for (const GroupInput& r : walk) {
+                        if (r.id != was->second) continue;
+                        const float keep = kPackReach * kGroupKeep;
+                        const float d2 = dist2(r, m);
+                        if (PackFamily(r.name) == family && !(m.id < r.id) && std::isfinite(d2) && d2 <= keep * keep) {
+                            root = &r;
+                        }
+                        break;
+                    }
+                }
+                if (root == nullptr) {
+                    root = &m;
+                    for (const GroupInput& r : walk) {
+                        if (!(r.id < root->id) || PackFamily(r.name) != family) continue;
+                        const float d2 = dist2(r, m);
+                        if (std::isfinite(d2) && d2 <= kPackReach * kPackReach) root = &r;
+                    }
+                }
+                // Boss-style when any of the pack near its root fights as one (a white Wolfos in a plain pack):
+                // the root's bit is what the server's turns read.
+                bool boss = FightsAsBoss(m.name) || FightsAsBoss(root->name);
+                for (std::size_t i = 0; !boss && i < walk.size(); ++i) {
+                    const GroupInput& r = walk[i];
+                    const float d2 = dist2(r, *root);
+                    boss = PackFamily(r.name) == family && FightsAsBoss(r.name) && std::isfinite(d2) &&
+                           d2 <= kPackReach * kPackReach;
+                }
+                // A lone plain one sends nothing unless it was linked before (then once, on its own again).
+                if (root != &m || boss || linked.contains(m.id)) {
+                    out.push_back({m.id, root->id, boss ? proto::object_group::boss : std::uint8_t{0}});
+                }
+                continue;
+            }
             if (IsBossOrPart(m.name) || FightsAsBoss(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
             continue;
         }
