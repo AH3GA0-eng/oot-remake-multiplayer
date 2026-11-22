@@ -964,6 +964,109 @@ class MergeGameDataTest(unittest.TestCase):
         self.assertEqual(read(os.path.join(self.mods, self.HAND, "romfs", "GameData", GD)), self.seed_raw)
 
 
+@unittest.skipIf(zstandard is None, "no zstandard package")
+class OneTimeKeysTest(unittest.TestCase):
+    """Row 219 (#84): a seed's shuffled pots dropped their item again in every other game, and a freestanding item
+    taken before a save + reload was there again for another player: the one-time keys were only learned from what a
+    game saw loaded. The kit's start lists them from the game as served."""
+
+    SEED = "OoT_Randomizer_0123456789abcdef"
+    # Hash: (actor in the game's Banc, the game's row (ResetTypeValue, ExtraByte) or None)
+    GAME = {0x10: ("Obj_Heart_Piece", (24, None)),        # a heart piece: one-time pickup
+            0x11: ("Obj_Rupee_Green", (88, 4)),           # a rupee the game resets: not one-time
+            0x12: ("Obj_TBox_A_01", (24, None)),          # a chest: shared by its own list (CoopChests)
+            0x13: ("Obj_Pot_A_01", (88, 2)),              # a pot: a holder once a seed keeps it
+            0x14: ("Enemy_FlyingPot_IceCavern", (280, None)),
+            0x15: ("Shop_Bottle", (25, None)),            # a shop row kept by a seed: no holder
+            0x16: ("Enemy_Skulltula_Gold", (24, None)),
+            0x17: ("Obj_DekuNut", (24, None)),
+            0x18: ("Obj_GerudoValley_Heart_Piece", (24, 3))}   # an ExtraByte: not saved once
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="one_time_keys_test_")
+        self.mods = os.path.join(self.dir, "mods")
+        self.romfs = os.path.join(self.dir, "romfs")
+        self.lines = []
+        os.makedirs(self.mods)
+        self.put(os.path.join(self.romfs, "GameData", GD), self.rows({}))
+        half = list(self.GAME.items())
+        for name, part in (("HyruleField_Static", half[:5]), ("IceCavern_Dynamic", half[5:])):
+            self.put(os.path.join(self.romfs, "Banc", name.split("_")[0], name + ".bcett.byml.zs"),
+                     {"Actors": [{"Gyaml": g, "Hash": byml.UInt64(h)} for h, (g, _) in part]})
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def rows(self, kept):
+        """The game's 64-bit-key rows, each of `kept` saved once (as OOTRR pots.rs one_time)."""
+        out = []
+        for h, (_, row) in self.GAME.items():
+            reset, extra = (24, None) if h in kept else row
+            r = {"Hash": byml.UInt64(h), "ResetTypeValue": reset}
+            if extra is not None:
+                r["ExtraByte"] = extra
+            out.append(r)
+        return {"Data": {"Bool64bitKey": out, "Bool": [{"Hash": byml.UInt(1), "DefaultValue": False}]}}
+
+    put = staticmethod(MergeGameDataTest.put)
+
+    def run_it(self, romfs=None):
+        self.lines = []
+        return mt.one_time_keys(self.mods, self.romfs if romfs is None else romfs, self.lines.append)
+
+    def listed(self):
+        text = read(os.path.join(self.mods, mt.ONE_TIME_FILE)).decode("utf-8").split("\n")
+        self.assertEqual(text[0], "coop-one-time-keys 1")
+        return (text[2], [int(l[7:], 16) for l in text if l.startswith("pickup ")],
+                [int(l[7:], 16) for l in text if l.startswith("holder ")])
+
+    def test_the_games_own_placed_pickups_that_stay_taken(self):
+        self.assertEqual(self.run_it(), 0)
+        self.assertEqual(self.listed(), ("served - -", [0x10, 0x16, 0x17], []))
+
+    def test_a_seeds_kept_pots_are_holders_and_its_swapped_pickups_keep_their_key(self):
+        seed = os.path.join(self.mods, self.SEED, "romfs")
+        raw = self.put(os.path.join(seed, "GameData", GD), self.rows({0x13, 0x14, 0x15}))
+        # The seed swaps the heart piece for another item (its own Banc): the placement's Hash stays.
+        self.put(os.path.join(seed, "Banc", "HyruleField", "HyruleField_Static.bcett.byml.zs"),
+                 {"Actors": [{"Gyaml": "Obj_Hookshot", "Hash": byml.UInt64(0x10)}]})
+        self.run_it()
+        self.assertEqual(self.listed(), (f"served {self.SEED}/romfs/GameData/{GD} {mt.fnv64_bytes(raw)}",
+                                         [0x10, 0x16, 0x17], [0x13, 0x14]))
+        self.assertIn("2 one-time holders", self.lines[0])
+        before = read(os.path.join(self.mods, mt.ONE_TIME_FILE))
+        self.run_it()
+        self.assertIn("listed already", self.lines[0])
+        self.assertEqual(read(os.path.join(self.mods, mt.ONE_TIME_FILE)), before)
+        # Another seed (its pots no longer kept): listed again, without holders.
+        self.put(os.path.join(seed, "GameData", GD), self.rows(set()))
+        self.run_it()
+        self.assertEqual(self.listed()[1:], ([0x10, 0x16, 0x17], []))
+        mt.undo(self.mods, say=self.lines.append)
+        self.assertFalse(os.path.exists(os.path.join(self.mods, mt.ONE_TIME_FILE)))
+
+    def test_a_seed_that_is_off_is_not_served(self):
+        self.put(os.path.join(self.mods, self.SEED, "romfs", "GameData", GD), self.rows({0x13}))
+        with open(os.path.join(self.mods, mt.LIST_FILE), "w", encoding="utf-8") as f:
+            f.write(f"coop-mods 1\noff {self.SEED}\n")
+        self.run_it()
+        self.assertEqual(self.listed(), ("served - -", [0x10, 0x16, 0x17], []))
+
+    def test_without_the_games_files_an_old_list_goes(self):
+        self.run_it()
+        self.assertEqual(self.run_it(romfs=""), 0)
+        self.assertIn("not listed", self.lines[0])
+        self.assertFalse(os.path.exists(os.path.join(self.mods, mt.ONE_TIME_FILE)))
+
+    def test_a_broken_list_writes_nothing(self):
+        self.run_it()
+        with open(os.path.join(self.romfs, "GameData", GD), "wb") as f:
+            f.write(b"not a list")
+        self.assertEqual(self.run_it(), 1)
+        self.assertIn("not listed", self.lines[0])
+        self.assertFalse(os.path.exists(os.path.join(self.mods, mt.ONE_TIME_FILE)))
+
+
 class MergeMembersTest(unittest.TestCase):
     """merge_members: the pack's menu archives into another mod's copy that wins them (the Character Select mod ships
     Mals/USen and the Common layout archive too; the game read the mod's whole file and the co-op menus lost theirs)."""

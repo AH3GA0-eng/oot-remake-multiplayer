@@ -1306,10 +1306,137 @@ def merge_gamedata_one(root, codec, fname, win_name, win_path, others, game, say
     return need
 
 
+ONE_TIME_FILE = "coop-one-time-keys.txt"   # beside the mods (the module's kOneTimeFile, coop_pickups.h)
+ONE_TIME_HEAD = "coop-one-time-keys 1"
+KEY_TABLE = "Bool64bitKey"   # the game's one table of 64-bit-key flags, keyed by a placement's Hash
+SAVED_ONCE = 24              # ResetTypeValue of a placement the save keeps done (chests, heart pieces)
+RESETTING = (88, 280)        # ResetTypeValue of pots, crates, rocks (88) and enemies, flying pots (280)
+BANC = "Banc"   # (under the game's romfs)
+# The placed one-time pickups by actor name: CoopPickups::IsPickup's kinds (Gold Skulltulas and their tokens, heart
+# containers and pieces, placed rupees and hearts, silver rupees) and the game's other placed items it saves once
+# (a Deku Nut, Seed and Stick, the fire arrows).
+PICKUP_PREFIXES = ("Obj_Rupee_", "Obj_RupeeToken_", "Obj_Heart", "Obj_DekuNut", "Obj_DekuSeed", "Obj_DekuStick",
+                   "Obj_Arrow_")
+PICKUP_NAMES = ("Enemy_Skulltula_Gold", "Obj_Token_Gold")
+
+
+def _num(v):
+    return v.v if isinstance(v, byml._Num) else v
+
+
+def is_placed_pickup(name):
+    return name in PICKUP_NAMES or name.startswith(PICKUP_PREFIXES) or (
+        name.startswith("Obj_") and "Heart_Piece" in name)
+
+
+def key_rows(data):
+    """{Hash: (ResetTypeValue, ExtraByte)} of a saved values list's 64-bit-key table."""
+    root = byml.loads(data)
+    rows = root.get("Data", {}).get(KEY_TABLE) if isinstance(root, dict) else None
+    if not isinstance(rows, list):
+        raise MergeError(f"no {KEY_TABLE} table")
+    out = {}
+    for r in rows:
+        if isinstance(r, dict) and "Hash" in r:
+            out[int(_num(r["Hash"]))] = (_num(r.get("ResetTypeValue", -1)), _num(r.get("ExtraByte", 0)) or 0)
+    return out
+
+
+def saved_once(row):
+    """A row the save keeps once done: type 24 and no ExtraByte (OOTRR pots.rs permanent)."""
+    return row is not None and row[0] == SAVED_ONCE and row[1] == 0
+
+
+def placed_pickups(codec, romfs):
+    """{Hash: actor name} of every placed one-time pickup in the game's own Banc (a seed keeps the placement's Hash
+    when it swaps the actor for another item, OOTRR slice/pickups.rs)."""
+    out = {}
+
+    def walk(v):
+        if isinstance(v, dict):
+            g, h = v.get("Gyaml"), v.get("Hash")
+            if isinstance(g, str) and h is not None and is_placed_pickup(g):
+                out[int(_num(h))] = g
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+
+    for dirpath, _, fnames in os.walk(os.path.join(romfs, BANC)):
+        for f in sorted(fnames):
+            if ".bcett.byml" not in f:
+                continue
+            with open(os.path.join(dirpath, f), "rb") as fh:
+                walk(byml.loads(codec.unpack(fh.read())))
+    return out
+
+
+def one_time_keys(root, romfs, say=print):
+    """Row 219 (#84): the 64-bit keys of every placement the game, as it is served, gives once, written to
+    `<mods>/coop-one-time-keys.txt` for the co-op module, which shares them from the session's start (the host's
+    snapshot carries them to a player who joins or loads later, and a copy still loaded in another game goes):
+
+    - `pickup <hex>`: a placed one-time pickup of the game's own Banc whose key the served list keeps saved once;
+    - `holder <hex>`: a key the served list keeps saved once and the game's own list resets (88, 280): a randomizer
+      seed's shuffled pot, crate, flying pot, beehive, rock or grass (OOTRR pot_slice/persist.rs), which gives its
+      item once.
+
+    The served list is the winner's GameData/<the game's list> (merge_gamedata ran first), else the game's own; its
+    line `served <path under mods> <FNV-1a 64>` (or `served - -`) lets the module drop the holders when that list
+    changed since (a seed built or removed without a kit start). The file is written again only when the `game` or
+    `served` line changed. Returns 1 when it could not be written (said why), else 0."""
+    out_path = os.path.join(root, ONE_TIME_FILE)
+    gd = os.path.join(romfs, *GAMEDATA[1:]) if romfs else ""
+    lists = sorted(f for f in os.listdir(gd) if f.startswith("GameDataList") and f.endswith(GAMEDATA_TAIL)) \
+        if gd and os.path.isdir(gd) else []
+    if len(lists) != 1 or not os.path.isdir(os.path.join(romfs, BANC)):
+        if os.path.isfile(out_path):
+            os.remove(out_path)   # (no game files: an old list must not stay)
+        say("One-time pickups: not listed without the game's own GameData and Banc (--romfs): each is shared once "
+            "seen in a game, as before.")
+        return 0
+    fname = lists[0]
+    game_path = os.path.join(gd, fname)
+    having = [p for _, p in load_order(root) if fname in gamedata_of(p)]
+    served_path = os.path.join(having[-1], *GAMEDATA, fname) if having else game_path
+    game_line = "game " + fnv64(game_path)[0]
+    served_rel = os.path.relpath(served_path, root).replace(os.sep, "/") if having else "-"
+    served_line = f"served {served_rel} {fnv64(served_path)[0] if having else '-'}"   # (the hash last: a path has spaces)
+    old = (read_text(out_path) or "").split("\n")
+    if old[:3] == [ONE_TIME_HEAD, game_line, served_line]:
+        say("One-time pickups: listed already (the same game and saved values list as at an earlier start).")
+        return 0
+    try:
+        codec = Codec(romfs)
+        with open(game_path, "rb") as f:
+            game_rows = key_rows(codec.unpack(f.read()))
+        served_rows = game_rows
+        if having:
+            with open(served_path, "rb") as f:
+                served_rows = key_rows(codec.unpack(f.read()))
+        pickups = sorted(h for h in placed_pickups(codec, romfs) if saved_once(served_rows.get(h)))
+        holders = sorted(h for h, r in served_rows.items()
+                         if saved_once(r) and h in game_rows and game_rows[h][0] in RESETTING)
+    except (OSError, ValueError, KeyError, TypeError, MergeError) as e:
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+        say(f"One-time pickups: not listed ({e}): each is shared once seen in a game, as before.")
+        return 1
+    text = "\n".join([ONE_TIME_HEAD, game_line, served_line] + [f"pickup {h:016x}" for h in pickups]
+                     + [f"holder {h:016x}" for h in holders]) + "\n"
+    write_atomic(out_path, text.encode("utf-8"))
+    say(f"One-time pickups: {len(pickups)} placed pickups and {len(holders)} one-time holders"
+        f"{' of ' + served_rel if having else ''} listed for co-op ({ONE_TIME_FILE}).")
+    return 0
+
+
 def undo(root, say=print):
     """Puts each kept original back, but only over the table the merge wrote: a new seed put into the folder since
     keeps its own table (the kept one is the old seed's). The kept folder and the mark go either way."""
     n = 0
+    if os.path.isfile(os.path.join(root, ONE_TIME_FILE)):   # (one_time_keys: written again at the next start)
+        os.remove(os.path.join(root, ONE_TIME_FILE))
     for name, path in find_mods(root).items():
         put_back_models(root, name, path, say)   # (merge_self_models: each Link model back where it was written)
         gamedata_keep = os.path.join(path, GAMEDATA_KEEP)
@@ -1396,6 +1523,7 @@ def main(argv=None):
         rows_failed, fit = merge_rows(a.mods, a.romfs)
         for k, n in merge_gamedata(a.mods, a.romfs).items():
             fit[k] = max(fit.get(k, 0), n)
+        once_failed = one_time_keys(a.mods, a.romfs)   # (row 219: on the saved values list the game will read)
         members_failed, members_fit = merge_members(a.mods, a.romfs)
         for k, n in members_fit.items():
             fit[k] = max(fit.get(k, 0), n)
@@ -1403,7 +1531,7 @@ def main(argv=None):
         failed = merge_mods(a.mods, a.romfs, fit=fit) + members_failed + models_failed
         # Last, on the tables as the game will read them: the pack's menu files only where they can load.
         menus_failed = guard_menus(a.mods, a.romfs)
-        return 1 if (failed or rows_failed or menus_failed) else 0
+        return 1 if (failed or rows_failed or menus_failed or once_failed) else 0
     except SystemExit:  # (zs._zstd: no zstandard package)
         print("Size tables: not merged (this Python has no zstandard package): with a mod that has its own size "
               "table, the other players can't be shown.")

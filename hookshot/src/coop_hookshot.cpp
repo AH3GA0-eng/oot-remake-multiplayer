@@ -97,6 +97,7 @@
 #include "coop/protocol/messages.hpp"
 #include "coop_runtime.h"
 #include "coop_pause_files.h"
+#include "coop_pickups.h"
 #include "coop_settings.h"
 #include "coop_svc.h"
 #include "coop_time.h"
@@ -1212,6 +1213,14 @@ bool Start(const HosCoopApi* api) {
              HasPadButtons(api) ? "" : "; this Hookshot gives no pad word (own Ocarina notes not sent: build it again)");
     // Started without the kit's launcher: its coop-options.ini switches still count.
     CoopTitle::ApplyKitOptions();
+    // Row 219 (#84): the one-time placements the kit's start lists beside the mods (merge_tables.py one_time_keys),
+    // read by the hook when a session starts. The mods folder as Hookshot's host/mods.c finds it.
+    if (Env("LICHII_COOP_ONE_TIME_KEYS").empty()) {
+        const std::string mods = Env("HOS_MODS");
+        const std::filesystem::path root =
+            mods.empty() ? CoopRuntime::GameDir() / "mods" : std::filesystem::path(std::u8string(mods.begin(), mods.end()));
+        CoopFiles::SetEnv("LICHII_COOP_ONE_TIME_KEYS", CoopFiles::Utf8Path(root / CoopPickups::kOneTimeFile));
+    }
     // Original game (coop_original.h): the module stays off, all of it, and Longshot's F1 menu gets one tab with the
     // switch alone, so the player can turn it back.
     if (const auto options = CoopTitle::KitOptionsFile();

@@ -584,6 +584,27 @@ public:
                 session_->share_pickup(coop::protocol::FlagKey::key64_flag(k.key));
             }
         }
+        // Row 219 (#84): every one-time placement of the game as served (the kit's start lists them, a seed's
+        // one-time pots too), shared from the start: the host's snapshot then carries one taken before a save +
+        // reload, and a copy another game still has loaded goes (CoopPickups::IsOneTime).
+        CoopPickups::SetOneTime({});
+        if (const std::string file = EnvString("LICHII_COOP_ONE_TIME_KEYS"); pickups_ && !file.empty()) {
+            std::string note;
+            if (const auto list = CoopPickups::LoadOneTime(file, note)) {
+                for (const std::uint64_t key : list->pickups) {
+                    session_->share_pickup(coop::protocol::FlagKey::key64_flag(key));
+                }
+                for (const std::uint64_t key : list->holders) {
+                    session_->share_pickup(coop::protocol::FlagKey::key64_flag(key));
+                }
+                CoopPickups::SetOneTime(*list);
+                LOG_INFO(Core, "coop: flags: {} one-time pickups and {} one-time holders shared from {}",
+                         list->pickups.size(), list->holders.size(), file);
+            }
+            if (!note.empty()) {
+                LOG_INFO(Core, "coop: flags: {}", note);
+            }
+        }
         // On unless LICHII_COOP_LIVE_EVENTS=0 (dungeon-switches): another
         // player's gimmick event plays here too when our Link comes near it.
         live_events_ = EnvString("LICHII_COOP_LIVE_EVENTS") != "0";
