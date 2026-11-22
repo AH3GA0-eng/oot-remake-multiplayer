@@ -59,6 +59,8 @@ struct FlagStats {
   std::uint64_t pickup_resets = 0;     // a pickup's 0, ours or incoming: not passed on
   std::uint64_t max_drops_kept = 0;    // a max-rule value our game lowered: ours, not sent
   std::uint64_t max_caps_kept = 0;     // a rise of our own past cap_max's cap: put back, not sent
+  std::uint64_t container_deltas = 0;  // row 218: a heart container rise of our own sent as a change (share_containers)
+  std::uint64_t container_catch_ups = 0;  // row 218: a rise back up to the group's maximum (not a pickup): not sent
   std::uint64_t max_caps_left = 0;     // row 181: a capped rise left to the game after kMaxCapTries put-backs (not sent)
   std::uint64_t reset_holds_kept = 0;  // rows 136/137: the game's write-back of a value the host's save lowered
   std::uint64_t read_failures = 0;
@@ -147,6 +149,28 @@ class FlagWatcher {
   // to 0 through the session (a key that the game resets on a scene change
   // must not put the pickup back for the others). False: already a pickup.
   bool share_pickup(FlagKey key);
+  // Row 218 (heart containers given to only some players): a max-rule int32
+  // (PlayerStatus.MaxLife) whose rises add up across players as a heart
+  // piece's count does, while the store still merges it by the highest value
+  // (so drops, caps and reset holds stay as they are). A player sends a rise
+  // of its own game past the group's maximum (group_int) as a count delta of
+  // the part above it; the host adds it (add(), ItemFlagStore) and sends its
+  // total. So two containers taken at once in two games give two, not one (an
+  // absolute maximum kept only the higher). A rise up to the group's maximum
+  // is our game catching up (its live copy given the group's hearts again),
+  // not a pickup: not sent. While a cap is set (a beaten boss's area: the
+  // boss's one container is a BOSS_HEART claim) or a reopened chest's gain is
+  // expected (expect_doubled_gain), a rise goes out as its value, as before,
+  // so the max rule makes two pickups of the same container one. A host's own
+  // rise goes out as its total. Must be shared already; false otherwise.
+  bool share_containers(FlagKey key);
+  // The group's maximum of a max-rule int as this game last knew it (written
+  // from the group, sent by us, or the host's save/snapshot), or nothing.
+  std::optional<std::int32_t> group_int(FlagKey key) const;
+  // The boss's one heart container (BOSS_HEART answer, coop_boss_scenes.h):
+  // the hook writes the server's value into our game itself; the group has it,
+  // so our game's rise to it is a catch-up, never a change of ours.
+  void note_group_at_least(FlagKey key, std::int32_t value);
   // A named Bool that the game itself sets back to 0 (a room's own switch
   // state, reset when the room is left: docs/dungeon.md "Live dungeon
   // actions"): shared one way like a pickup (a 1 is sent and written, a 0 is
@@ -203,16 +227,18 @@ class FlagWatcher {
   std::vector<OneWayRestore> take_one_way_restores() { return std::exchange(one_way_restored_, {}); }
   // Row 140 (flag-oneway-c): the game itself writes some one-way values from its own copy (the HUD screen's floors,
   // written back to EnteredFloorBit while Link is in the dungeon), so a put-back the game lowers again on the next
-  // read is a fight we never win (49,223 put-backs in one host's session). A drop within kUndoPasses diff passes of
-  // our last put-back counts as undone; after kMaxQuickUndos of those in a row the key is the game's own until the
-  // next load window (set_loading): not put back, not sent (the group keeps its value). One-off drops (issue 146)
-  // are still put back.
-  static constexpr std::uint64_t kUndoPasses = 2;
+  // read is a fight we never win (49,223 put-backs in one host's session). Row 183 (a map that flickered "like
+  // equipping and unequipping" after it was picked up): counting only drops within 2 diff passes let a game that
+  // lowers the value a little later than that win forever, each put-back with a HUD refresh. So every drop of a
+  // value we put back counts, however long after, until the next load window (a room or scene load clears the
+  // count: issue 146's drop at a room change is still put back in each room); after kMaxQuickUndos the key is the
+  // game's own until that window (set_loading): not put back, not sent (the group keeps its value), owed after it.
   static constexpr int kMaxQuickUndos = 2;
   std::vector<FlagKey> take_one_way_left() { return std::exchange(one_way_left_, {}); }
   // Row 140 (review of flag-oneway-c): the game lowers these from the HUD screen's own copy, which reads the flag in
   // only at its init and refresh, so a put-back must reach that copy or it is lowered again. True when a one-way
-  // dungeon value was put back since the last call (every put-back, not only a key's first): the hook asks the
+  // dungeon value was put back since the last call with a value the HUD was not given yet in this load window (row
+  // 183: the same value again changes nothing for the HUD, and each refresh redraws it: the flicker): the hook asks the
   // game's own HUD refresh on the same frame (CoopMapRefresh WantNow). A value left to the game is put back once more
   // when the next room or scene load window ends (not after a save load: another save's floors are not this one's),
   // with that refresh, so the other player's floors reach the copy after a room load at the latest.
@@ -543,6 +569,7 @@ class FlagWatcher {
   SharedFlags shared_;
   FlagRole role_;
   std::set<FlagKey> pickups_;  // one-way 64-bit keys
+  std::set<FlagKey> containers_;  // row 218: max-rule ints whose rises add up (share_containers)
   std::set<FlagKey> one_way_;  // one-way named flags, no load write-back (share_one_way)
   std::set<FlagKey> down_only_;  // share_down_only
   std::set<FlagKey> up_only_;    // share_up_only
@@ -557,7 +584,7 @@ class FlagWatcher {
   std::set<FlagKey> one_way_told_;           // keys take_one_way_restores gave once
   struct PutBack {
     std::uint64_t pass = 0;  // diff pass of our last put-back
-    int undone = 0;          // drops right after it, in a row
+    int undone = 0;          // drops after it since the load window began (row 183: however long after)
   };
   std::map<FlagKey, PutBack> put_back_;   // row 140: one-way put-backs
   std::set<FlagKey> game_owned_;          // row 140: left to the game until the next load window
@@ -565,6 +592,8 @@ class FlagWatcher {
   std::map<FlagKey, protocol::FlagEntry> owed_;     // row 140: left to the game: the group's value, put back after a room load
   bool owed_due_ = false;                 // a room or scene load window ended (no save load): put owed_ back
   bool hud_refresh_ = false;              // take_hud_refresh
+  std::map<FlagKey, std::uint32_t> hud_given_;  // row 183: the value each HUD item's refresh was asked for, this window
+  void ask_hud(FlagKey key, std::uint32_t value);
   // Row 140: puts owed_ back (ORed with the game's floors), each once, after a room or scene load window.
   void put_owed(FlagStore& store);
   std::vector<KeepsFailing> keeps_failing_;  // row 140: note_write_failure, kFailureSayAt

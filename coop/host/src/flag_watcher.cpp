@@ -167,6 +167,23 @@ bool FlagWatcher::keeps_own(FlagStore& store, const FlagEntry& entry) {
   return true;
 }
 
+bool FlagWatcher::share_containers(FlagKey key) {
+  if (key.kind != FlagKeyKind::named || !shared_.contains(key)) return false;
+  return containers_.insert(key).second;
+}
+
+std::optional<std::int32_t> FlagWatcher::group_int(FlagKey key) const {
+  const auto g = group_.find(key);
+  if (g == group_.end() || g->second.kind != protocol::FlagKind::int32) return std::nullopt;
+  return static_cast<std::int32_t>(as_int(g->second.value));
+}
+
+void FlagWatcher::note_group_at_least(FlagKey key, std::int32_t value) {
+  const auto known = group_int(key);
+  if (known && *known >= value) return;
+  note_group(FlagEntry{key, protocol::FlagKind::int32, as_bits(value)}, nullptr);
+}
+
 bool FlagWatcher::share_pickup(FlagKey key) {
   if (key.kind != FlagKeyKind::key64 || !pickups_.insert(key).second) return false;
   shared_.add(key);
@@ -269,6 +286,7 @@ void FlagWatcher::reset() {
   // Row 140: what was left to the game was the old session's group's.
   game_owned_.clear();
   put_back_.clear();
+  hud_given_.clear();
   owed_.clear();
   owed_due_ = false;
   // Another session, or the same server started again: what the group had
@@ -379,6 +397,7 @@ std::vector<Outgoing> FlagWatcher::frame(FlagStore& store) {
     // screen's floors): a value left to the game may take a put-back again (owed_, when the window ends).
     game_owned_.clear();
     put_back_.clear();
+    hud_given_.clear();  // row 183: the load reads the HUD's copy in again
     window_since_ = frames_;
     old_counted_ = false;
     window_retry_ = false;
@@ -987,7 +1006,7 @@ void FlagWatcher::note_received(const FlagKey& key, const FlagEntry& before, con
 
 void FlagWatcher::add(FlagStore& store, const FlagEntry& delta) {
   const FlagKey key = key_of(delta);
-  if (!store.is_count(key)) {
+  if (!store.is_count(key) && !containers_.contains(key)) {
     ++stats_.not_shared;
     return;
   }
@@ -1078,8 +1097,16 @@ void FlagWatcher::put_owed(FlagStore& store) {
     ++stats_.one_way_restores;
     ++stats_.one_way_owed;
     ++stats_.applied;
-    if (is_hud_dungeon_item(key)) hud_refresh_ = true;
+    ask_hud(key, back.value);
   }
+}
+
+void FlagWatcher::ask_hud(FlagKey key, std::uint32_t value) {
+  if (!is_hud_dungeon_item(key)) return;
+  const auto [it, fresh] = hud_given_.try_emplace(key, value);
+  if (!fresh && it->second == value) return;  // row 183: given this value already in this window
+  it->second = value;
+  hud_refresh_ = true;
 }
 
 void FlagWatcher::diff(FlagStore& store, Table& changes) {
@@ -1225,7 +1252,7 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
         leave();
         continue;
       }
-      if (auto& pb = put_back_[key]; pb.pass != 0 && diff_pass_ - pb.pass <= kUndoPasses) {
+      if (auto& pb = put_back_[key]; pb.pass != 0) {  // row 183: every drop after a put-back, however long after
         if (++pb.undone >= kMaxQuickUndos) {
           // Row 140: the game lowers it again at once from its own copy: putting it back every frame never sticks.
           game_owned_.insert(key);
@@ -1235,15 +1262,13 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
           leave();
           continue;
         }
-      } else {
-        pb.undone = 0;
       }
       const MapDropBecause because("the flag watcher: one-way restore (issue 146)");
       FlagEntry back = before;
       if (bits_drop) back.value = before.value | now->value;
       if (store.write(back)) {
         put_back_[key].pass = diff_pass_;
-        if (is_hud_dungeon_item(key)) hud_refresh_ = true;  // row 140: every put-back, so the HUD copy takes it
+        ask_hud(key, back.value);  // row 140: so the HUD copy takes it (row 183: a value it has not had yet)
         ++stats_.one_way_restores;
         ++stats_.applied;
         it->second = before;  // a new floor in `back` goes out next frame as a change
@@ -1375,6 +1400,27 @@ void FlagWatcher::diff(FlagStore& store, Table& changes) {
       Guard& guard = guards_[s->second];
       if (guard.credit == 0) guard.credit_since = frames_;
       ++guard.credit;  // taken in our own game: a gain of its count is real
+    }
+    if (role_ == FlagRole::player && containers_.contains(key) && !restate_.contains(key) &&
+        !max_caps_.contains(key) && doubled_ == 0 && before.kind == protocol::FlagKind::int32 &&
+        now->kind == protocol::FlagKind::int32 && as_int(now->value) > as_int(before.value)) {
+      // Row 218 (share_containers): a heart container adds up as a heart piece does. Only the part above the
+      // group's maximum is ours: up to it, our game got the group's hearts back (the object walk raised its live
+      // copy after the game had written its own lower max back), which is no pickup.
+      const std::int64_t floor = (std::max)(std::int64_t{as_int(before.value)},
+                                            std::int64_t{group_int(key).value_or(static_cast<std::int32_t>(
+                                                as_int(before.value)))});
+      if (as_int(now->value) <= floor) {
+        ++stats_.container_catch_ups;
+        pending_.erase(key);
+        continue;
+      }
+      ++stats_.changes_sent;
+      ++stats_.container_deltas;
+      changes[key] = FlagEntry{key, protocol::FlagKind::count_delta, as_bits(as_int(now->value) - floor)};
+      note_group(*now, &before);  // the group has it once the host adds it: a later catch-up to it is no pickup
+      pending_.erase(key);
+      continue;
     }
     ++stats_.changes_sent;
     if (store.is_count(key) && before.kind == protocol::FlagKind::int32 &&

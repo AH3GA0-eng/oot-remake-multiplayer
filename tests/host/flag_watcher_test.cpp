@@ -1361,7 +1361,7 @@ TEST_CASE("flag watcher: a one-way value the game lowers again at once is left t
   floors(0b10000);
   w.frame(store);
   CHECK(game_store.get(kDekuFloors) == 0b11100u);  // undone once: put back once more
-  CHECK(w.take_hud_refresh());                       // every put-back, not only the key's first (review)
+  CHECK_FALSE(w.take_hud_refresh());                 // row 183: the HUD had this value already: no redraw
   CHECK(w.stats().one_way_restores == 2);
   CHECK(w.take_one_way_left().empty());
   floors(0b10000);
@@ -1398,14 +1398,15 @@ TEST_CASE("flag watcher: a one-way value the game lowers again at once is left t
   // left again after kMaxQuickUndos, and owed again for the next load.
   floors(0b10010);
   w.frame(store);
-  CHECK(game_store.get(kDekuFloors) == 0b11110u);  // a later one-off drop: put back
+  CHECK(game_store.get(kDekuFloors) == 0b11110u);  // the first drop after the owed put-back: put back once more
+  CHECK_FALSE(w.take_hud_refresh());                 // (the same value the window's refresh gave)
   floors(0b10010);
-  w.frame(store);
+  w.frame(store);  // row 183: the owed put-back counts too: the second drop leaves it
   floors(0b10010);
   w.frame(store);
   CHECK(game_store.get(kDekuFloors) == 0b10010u);
   CHECK(w.stats().one_way_left == 2);
-  CHECK(w.stats().one_way_restores == 5);
+  CHECK(w.stats().one_way_restores == 4);
 }
 
 TEST_CASE("flag watcher: a floor another player enters after a key was left is owed too (row 140 review)") {
@@ -1466,7 +1467,7 @@ TEST_CASE("flag watcher: floors left to the game are not owed into another save 
   CHECK(w.stats().one_way_owed == 0);
 }
 
-TEST_CASE("flag watcher: one-off drops far apart are each put back (row 140 keeps issue 146)") {
+TEST_CASE("flag watcher: a drop at each room load is put back in each room (row 140 keeps issue 146)") {
   FakeStore game_store = dungeon_game();
   ItemFlagStore store(game_store);
   FlagWatcher w(SharedFlags({kDekuMap}), FlagRole::player);
@@ -1474,13 +1475,67 @@ TEST_CASE("flag watcher: one-off drops far apart are each put back (row 140 keep
   game_store.set(kDekuMap, 1);
   w.frame(store);
   for (int n = 0; n < 5; ++n) {
+    w.set_loading(true);  // the next room
+    w.frame(store);
+    w.set_loading(false);
+    for (int i = 0; i < FlagWatcher::kSettleFrames + 10; ++i) w.frame(store);
     game_store.set(kDekuMap, 0);
     w.frame(store);
     CHECK(game_store.get(kDekuMap) == 1);
+    CHECK(w.take_hud_refresh());  // once in each room
     for (int i = 0; i < 3; ++i) w.frame(store);
   }
   CHECK(w.stats().one_way_restores == 5);
   CHECK(w.stats().one_way_left == 0);
+}
+
+TEST_CASE("flag watcher: a map, compass or floors the game keeps lowering in one room stop flickering (row 183)") {
+  // proyectskye: after the map was picked up it flickered "like equipping and unequipping". The game lowered the
+  // map a few frames after each put-back, later than the old 2-pass window, so it was put back and the HUD redrawn
+  // forever. Now every drop after a put-back counts until the next load: put back kMaxQuickUndos times, one HUD
+  // refresh for the value, then the game's own until the next room, where it is owed back once.
+  // (The boss key is not one-way: the game takes it at the boss door, so it is never put back; not a case here.)
+  constexpr FlagKey kDekuBossKey{0xf6995ceeu, 0};  // DungeonInfo.InsideTheDekuTree.IsGetBossKey
+  constexpr FlagKey kDekuFloors{0x5c6c21c1u, 0};   // DungeonInfo.InsideTheDekuTree.EnteredFloorBit
+  {
+    FakeStore game_store = dungeon_game();
+    CHECK_FALSE(ItemFlagStore(game_store).is_one_way(kDekuBossKey));
+  }
+  for (const FlagKey key : {kDekuMap, kDekuCompass, kDekuFloors}) {
+    CAPTURE(key.hash);
+    const bool bits = key.hash == kDekuFloors.hash;
+    const std::uint32_t got = bits ? 0b0110u : 1u, lowered = bits ? 0b0100u : 0u;
+    FakeStore game_store = dungeon_game();
+    const auto put = [&](std::uint32_t v) {
+      game_store.values[key] = entry(key, v, bits ? proto::FlagKind::uint32 : proto::FlagKind::boolean);
+    };
+    put(bits ? 0b0100u : 0u);
+    ItemFlagStore store(game_store);
+    REQUIRE(store.is_one_way(key));
+    FlagWatcher w(SharedFlags({key}), FlagRole::player);
+    w.frame(store);
+    put(got);
+    w.frame(store);
+    int refreshes = 0;
+    for (int n = 0; n < 40; ++n) {  // lowered 6 frames after each put-back: well past the old window
+      put(lowered);
+      w.frame(store);
+      if (w.take_hud_refresh()) ++refreshes;
+      for (int i = 0; i < 5; ++i) w.frame(store);
+    }
+    CHECK(w.stats().one_way_restores == FlagWatcher::kMaxQuickUndos);
+    CHECK(w.stats().one_way_left == 1);
+    CHECK(refreshes == 1);
+    CHECK(game_store.get(key) == lowered);
+    // The next room: owed back once, with one refresh, and the count starts again.
+    w.set_loading(true);
+    w.frame(store);
+    w.set_loading(false);
+    for (int i = 0; i < FlagWatcher::kSettleFrames + 10; ++i) w.frame(store);
+    CHECK(game_store.get(key) == got);
+    CHECK(w.stats().one_way_owed == 1);
+    CHECK(w.take_hud_refresh());
+  }
 }
 
 TEST_CASE("flag watcher: the key of a write that keeps failing is counted and said once (row 140)") {
@@ -3445,4 +3500,206 @@ TEST_CASE("flag watcher: a FLAG_RESET's lower step refused for room is tried aga
   // Co-op idle / plain play: a later step of our own is progress again once the game kept the save's step.
   for (int i = 0; i <= FlagWatcher::kResetQuietFrames; ++i) CHECK(w.frame(game_store).empty());
   CHECK_FALSE(w.reset_lowered(kQuestStep));
+}
+
+// Row 218 (Bean, randomizer: heart containers given to only some players). PlayerStatus.MaxLife used to cross only
+// as an absolute maximum: two containers taken at about the same time in two games kept one, and a game that wrote
+// its own lower max back before its Link was raised lost the container for good. share_containers makes a rise add
+// up as a heart piece does (docs/items.md, "Heart containers add up").
+namespace {
+constexpr FlagKey kHeartMax{0xfbe01da1u, 0};  // PlayerStatus.MaxLife, max
+
+proto::FlagEntry hearts(std::int32_t quarters) {
+  return entry(kHeartMax, static_cast<std::uint32_t>(quarters), proto::FlagKind::int32);
+}
+proto::FlagEntry hearts_delta(std::int32_t quarters) {
+  return entry(kHeartMax, static_cast<std::uint32_t>(quarters), proto::FlagKind::count_delta);
+}
+}  // namespace
+
+TEST_CASE("heart containers: two players' containers at once both count for everyone (row 218)") {
+  FakeStore host_game, a_game, b_game;
+  host_game.values[kHeartMax] = hearts(12);
+  a_game.values[kHeartMax] = hearts(12);
+  b_game.values[kHeartMax] = hearts(12);
+  ItemFlagStore host_store(host_game), a_store(a_game), b_store(b_game);
+  FlagWatcher h(SharedFlags({kHeartMax}), FlagRole::host);
+  FlagWatcher a(SharedFlags({kHeartMax}), FlagRole::player);
+  FlagWatcher b(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(h.share_containers(kHeartMax));
+  CHECK(a.share_containers(kHeartMax));
+  CHECK(b.share_containers(kHeartMax));
+  h.frame(host_store);
+  a.frame(a_store);
+  b.frame(b_store);
+  // Two randomizer chests, two Heart Containers, the same frame in A and B.
+  a_game.values[kHeartMax] = hearts(16);
+  b_game.values[kHeartMax] = hearts(16);
+  const auto from_a = a.frame(a_store);
+  const auto from_b = b.frame(b_store);
+  CHECK(only<proto::FlagSet>(from_a) == std::vector{hearts_delta(4)});
+  CHECK(only<proto::FlagSet>(from_b) == std::vector{hearts_delta(4)});
+  for (const auto& o : from_a) CHECK(h.receive(o.bytes));
+  for (const auto& o : from_b) CHECK(h.receive(o.bytes));
+  for (int i = 0; i < 5; ++i) {
+    for (const auto& o : h.frame(host_store)) {
+      CHECK(a.receive(o.bytes));
+      CHECK(b.receive(o.bytes));
+    }
+    for (const auto& o : a.frame(a_store)) CHECK(h.receive(o.bytes));
+    for (const auto& o : b.frame(b_store)) CHECK(h.receive(o.bytes));
+  }
+  CHECK(host_game.get(kHeartMax) == 20u);  // was 16 for everyone: the max kept one of the two
+  CHECK(a_game.get(kHeartMax) == 20u);
+  CHECK(b_game.get(kHeartMax) == 20u);
+  CHECK(a.stats().container_deltas == 1);
+  CHECK(b.stats().container_deltas == 1);
+}
+
+TEST_CASE("heart containers: the host's own and a player's container at once both count (row 218)") {
+  FakeStore host_game, player_game;
+  host_game.values[kHeartMax] = hearts(12);
+  player_game.values[kHeartMax] = hearts(12);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kHeartMax}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(h.share_containers(kHeartMax));
+  CHECK(p.share_containers(kHeartMax));
+  h.frame(host_store);
+  p.frame(player_store);
+  host_game.values[kHeartMax] = hearts(16);
+  player_game.values[kHeartMax] = hearts(16);
+  for (int i = 0; i < 5; ++i) {
+    for (const auto& o : p.frame(player_store)) CHECK(h.receive(o.bytes));
+    for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+  }
+  CHECK(host_game.get(kHeartMax) == 20u);
+  CHECK(player_game.get(kHeartMax) == 20u);
+}
+
+TEST_CASE("heart containers: a game that wrote its own lower max back catches up without a second container") {
+  // The other half of row 218: the group's 16 came, our game wrote its 12 back before the object walk raised our
+  // Link (kept here, never sent), and the walk then raised Link to the group's 16 (group_int): that rise is no pickup.
+  FakeStore game_store;
+  game_store.values[kHeartMax] = hearts(12);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(w.share_containers(kHeartMax));
+  w.frame(store);
+  CHECK(w.receive(state({hearts(16)})));
+  CHECK(w.frame(store).empty());
+  CHECK(game_store.get(kHeartMax) == 16u);
+  game_store.values[kHeartMax] = hearts(12);  // the game's own write-back
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().max_drops_kept == 1);
+  CHECK(w.group_int(kHeartMax) == std::optional<std::int32_t>(16));  // what the hook raises our Link to
+  game_store.values[kHeartMax] = hearts(16);  // the walk raised Link, the game wrote it back
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().container_catch_ups == 1);
+  // A real container after that is ours: only its own part goes out.
+  game_store.values[kHeartMax] = hearts(20);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{hearts_delta(4)});
+  // From below the group's maximum, only the part above it is ours.
+  CHECK(w.receive(state({hearts(24)})));
+  w.frame(store);
+  game_store.values[kHeartMax] = hearts(20);  // written back again
+  w.frame(store);
+  game_store.values[kHeartMax] = hearts(28);  // raised to the group's 24 and a container of ours in one step
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{hearts_delta(4)});
+}
+
+TEST_CASE("heart containers: a boss's one container still gives one when two players take it (cap set)") {
+  // In a beaten boss's area the container is the BOSS_HEART claim's (coop_boss_scenes.h): a rise there goes out as
+  // its value, so the max rule makes two pickups of the same container one (the double grant guard).
+  FakeStore host_game, player_game;
+  host_game.values[kHeartMax] = hearts(12);
+  player_game.values[kHeartMax] = hearts(12);
+  ItemFlagStore host_store(host_game), player_store(player_game);
+  FlagWatcher h(SharedFlags({kHeartMax}), FlagRole::host);
+  FlagWatcher p(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(h.share_containers(kHeartMax));
+  CHECK(p.share_containers(kHeartMax));
+  h.frame(host_store);
+  p.frame(player_store);
+  h.cap_max(kHeartMax, 16);
+  p.cap_max(kHeartMax, 16);
+  host_game.values[kHeartMax] = hearts(16);
+  player_game.values[kHeartMax] = hearts(16);  // the race: both took it
+  const auto out = p.frame(player_store);
+  CHECK(only<proto::FlagSet>(out) == std::vector{hearts(16)});  // its value, not a change
+  for (const auto& o : out) CHECK(h.receive(o.bytes));
+  for (int i = 0; i < 5; ++i) {
+    for (const auto& o : h.frame(host_store)) CHECK(p.receive(o.bytes));
+    for (const auto& o : p.frame(player_store)) CHECK(h.receive(o.bytes));
+  }
+  CHECK(host_game.get(kHeartMax) == 16u);
+  CHECK(player_game.get(kHeartMax) == 16u);
+  CHECK(p.stats().container_deltas == 0);
+}
+
+TEST_CASE("heart containers: the boss answer written by the hook is no change of ours (note_group_at_least)") {
+  FakeStore game_store;
+  game_store.values[kHeartMax] = hearts(12);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(w.share_containers(kHeartMax));
+  w.frame(store);
+  // Outside the boss's area (no cap): the server's BOSS_HEART answer, 16, written into our game by the hook.
+  w.note_group_at_least(kHeartMax, 16);
+  w.note_group_at_least(kHeartMax, 14);  // never lowers it
+  CHECK(w.group_int(kHeartMax) == std::optional<std::int32_t>(16));
+  game_store.values[kHeartMax] = hearts(16);
+  CHECK(w.frame(store).empty());
+  CHECK(w.stats().container_catch_ups == 1);
+}
+
+TEST_CASE("heart containers: a reopened chest's gain goes out as its value, so it counts once") {
+  FakeStore game_store;
+  game_store.values[kHeartMax] = hearts(12);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(w.share_containers(kHeartMax));
+  w.frame(store);
+  w.expect_doubled_gain();  // a chest another player opened, opened again here (issue 195)
+  game_store.values[kHeartMax] = hearts(16);
+  CHECK(only<proto::FlagSet>(w.frame(store)) == std::vector{hearts(16)});
+  CHECK(w.stats().container_deltas == 0);
+}
+
+TEST_CASE("heart containers: the host's save and the join snapshot set the group's maximum, lower too") {
+  FakeStore game_store;
+  game_store.values[kHeartMax] = hearts(20);
+  ItemFlagStore store(game_store);
+  FlagWatcher w(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(w.share_containers(kHeartMax));
+  w.frame(store);
+  CHECK(w.receive(state({hearts(24)})));
+  w.frame(store);
+  CHECK(w.group_int(kHeartMax) == std::optional<std::int32_t>(24));
+  // The host loads a save with fewer hearts: the hook must not raise our Link back to the old 24.
+  CHECK(w.receive(proto::Message{proto::FlagReset{1, {hearts(16)}}}));
+  w.frame(store);
+  CHECK(game_store.get(kHeartMax) == 16u);
+  CHECK(w.group_int(kHeartMax) == std::optional<std::int32_t>(16));
+  // A rejoin: the group is forgotten with the connection, then the snapshot names it.
+  w.reset();
+  CHECK_FALSE(w.group_int(kHeartMax).has_value());
+  CHECK(w.receive(proto::FlagSnapshot{0, 1, {hearts(20)}}));
+  w.frame(store);
+  CHECK(game_store.get(kHeartMax) == 20u);
+  CHECK(w.group_int(kHeartMax) == std::optional<std::int32_t>(20));
+}
+
+TEST_CASE("heart containers: only a shared named flag, and the item store takes a gain only") {
+  FlagWatcher w(SharedFlags({kHeartMax}), FlagRole::player);
+  CHECK(w.share_containers(kHeartMax));
+  CHECK_FALSE(w.share_containers(kHeartMax));                // already
+  CHECK_FALSE(w.share_containers(FlagKey{0x8573d2cdu, 0}));  // not shared here
+  FakeStore game_store;
+  game_store.values[kHeartMax] = hearts(12);
+  ItemFlagStore store(game_store);
+  CHECK(store.write(hearts_delta(4)));
+  CHECK(game_store.get(kHeartMax) == 16u);
+  CHECK_FALSE(store.write(hearts_delta(-4)));  // a maximum never goes down by a change
+  CHECK(game_store.get(kHeartMax) == 16u);
 }
