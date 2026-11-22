@@ -3481,15 +3481,14 @@ TEST_CASE("objects: a pair or pack of one family is one group under its lowest i
     CHECK(CoopObjects::PackFamily("Enemy_Stalfos_Haribote").empty());
     CHECK(CoopObjects::PackFamily("Enemy_MiddleBoss_Lizalfos").empty());  // a boss of its own already
     CHECK(CoopObjects::PackFamily("Enemy_Keese").empty());
-    {  // a Lizalfos pair 5 m apart: one group, boss-style; one 40 m off stays alone (boss-style as before)
+    {  // a Lizalfos pair 5 m apart: one group, never the boss bit (geno-fix-0119); one 40 m off stays alone (nothing sent)
         const std::vector<GroupInput> walk{{id(4), "Enemy_Lizalfos", {0, 0, 0}},
                                            {id(9), "Enemy_Dinolfos", {5, 0, 0}},
                                            {id(2), "Enemy_Lizalfos", {40, 0, 0}}};
         const auto g = CoopObjects::GroupsOf(walk);
-        REQUIRE(g.size() == 3);
-        CHECK(g[0] == proto::ObjectGroupEntry{id(2), id(2), kBoss});
-        CHECK(g[1] == proto::ObjectGroupEntry{id(4), id(4), kBoss});
-        CHECK(g[2] == proto::ObjectGroupEntry{id(9), id(4), kBoss});
+        REQUIRE(g.size() == 1);
+        CHECK(g[0] == proto::ObjectGroupEntry{id(9), id(4), 0});
+        for (const auto& e : g) CHECK((e.flags & kBoss) == 0);
     }
     {  // three plain Wolfos: one group under the lowest id, no boss bit; the root itself sends nothing new
         const std::vector<GroupInput> walk{{id(7), "Enemy_Wolfos", {0, 0, 0}},
@@ -3500,13 +3499,12 @@ TEST_CASE("objects: a pair or pack of one family is one group under its lowest i
         CHECK(g[0] == proto::ObjectGroupEntry{id(5), id(3), 0});
         CHECK(g[1] == proto::ObjectGroupEntry{id(7), id(3), 0});
     }
-    {  // a white Wolfos in a plain pack: the whole pack fights boss-style, its plain root too
+    {  // a white Wolfos in a plain pack: one group under the plain root, no boss bit (geno-fix-0119)
         const std::vector<GroupInput> walk{{id(3), "Enemy_Wolfos", {0, 0, 0}},
                                            {id(6), "Enemy_Wolfos_White", {4, 0, 0}}};
         const auto g = CoopObjects::GroupsOf(walk);
-        REQUIRE(g.size() == 2);
-        CHECK(g[0] == proto::ObjectGroupEntry{id(3), id(3), kBoss});
-        CHECK(g[1] == proto::ObjectGroupEntry{id(6), id(3), kBoss});
+        REQUIRE(g.size() == 1);
+        CHECK(g[0] == proto::ObjectGroupEntry{id(6), id(3), 0});
     }
     {  // the root gone (killed): a member linked to it goes on its own, once
         const std::vector<GroupInput> walk{{id(9), "Enemy_Wolfos", {5, 0, 0}}};

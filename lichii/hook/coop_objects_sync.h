@@ -542,13 +542,9 @@ bool IsBossPart(std::string_view name);
 // A boss or one of its parts named as one (what IsBoss was before row 149): the rules every boss actor shares
 // (its life, its hits, its slots and animations, its own native boss sync entry).
 bool IsBossOrPart(std::string_view name);
-// Enemy survey: one-on-one fighters given the group's boss bit (server-side boss turns and rules) while their AI
-// stays on the plain path: Iron Knuckles, Poe sisters Amy/Beth/Joelle, Stalfos, Lizalfos, Dinolfos, white Wolfos,
-// the club Moblin.
-bool FightsAsBoss(std::string_view name);
 // Pair/pack survey: the family of enemies that fight together by messages between their AIs ("lizalfos" for
 // Lizalfos and Dinolfos, "stalfos", "wolfos"; empty: none). GroupsOf puts one family within kPackReach in one group
-// (root: the lowest id), so the pack has one owner and its teamwork runs in one game.
+// (root: the lowest id), so the pack has one owner and its teamwork runs in one game; never the boss bit (plain enemies).
 std::string_view PackFamily(std::string_view name);
 inline constexpr float kPackReach = 25.0f;
 // An enemy that keeps its target (no attack read sent, so no turns): Anubis, which mirrors its target.

@@ -550,28 +550,12 @@ std::uint8_t AttackBits(std::optional<bool> attacking) {
                                      (*attacking ? proto::object_state::attacking : 0));
 }
 
-bool FightsAsBoss(std::string_view name) {
-    // Enemy survey (2026-11-21): one-on-one fighters that are no Enemy_MiddleBoss_ actor. Boss-style on the server
-    // only (the group's boss bit: 40 m turns, a downed owner left at once, the longer fight lock); their AI keeps
-    // the plain path (not IsBossOrPart: the native boss sync was never tried on them).
-    if (name.find("_Dictionary") != std::string_view::npos || name.find("_Haribote") != std::string_view::npos) {
-        return false;
-    }
-    static constexpr std::array<std::string_view, 9> kFighters{
-        "Enemy_IronKnuckle_", "Enemy_Poe_Amy", "Enemy_Poe_Beth", "Enemy_Poe_Joelle", "Enemy_Stalfos",
-        "Enemy_Lizalfos",     "Enemy_Dinolfos", "Enemy_Wolfos_White", "Enemy_Moblin_Club"};
-    for (const std::string_view f : kFighters) {
-        if (name.starts_with(f)) return true;
-    }
-    return false;
-}
-
 std::string_view PackFamily(std::string_view name) {
     // Pair/pack survey (2026-11-21): these fight together by messages each one's AI writes into its ally's
     // blackboard (Lizalfos/Dinolfos: SetBattlingAllyFromReferenceLink, IsRequestingCoop, IsReceivedCoop*Message;
     // Wolfos: AllAlliesDisableMelee, tag WolfosAlly, IsDisableMeleeBattle). A copy's held brain sends none, so
     // with two owners each game runs half a pair with no partner. One family near together is one group: one
-    // owner, the whole pack's teamwork in one game, and a turn moves the pack together.
+    // owner, the whole pack's teamwork in one game (no boss bit: plain enemies, no turns).
     if (name.find("_Dictionary") != std::string_view::npos || name.find("_Haribote") != std::string_view::npos) {
         return {};
     }
@@ -680,22 +664,15 @@ std::vector<proto::ObjectGroupEntry> GroupsOf(
                         if (std::isfinite(d2) && d2 <= kPackReach * kPackReach) root = &r;
                     }
                 }
-                // Boss-style when any of the pack near its root fights as one (a white Wolfos in a plain pack):
-                // the root's bit is what the server's turns read.
-                bool boss = FightsAsBoss(m.name) || FightsAsBoss(root->name);
-                for (std::size_t i = 0; !boss && i < walk.size(); ++i) {
-                    const GroupInput& r = walk[i];
-                    const float d2 = dist2(r, *root);
-                    boss = PackFamily(r.name) == family && FightsAsBoss(r.name) && std::isfinite(d2) &&
-                           d2 <= kPackReach * kPackReach;
-                }
-                // A lone plain one sends nothing unless it was linked before (then once, on its own again).
-                if (root != &m || boss || linked.contains(m.id)) {
-                    out.push_back({m.id, root->id, boss ? proto::object_group::boss : std::uint8_t{0}});
+                // Never the boss bit: their AI is a plain enemy's (it chases only its owner's Link), and the boss
+                // rules would pass the pack between players, the mob shuttle the owner settled off (geno-fix-0119).
+                // A lone one sends nothing unless it was linked before (then once, on its own again).
+                if (root != &m || linked.contains(m.id)) {
+                    out.push_back({m.id, root->id, std::uint8_t{0}});
                 }
                 continue;
             }
-            if (IsBossOrPart(m.name) || FightsAsBoss(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
+            if (IsBossOrPart(m.name)) out.push_back({m.id, m.id, proto::object_group::boss});
             continue;
         }
         const GroupInput* root = nullptr;
