@@ -1078,6 +1078,16 @@ class PidProcess:
                 os.kill(self.pid, 9)
 
 
+def code_mods_mismatch(folder):
+    """hs.py's check (the folder's mods' code patches against its game's build), or why it could not run; None: fine."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hookshot"))
+    try:
+        import hs
+        return hs.code_mods_mismatch(folder)
+    except Exception as e:   # (a check only: the run goes on)
+        return "the mods' code patches could not be checked: %s" % e
+
+
 def fresh_log(game, since):
     """The game's longshot_log.txt once this start wrote it (an older one in the folder is from another run), else ''."""
     p = find_log(game)
@@ -1152,6 +1162,9 @@ def run(a):
                 say("%s: the kit's own start (%s)" % (x, kits[x]))
                 procs[x] = PidProcess(kit_start(kits[x], env, out, x))
             else:
+                mismatch = code_mods_mismatch(exe_dir(g))
+                if mismatch:   # (charsel-tab-0119: a code mod's menus without its code; the run says so first)
+                    say("%s: WARNING: %s" % (x, mismatch))
                 with open(os.path.join(out, "game-out-%s.txt" % x), "wb") as go:
                     kw = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if WINDOWS else {"start_new_session": True}
                     procs[x] = subprocess.Popen([exe], cwd=exe_dir(g), env=env, stdin=subprocess.DEVNULL, stdout=go,

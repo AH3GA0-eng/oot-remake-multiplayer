@@ -602,6 +602,17 @@ class CodeModsTest(Fixture):
         self.assertTrue(hs.cache_restore(pair, self.repo, say=self.say, want=st))
         self.assertTrue(os.path.isfile(os.path.join(pair, "exefs_patches.txt")))
 
+    def test_mismatch_of_a_code_mod_added_after_the_build(self):
+        g = self.game(stamp=hs.stamp(self.repo))
+        self.assertIsNone(hs.code_mods_mismatch(g, self.repo, self.Run()))          # no code mods, none built in
+        self.mods("built")                                                            # Character Select put in after
+        why = hs.code_mods_mismatch(g, self.repo, self.Run())
+        self.assertIn("game: none", why)
+        self.assertIn("mods: exefs=CS/exefs/E0.ips:aa;list=none", why)
+        write(os.path.join(g, "coop-built-from.txt"), hs.stamp(self.repo) + self.LINE + "\r\n")   # built with it
+        self.assertIsNone(hs.code_mods_mismatch(g, self.repo, self.Run()))
+        self.assertIsNone(hs.code_mods_mismatch(os.path.join(self.tmp, "no-game"), self.repo, self.Run()))
+
     def test_restore_of_a_plain_game_takes_a_stale_list_away(self):
         hs.cache_store(self.game(), self.repo, say=self.say)
         pair = os.path.join(self.tmp, "B1")

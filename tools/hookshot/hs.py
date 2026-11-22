@@ -168,6 +168,23 @@ def code_mods_line(mods, repo=REPO, run=subprocess.run):
     return r.stdout.replace("\r", "")
 
 
+def code_mods_mismatch(game, repo=REPO, run=subprocess.run):
+    """None when a game folder's mods have the code patches its game was built with (coop-built-from.txt's exefs= line,
+    none without), else why not. A code mod put into a pair after its build (lane-0119 2026-11-21: Character Select
+    copied into lane1's mods) shows his menus without his code: no Characters tab, a pick does nothing."""
+    try:
+        with open(os.path.join(game, "coop-built-from.txt"), encoding="utf-8") as f:
+            built = [l.strip() for l in f.read().splitlines() if l.strip().startswith("exefs=")]
+    except OSError:
+        return None   # (no build of ours there)
+    want = code_mods_line(os.path.join(game, "mods"), repo, run).strip()
+    have = built[0] if built else ""
+    if want == have:
+        return None
+    return ("%s: its mods' code patches are not the ones its game was built with (game: %s; mods: %s): build it again"
+            " (hs.py build --pair, or the kit's start)" % (game, have or "none", want or "none"))
+
+
 def pairs_code_mods(pairs, repo=REPO, run=subprocess.run):
     """(line, mods folder) of the pairs' code patches; ('', None) when no pair has any. One game serves every pair,
     so pairs with different code patches cannot be built together (Fail)."""
