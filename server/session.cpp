@@ -2206,6 +2206,11 @@ bool Session::owner_hit_lately(const Object& o, std::uint64_t now_us) const {
   return o.owner_hit_at != 0 && now_us - o.owner_hit_at < config_.boss_owner_hit_hold_us;
 }
 
+bool Session::mid_attack(const Object& o, std::uint64_t now_us) const {
+  return config_.attack_hold_max_us != 0 && o.attack_read && o.attacking && o.attack_began_at != 0 &&
+         now_us - o.attack_began_at < config_.attack_hold_max_us;
+}
+
 void Session::note_attack(Object& o, std::uint16_t epoch, const ObjectState& sample, std::uint64_t now_us) {
   const std::uint8_t bits = sample.state.value_or(0);
   const bool read = (bits & object_state::attack_read) != 0;
@@ -2216,9 +2221,12 @@ void Session::note_attack(Object& o, std::uint16_t epoch, const ObjectState& sam
     o.attacking = attacking;
     o.attack_read = read;
     o.attack_ended_at = 0;
+    o.attack_began_at = attacking ? stamp(now_us) : 0;
     return;
   }
   if (read && o.attack_read && o.attacking && !attacking) o.attack_ended_at = stamp(now_us);
+  if (attacking && !(o.attack_read && o.attacking)) o.attack_began_at = stamp(now_us);
+  if (!attacking) o.attack_began_at = 0;
   o.attacking = attacking;
   o.attack_read = read;
 }
@@ -2778,6 +2786,12 @@ void Session::run_ownership(std::uint64_t now_us) {
         if (o.ask) o.ask->turn = true;  // no hitter cooldown from a turn (hitter_changed_at)
         continue;
       }
+    }
+
+    // Never mid-attack (attack_hold_max_us): a grab or hold stays on the player it holds until it lets go.
+    if (mid_attack(o, now_us)) {
+      o.candidate.reset();
+      continue;
     }
 
     // A boss in a fight: the player clearly nearer it than its owner (issue
