@@ -984,6 +984,8 @@ constexpr Entry kzh_Hans[] = {
     {"Revive hold", "复活按住"},
     {"Revive hearts", "复活心数"},
     {"Only the host changes this; it shows what the host chose.", "只有房主能更改此项；这里显示房主的选择。"},
+    {"Your own setting for the next game you host; the game you are in keeps its host's.",
+     "你下次开房时使用的设置；当前所在的房间沿用房主的设置。"},
     {"On: each player who asks to join waits until you let them in or refuse them (Let in on Your game, or /allow and /deny in the chat). Applies at your next Host.", "开启：每位申请加入的玩家都要等你放行或拒绝（在“你的房间”中放行，或在聊天中输入 /allow、/deny）。下次开房时生效。"},
     {"On: sword hits, arrows and other attacks hurt the other players too, both ways. In a game you host it changes at once for everyone (as /pvp on and /pvp off); else it is used at your next Host.", "开启：剑击、箭矢等攻击也会伤害其他玩家，双向生效。在你开的房间中会立即对所有人生效（同 /pvp on 与 /pvp off）；否则在你下次开房时使用。"},
     {"Set while you host: these rules are the session's, and each game starts with them on.", "开房时设置：这些规则属于本次联机，每局开始时默认开启。"},
@@ -994,6 +996,7 @@ constexpr Entry kzh_Hans[] = {
     {"Sent: the chat says what changed.", "已发送：聊天会说明改了什么。"},
     {"Hosting: open Your game", "开房中：打开你的房间"},
     {"Password: if it asks", "密码：如需要"},
+    {"Password: ", "密码："},   // (the Join view's password field while typed, still empty)
     {"Turned away: why", "被拒：原因"},
     {"Join this game", "加入这个游戏"},
     {"They left the session", "他离开了房间"},
@@ -2212,6 +2215,8 @@ constexpr Entry kzh_Hant[] = {
     {"Revive hold", "復活按住"},
     {"Revive hearts", "復活心數"},
     {"Only the host changes this; it shows what the host chose.", "只有房主能更改此項；這裡顯示房主的選擇。"},
+    {"Your own setting for the next game you host; the game you are in keeps its host's.",
+     "你下次開房時使用的設定；目前所在的房間沿用房主的設定。"},
     {"On: each player who asks to join waits until you let them in or refuse them (Let in on Your game, or /allow and /deny in the chat). Applies at your next Host.", "開啟：每位申請加入的玩家都要等你放行或拒絕（在「你的房間」中放行，或在聊天中輸入 /allow、/deny）。下次開房時生效。"},
     {"On: sword hits, arrows and other attacks hurt the other players too, both ways. In a game you host it changes at once for everyone (as /pvp on and /pvp off); else it is used at your next Host.", "開啟：劍擊、箭矢等攻擊也會傷害其他玩家，雙向生效。在你開的房間中會立即對所有人生效（同 /pvp on 與 /pvp off）；否則在你下次開房時使用。"},
     {"Set while you host: these rules are the session's, and each game starts with them on.", "開房時設定：這些規則屬於本次連線，每局開始時預設開啟。"},
@@ -2222,6 +2227,7 @@ constexpr Entry kzh_Hant[] = {
     {"Sent: the chat says what changed.", "已發送：聊天會說明改了什麼。"},
     {"Hosting: open Your game", "開房中：打開你的房間"},
     {"Password: if it asks", "密碼：如需要"},
+    {"Password: ", "密碼："},   // (the Join view's password field while typed, still empty)
     {"Turned away: why", "被拒：原因"},
     {"Join this game", "加入這個遊戲"},
     {"They left the session", "他離開了房間"},

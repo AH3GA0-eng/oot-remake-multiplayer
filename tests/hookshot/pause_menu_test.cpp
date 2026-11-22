@@ -757,13 +757,13 @@ TEST_CASE("pause tab: the mouse selects a row and clicks a value's halves") {
     Menu m;
     m.Show(CoopTitleMenu::Options{});
     m.Open(Page::kSettings);
-    m.Select(9);
+    m.Select(13);
     CHECK(Selected(m) == "Proximity voice chat");
-    m.Click(9, 1);   // the On half
+    m.Click(13, 1);   // the On half
     CHECK(m.options().voice);
-    m.Click(9, -1);
+    m.Click(13, -1);
     CHECK_FALSE(m.options().voice);
-    m.Click(9, 0);   // the name: selected only
+    m.Click(13, 0);   // the name: selected only
     CHECK_FALSE(m.options().voice);
     m.Click(0, 0);   // an action: as A
     CHECK(m.typing());
@@ -880,7 +880,7 @@ TEST_CASE("pause tab: Settings: Controller and Keyboard rows when this Hookshot 
     CHECK(r->kind == Request::Kind::kKeyboard);
     // gone again (the module found no patch 0015): the selection stays on a row there is
     m.SetInputRows({}, {});
-    CHECK(Names(m).size() == 16);   // (with the port, the relay and room rows, the network password, two map rows, New Game+, Saves and Original game)
+    CHECK(Names(m).size() == 20);   // (with the port, the relay and room rows, the network password, the host rows, two map rows, New Game+, Saves and Original game)
     CHECK_FALSE(Selected(m).empty());
 }
 
@@ -1952,7 +1952,7 @@ TEST_CASE("pause tab: Co-op settings' host rows while hosting: the rules in forc
     CHECK_FALSE(RowNamed(m.view(), "Down but not out")->on);
 }
 
-TEST_CASE("pause tab: Co-op settings' host rows in a friend's game: the host's values, dimmed") {
+TEST_CASE("pause tab: Co-op settings' host rows in a friend's game: the host's rules dimmed, our next Host's kept") {
     Menu m;
     CoopTitleMenu::Options o;
     o.pvp = false;
@@ -1963,11 +1963,23 @@ TEST_CASE("pause tab: Co-op settings' host rows in a friend's game: the host's v
     m.SetSession(s);
     m.Open(Page::kSettings);
     const View v = m.view();
-    for (const char* name : {"Game", "Approve joins", "PvP", "Down but not out", "Bleed-out time", "Revive hold",
-                             "Revive hearts"}) {
+    for (const char* name : {"PvP", "Down but not out", "Bleed-out time", "Revive hold", "Revive hearts"}) {
         REQUIRE(RowNamed(v, name) != nullptr);
         CHECK(RowNamed(v, name)->fixed);
     }
+    // The game's kind and the approval: our own next Host's (a guest never hears the host's), still ours to change.
+    for (const char* name : {"Game", "Approve joins"}) {
+        REQUIRE(RowNamed(v, name) != nullptr);
+        CHECK_FALSE(RowNamed(v, name)->fixed);
+        SelectRow(m, name);
+        CHECK(m.view().help.find("next game you host") != std::string::npos);
+        m.Press(Input::kDecide);
+        const auto r = m.TakeRequest();
+        REQUIRE(r.has_value());
+        CHECK(r->kind == Request::Kind::kSave);
+    }
+    CHECK(m.options().public_game);
+    CHECK(m.options().approve_joins);
     CHECK(RowNamed(v, "PvP")->on);
     for (const char* name : {"PvP", "Down but not out", "Revive hold"}) {
         SelectRow(m, name);

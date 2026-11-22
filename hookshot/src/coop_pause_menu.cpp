@@ -304,25 +304,22 @@ struct Menu::Line {
 };
 
 // Co-op settings' host rows (row 226's audit, menu-parity-0119): the game's kind, join approval and the session's
-// rules, after the other rows a host sets (players, port, room name, the same-network password). Not in a session:
-// what the next Host uses (the kind, approval and PvP saved in coop-options.ini; down but not out is the server's
-// own until a host changes it, so its rows wait for a session). In one: the rules in force, the host's to change,
-// a guest's dimmed (fixed): a press says why.
+// rules, after the other rows a host sets (players, port, room name, the same-network password). The kind and the
+// approval are always this player's own next Host's (saved in coop-options.ini; a guest's menu never hears the
+// host's), so they stay usable in a friend's game too. PvP and down but not out: not in a session, what the next
+// Host uses (PvP saved; down but not out is the server's own until a host changes it, so its rows wait for a
+// session); in one, the rules in force, the host's to change, a guest's dimmed (fixed): a press says why.
 void Menu::HostRuleLines(std::vector<Line>& out, bool guest) const {
     const bool live = session_.rules;
     const char* const kHostOnly = "Only the host changes this; it shows what the host chose.";
-    Row kind = Choice("Game", options_.public_game ? "Public game" : "Private game");
-    kind.fixed = guest;
-    kind.left = kind.right = !guest;   // (a value that cannot change: no arrows around it)
-    out.push_back({kind, Act::kGameKind,
-                   guest ? std::string(kHostOnly)
+    const char* const kYourNextHost = "Your own setting for the next game you host; the game you are in keeps its host's.";
+    out.push_back({Choice("Game", options_.public_game ? "Public game" : "Private game"), Act::kGameKind,
+                   guest ? std::string(kYourNextHost)
                    : session_.hosting && options_.public_game != session_.public_game
                        ? std::string("Applies at your next Host: stop hosting, then start again.")
                        : std::string(options_.public_game ? kPublicHelp : kPrivateHelp)});
-    Row approve = Toggle("Approve joins", options_.approve_joins);
-    approve.fixed = guest;
-    out.push_back({approve, Act::kApproveJoins,
-                   guest ? std::string(kHostOnly)
+    out.push_back({Toggle("Approve joins", options_.approve_joins), Act::kApproveJoins,
+                   guest ? std::string(kYourNextHost)
                          : std::string("On: each player who asks to join waits until you let them in or refuse them "
                                        "(Let in on Your game, or /allow and /deny in the chat). Applies at your next "
                                        "Host.")});
