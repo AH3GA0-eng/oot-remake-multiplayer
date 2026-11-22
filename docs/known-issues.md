@@ -43,10 +43,10 @@ This is an early test release. Everything under "Works" was seen in our two-game
 
 ## New in 0.11.10
 
-In 0.11.10 (hotfix: update only, no game rebuild). From your reports (E'tykalu, Nicktendo, KerbexSenpai, Rick); checked by unit tests and CI, not yet in a game: tell us if it still happens.
+In 0.11.10 (hotfix: update only, no game rebuild). From your reports (E'tykalu, Nicktendo, KerbexSenpai, Rick); checked in my two-game test runs and CI (the closed-window build marker and the Goron/Zora tunic are untested): tell me if it still happens.
 
-- **Black screen after Character Select's menu** (rows 239 to 241): with Character Select's menus only (the NPC models not downloaded), a pick whose model is not installed goes back to Link at once, on every frame, co-op on or off. A host's save given to a guest stores Link (the guest's own file is kept as `progress.sav.coop-pick-backup`). A solo save that already holds such a pick is not rewritten on disk; the per-frame guard keeps the game on Link.
-- **Unfinished build**: a kit window closed during the update's build is never started as built; the next start finishes it.
+- **Black screen after Character Select's menu** (rows 239 to 241): with Character Select's menus only (the NPC models not downloaded), a pick whose model is not installed goes back to Link at once, on every frame, co-op on or off. With co-op on, a save that holds such a pick is stored as Link before it is loaded or sent to a guest; the original is kept beside it as `progress.sav.coop-pick-backup`. A solo save that already holds such a pick is not rewritten on disk; the per-frame guard keeps the game on Link.
+- **Unfinished build** (Windows kits only): a kit window closed during the update's build is never started as built; the next start finishes it.
 - **Customize page**: the title names the page first and adds "Y: page  A: exact hue" (also Simplified and Traditional Chinese).
 - **Puppet tunic green** (row 243): other players saw a default green tunic as lime; puppets now wear the game's own green, child and adult.
 
