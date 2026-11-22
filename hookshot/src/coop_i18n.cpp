@@ -1292,6 +1292,7 @@ constexpr Entry kzh_Hans[] = {
     {"Hair Colour", "头发颜色"},
     {"Hylian Shield Frame", "海利亚之盾边框"},
     {"Y: next page", "Y：下一页"},   // (Character Select's Customize screen's title, more than one page)
+    {"A: pick exact hue", "A：选择精确色相"},
     {"Master Sword Hilt", "大师之剑剑柄"},
     {"Hue", "色相"},
     {"Saturation", "饱和度"},
@@ -2582,6 +2583,7 @@ constexpr Entry kzh_Hant[] = {
     {"Hair Colour", "頭髮顏色"},
     {"Hylian Shield Frame", "海利亞之盾邊框"},
     {"Y: next page", "Y：下一頁"},   // (Character Select's Customize screen's title, more than one page)
+    {"A: pick exact hue", "A：選擇精確色相"},
     {"Master Sword Hilt", "大師之劍劍柄"},
     {"Hue", "色相"},
     {"Saturation", "飽和度"},

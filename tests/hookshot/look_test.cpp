@@ -1822,4 +1822,17 @@ TEST_CASE("look (0.11.9): the puppets' tunic copies, each repainted in the exact
     const auto darker = CoopLookParts::TunicPainted(green2, 0x804020u);   // (0xC8, 0x64, 0x32 times 0.64, rounded)
     CHECK(dark[1].texels == darker[0].texels);
     CHECK(dark[0].texels == CoopLookParts::TunicPainted(green2, 0xC86432u)[0].texels);
+
+    // Row 243: no colour, or the preset green 30D040 (slot 3's), is the game's own green on a puppet too, as for the
+    // player's own Link (TunicPainting): the copy's textures are green's as they are, not painted lime.
+    for (const std::optional<std::uint32_t> own : {std::optional<std::uint32_t>{}, std::optional<std::uint32_t>{0x30D040u}}) {
+        const auto game = CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", Paint{own, std::nullopt}}});
+        REQUIRE(game.size() == base.size());
+        CHECK(game[red.size()].texels == green[0].texels);   // (the main tile: the game's own, unchanged)
+        CHECK(game[red.size()].texels != CoopLookParts::TunicPainted(green, 0x30D040u)[0].texels);   // (not the lime)
+        CHECK(game[0].texels == red[0].texels);   // (the others' copies as written)
+    }
+    // Another colour is painted as before.
+    CHECK(CoopLookParts::PuppetTunicsTexels(copies, green, {{"blue", Paint{0x30D041u, std::nullopt}}})[red.size()].texels ==
+          CoopLookParts::TunicPainted(green, 0x30D041u)[0].texels);
 }
