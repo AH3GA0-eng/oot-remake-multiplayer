@@ -944,9 +944,11 @@ function Get-KitHookshotLogFiles([string]$Dir) {
 # *.pchtxt, folders starting with '-', '_' or '.' left out, up to four deep), as one more stamp line:
 # "`nexefs=<mod path>/exefs/<file>:<sha256>,...;list=<sha256 of coop-mods.list's rows for those mods>" (the Mods
 # tab's switches and order decide which go in; Get-KitCodeModsListHash), or '' when no mod has one: a game without code mods keeps the stamp it had.
-function Get-KitExefsStampLine([string]$Game) {
-    $mods = Join-Path $Game 'mods'
-    if (-not $Game -or -not (Test-Path -LiteralPath $mods -PathType Container)) { return '' }
+function Get-KitExefsStampLine([string]$Game, [string]$Mods = '') {
+    # (the mods folder: -Mods, else HOS_MODS, the game's own name for it (nx2/exefs_patches.py builds from it: hs.py
+    # points a test pair's build there), else the game folder's mods)
+    $mods = if ($Mods) { $Mods } elseif ($env:HOS_MODS) { $env:HOS_MODS } elseif ($Game) { Join-Path $Game 'mods' } else { '' }
+    if (-not $mods -or -not (Test-Path -LiteralPath $mods -PathType Container)) { return '' }
     $root = ([System.IO.Path]::GetFullPath($mods)).TrimEnd('\') + '\'
     $rows = @()
     $codeMods = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
