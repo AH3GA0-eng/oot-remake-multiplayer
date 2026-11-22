@@ -728,6 +728,23 @@ bool CopyGoesWithoutDeath(std::string_view name, bool dungeon) {
     return !dungeon && IsLateEncounter(name);  // (a dungeon's rooms count their own kills: as before)
 }
 
+bool OwnLogicEncounter(std::string_view name, std::string_view scene) {
+    return scene.starts_with("GerudoFortress") && name.starts_with("Enemy_MiddleBoss_GerudoThief");
+}
+
+bool IsOwnInScene(std::string_view name, std::string_view scene) {
+    if (!scene.starts_with("GerudoFortress")) {
+        return false;
+    }
+    for (const std::string_view carpenter :
+         {"Npc_Hylia_013_Adult", "Npc_Hylia_014_Adult", "Npc_Hylia_015_Adult", "Npc_Hylia_016_Adult"}) {
+        if (name == carpenter) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string_view AnimationBase(std::string_view name) {
     for (const std::string_view suffix : {"_ModelOnlyLOD", "_LOD"}) {
         if (name.size() > suffix.size() && name.ends_with(suffix)) {
@@ -2113,8 +2130,8 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
                 }
             }
         }
-        if (!IsShared(s.name)) {
-            continue;
+        if (!IsShared(s.name) || IsOwnInScene(s.name, scene_)) {
+            continue;  // (row 212: the fortress's carpenters are each game's own)
         }
         now_seen[s.address] = &s;
         const auto it = objects_.find(s.address);
@@ -3187,6 +3204,9 @@ void Sync::Tick(const std::string& scene, std::uint8_t self, std::uint64_t now_u
         }
         if (takes_turns_ && IsBossOrPart(o.name)) {
             flags |= proto::object_presence::takes_turns;  // boss turns: this build reads attacks
+        }
+        if (!bound_.contains(address) && OwnLogicEncounter(o.name, scene_)) {
+            flags |= proto::object_presence::own_logic;  // row 212: our cell logic made it: it stays with such a game
         }
         present.push_back({o.id, flags});
     }
