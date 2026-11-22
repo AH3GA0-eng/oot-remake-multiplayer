@@ -2350,6 +2350,23 @@ public:
                                               *node, fix.from, fix.to, fix.untouched)
                                         : CoopWorld::RestScan{};
                 if (node && !stale.busy) {
+                    // Puzzle diagnostics (a player report: a block puzzle solved for one player only): where the
+                    // block rests against its goal (node +0x4c, its link Gimmick_AnswerPosAnchor) and what its
+                    // IsOnAnswerPos port (+0x1f0, docs/world.md) holds here. Read only.
+                    float goal[3] = {NAN, NAN, NAN};
+                    for (int i = 0; i < 3; ++i) {
+                        if (const auto w = r.Get<u32>(*node + CoopWorld::BlockNode::kGoal + 4u * i)) {
+                            std::memcpy(&goal[i], &*w, 4);
+                        }
+                    }
+                    if (std::isfinite(goal[0]) && std::isfinite(goal[2])) {
+                        const float dx = fix.to[0] - goal[0], dz = fix.to[2] - goal[2];
+                        const auto port = r.Get<u64>(*node + 0x1f0);
+                        LOG_INFO(Core, "coop: world: {:016x} {} rests {:.2f} m from its answer spot ({:.2f} {:.2f}); "
+                                       "its on-answer port reads {:#x}",
+                                 fix.hash, fix.name, std::sqrt(dx * dx + dz * dz), goal[0], goal[2],
+                                 port.value_or(0));
+                    }
                     if (!stale.writes.empty()) {
                         TheMover().StartBlockNode(*node, fix.address, fix.from, fix.to, fix.untouched);
                         LOG_INFO(Core, "coop: world: {:016x} {} push node {:x}: its own start "

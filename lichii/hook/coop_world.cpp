@@ -1115,6 +1115,16 @@ void WorldSync::Move(Object& o, std::uint8_t self, std::uint64_t now_us,
     const bool settling =
         !kept && !o.ours && o.settle_us != 0 && (o.hold || now_us - o.settle_us < kSettleUs);
     if (!o.ours && (remote || settling)) {
+        // Push diagnostics (a player report: only one player could push the Forest Temple's blocks): our Link
+        // right at a push block while our game still follows another player's move of it (each frame puts it
+        // back where theirs is, so a push of ours is undone). Said at most every 10 s.
+        if (IsPushBlock(o.name) && player && Finite(o.position) && Distance(*player, o.position) <= kAtBlockM &&
+            (o.at_it_noted_us == 0 || now_us - o.at_it_noted_us >= kAtBlockNoteUs)) {
+            o.at_it_noted_us = now_us;
+            out.notes.push_back(Line("world: %016llx %s: our Link is at it while it follows another player's move%s; "
+                                     "a push of ours now is undone",
+                                     o.hash, o.name, remote ? " (theirs is live)" : " (settling at their rest place)"));
+        }
         if (!o.following && !o.follow_from && !o.breakable && IsPushBlock(o.name)) {
             o.follow_from = o.rest;  // where our copy rested before (issue 147)
         }
