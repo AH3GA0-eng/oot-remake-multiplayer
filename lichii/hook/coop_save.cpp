@@ -375,6 +375,15 @@ void FixSlotsLocked() {
         std::fclose(in);
         const std::string line = g_save_fix(bytes);
         if (line.empty()) continue;
+        // (the slot as it was, once: progress.sav.coop-pick-backup beside it, never written over by a later fix)
+        const fs::path backup = it->path() / "progress.sav.coop-pick-backup";
+        std::error_code bec;
+        if (!fs::exists(backup, bec)) fs::copy_file(file, backup, bec);
+        if (bec) {
+            LOG_WARNING(Core, "coop: save: {}: no backup could be made ({}): left as it is",
+                        it->path().filename().string(), bec.message());
+            continue;
+        }
         const fs::path tmp = it->path() / "progress.sav.coop-tmp";
         std::FILE* out = nullptr;
 #ifdef _MSC_VER

@@ -1793,6 +1793,8 @@ public:
             // file before the game reads it (the host's save a guest writes; the player's slots on every title).
             static const bool save_fix_set = [] {
                 CoopSave::SetSaveFix([](std::vector<std::uint8_t>& progress) -> std::string {
+                    // (no pack: no list of installed models to trust, so an NPC pick is never taken out of a save)
+                    if (!CoopPuppetConfig::HasPack()) return {};
                     const auto fix = CoopCharSlots::FixSavePick(progress.data(), progress.size(), pick_hash,
                                                                 CoopPuppetConfig::CharacterFiles());
                     if (!fix.changed) return {};
