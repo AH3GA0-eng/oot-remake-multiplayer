@@ -952,7 +952,7 @@ RowAction ActionFor(View view, int row, const Session& s) {
             return row == 1 ? RowAction::kViewJoin : RowAction::kNone;
         }
         if (row == 0) return RowAction::kHost;
-        return row == 1 ? RowAction::kViewMenu : RowAction::kNone;
+        return row == 1 ? RowAction::kViewHostSettings : RowAction::kNone;
     case View::kLetIn:
         if (row == 0 && s.hosting && s.asking) return RowAction::kAllow;
         if (row == 1 && s.hosting && s.asking) return RowAction::kDeny;
@@ -1266,7 +1266,10 @@ std::vector<std::string> RowTexts(View view, const SessionView& v) {
         }
         break;
     case View::kMenu:
-        for (int i = 0; i < kMenuTabs; ++i) rows[static_cast<std::size_t>(i)] = kMenuTabNames[static_cast<std::size_t>(i)];
+        for (int i = 0; i < kMenuTabs; ++i) {
+            if (i == kTabLocal && v.menu_tab != kTabLocal) continue;   // (its home: the Multiplayer tab's row)
+            rows[static_cast<std::size_t>(i)] = kMenuTabNames[static_cast<std::size_t>(i)];
+        }
         break;
     case View::kPassword:
         // (the host's join password: on the details list while shown; a new one with the typing keys)
@@ -1343,6 +1346,7 @@ const char* ActionWords(RowAction a) {
     case RowAction::kViewSession: return "the Session view";
     case RowAction::kViewHost: return "the Host a game view";
     case RowAction::kViewLocal: return "Settings and look on Local co-op";
+    case RowAction::kViewHostSettings: return "Settings and look on Co-op settings, at its host rows";
     case RowAction::kCopyLan: return "the same-network join line to the clipboard";
     case RowAction::kCopyVpn: return "the VPN join line to the clipboard";
     case RowAction::kResync: return "the host's save again (Resync from host)";
