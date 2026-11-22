@@ -93,9 +93,12 @@ bool IsMovable(std::string_view name) {
     if (!name.starts_with("Obj_") || name.find("BasePosAnchor") != std::string_view::npos) {
         return false;
     }
+    // Obj_Goron_Statue_A_01 (Goron City, 2 placed, linked to an Obj_Gimmick_AnswerPosAnchor): the game's movable-box
+    // AI (ActorLogicMovableBox, ExecuteMovableBoxControl, IsOnAnswerPos) like the Armos statues (block survey,
+    // 2026-11-21).
     return name.find("MovableBox_") != std::string_view::npos ||
-           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") || IsRoller(name) ||
-           IsGravestone(name);
+           name.starts_with("Obj_SliderBox_") || name.starts_with("Obj_AmosStatue_") ||
+           name.starts_with("Obj_Goron_Statue_") || IsRoller(name) || IsGravestone(name);
 }
 
 bool IsGravestone(std::string_view name) {
@@ -184,10 +187,19 @@ std::uint64_t PlacementOfTokenId(std::uint64_t id) {
     return IsGoldSkulltulaKey(hash) ? hash : 0;
 }
 
+bool IsCapstan(std::string_view name) {
+    // Turned in place by a player pushing a bar (CapstanParam, Capstan AI; block survey 2026-11-21): the Spirit
+    // Temple's three light mirrors (8 turns a lap, CapstanMirrorDirIndex) and the Shadow Temple's room 1 statue
+    // (CorrectDirIndex). Their directions are per-placement game data with no name, read by their AI; their turn
+    // is shared as a shifter's (a turn is a move, its rotation sent) and never held. The Forest Temple's turning
+    // floor goes by its named flag instead (coop_pivot.h).
+    return name.starts_with("Obj_SpiritTemple_CapstanMirror_") || name == "Obj_ShadowTemple_Statue_A_01";
+}
+
 bool IsShifter(std::string_view name) {
     // From the romfs (breakables-2): no LifeRef, moved or turned by their AI
     // when hit, and no 64-bit key, so before this nothing of them was shared.
-    return name.starts_with("Obj_FireTemple_HammerDropFloor_") ||
+    return IsCapstan(name) || name.starts_with("Obj_FireTemple_HammerDropFloor_") ||
            name.starts_with("Obj_FireTemple_HammerDropPillar_") ||
            name.starts_with("Obj_FireTemple_HammerStair_") ||
            name.starts_with("Obj_InsideTheDekuTree_FallingLadder_") ||
@@ -216,7 +228,8 @@ bool IsWorldObject(std::string_view name) {
 // stair, the Deku Tree ladder): held at the place it was given. The
 // falling floors `_A_03` have no AI in their packs: the normal settle.
 bool HoldsPlace(std::string_view name) {
-    return IsShifter(name) && name.find("FallingFloor_A_03") == std::string_view::npos;
+    // A capstan is turned again by the next push: never held.
+    return IsShifter(name) && !IsCapstan(name) && name.find("FallingFloor_A_03") == std::string_view::npos;
 }
 
 std::optional<std::string> KeyCountOf(std::string_view scene) {

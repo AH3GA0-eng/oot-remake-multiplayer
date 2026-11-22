@@ -1046,7 +1046,8 @@ TEST_CASE("doors: both opened the lock at once: the higher player number gives i
 TEST_CASE("world: movables, grass actors and the new breakables by name") {
     for (const char* name : {"Obj_MovableBox_A_01", "Obj_ForestTemple_MovableBox_A_03",
                              "Obj_LonLonRanch_MovableBox_A_01", "Obj_SliderBox_A_01",
-                             "Obj_AmosStatue_A_01", "Obj_Kokiri_RollingRock_A_01", "Obj_RollingRock_A_05",
+                             "Obj_AmosStatue_A_01", "Obj_Goron_Statue_A_01", "Obj_Kokiri_RollingRock_A_01",
+                             "Obj_RollingRock_A_05",
                              "Obj_Firetemple_RollingRock_A_01", "Obj_Tombstone_A_01",
                              "Obj_Graveyard_Tombstone_A_01", "Obj_Graveyard_Tombstone_A_02"}) {
         CAPTURE(name);
@@ -1983,6 +1984,17 @@ TEST_CASE("world: lying small keys, shifters and hammer switches by name (breaka
     CHECK(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_01"));
     CHECK(CoopWorld::IsShifter("Obj_InsideTheDekuTree_FallingFloor_A_02"));
     CHECK_FALSE(CoopWorld::IsShifter("Obj_ShadowTemple_FallingFloor_A_01"));
+    // Capstans (block survey): turned by a pushed bar, shared as shifters, never held for the next push.
+    for (const char* name : {"Obj_SpiritTemple_CapstanMirror_A_01", "Obj_ShadowTemple_Statue_A_01"}) {
+        CAPTURE(name);
+        CHECK(CoopWorld::IsCapstan(name));
+        CHECK(CoopWorld::IsShifter(name));
+        CHECK(CoopWorld::IsWorldObject(name));
+        CHECK_FALSE(CoopWorld::HoldsPlace(name));
+        CHECK_FALSE(CoopWorld::IsFallTaken(name));
+    }
+    CHECK_FALSE(CoopWorld::IsCapstan("Obj_ForestTemple_PivotedFloor_A_01"));  // by its flag (coop_pivot.h)
+    CHECK_FALSE(CoopWorld::IsShifter("Obj_ForestTemple_PivotedFloor_A_01"));
     for (const char* name : {"Obj_InsideTheDekuTree_FallingFloor_A_01", "Obj_InsideTheDekuTree_FallingFloor_A_02",
                              "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_01",
                              "Obj_InsideTheDekuTree_InteractiveSpiderWebParts_A_02"}) {
@@ -2806,6 +2818,7 @@ TEST_CASE("world: only push blocks get a rest fix, not an Armos statue (issue 14
     CHECK(CoopWorld::IsPushBlock("Obj_MovableBox_A_01"));
     CHECK(CoopWorld::IsPushBlock("Obj_SliderBox_A_01"));
     CHECK_FALSE(CoopWorld::IsPushBlock("Obj_AmosStatue_A_01"));
+    CHECK_FALSE(CoopWorld::IsPushBlock("Obj_Goron_Statue_A_01"));  // its moves shared, no rest fix (like Armos)
     CHECK_FALSE(CoopWorld::IsPushBlock("Obj_MovableBox_BasePosAnchor"));
     for (const char* name : {"Obj_AmosStatue_A_01", "Obj_SliderBox_A_01"}) {
         CAPTURE(name);
