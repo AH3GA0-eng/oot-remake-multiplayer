@@ -1832,11 +1832,48 @@ class FullBuildTest(unittest.TestCase):
         with self.assertRaises(look_items.TunicError):
             look_items.model_info(looped, item)
 
+    def retarget_on(self):
+        from puppet_pack import look_items
+        old = look_items.COPY_RETARGET
+        look_items.COPY_RETARGET = True
+        self.addCleanup(setattr, look_items, "COPY_RETARGET", old)
+
+    def test_look_copy_keeps_the_items_animation_param(self):
+        # Row 198 (gear-colour-198-3, lane gc198-l5b): the game did not make a shield copy that has its own
+        # IsRetarget AnimationParam, even sized with room (both games: 'shield copy Weapon_Shield_Hylian_Look1 was
+        # not made by the game'); the puppet wore the game's shield, drawn in the viewer's own colours. By default no
+        # copy (Look slot, neutral, blade) gets one: its ActorParam keeps the item's AnimationRef, no new file, no
+        # size-table entry for it.
+        from puppet_pack import look_items, zs
+        self.assertFalse(look_items.COPY_RETARGET)
+        item, _, _ = self.add_hylian_shield(anim_entry=5344)
+        mod = os.path.join(self.dir, "mod")
+        said = []
+        m = build.build(self.romfs, mod, log=said.append, tunics=("red",), look_slots=2)
+        self.assertIsNotNone(m["look_items"], said)
+        d = zs.Dicts.from_romfs(self.romfs)
+        out = os.path.join(mod, "romfs")
+        t = rstb.Rstb.loads(d.decompress(build.read(os.path.join(
+            out, "System/Resource/ResourceSizeTable.Product.999.Test.rsizetable.zs"))))
+        game = sarc.read(d.decompress(build.read(os.path.join(self.romfs, f"Pack/Actor/{item}.pack.zs"))))
+        item_ref = byml.loads(game[look_items.actor_param_path(item)])["Components"]["AnimationRef"]
+        for k in range(1, m["look_items"]["neutral"] + 1):
+            actor = look_items.actor_name(item, k)
+            files = sarc.read(d.decompress(build.read(os.path.join(out, f"Pack/Actor/{actor}.pack.zs"))))
+            path = look_items.animation_param_path(actor)
+            self.assertNotIn(path, files, actor)
+            self.assertIsNone(t.get(path), actor)
+            comps = byml.loads(files[look_items.actor_param_path(actor)])["Components"]
+            self.assertEqual(comps["AnimationRef"], item_ref, actor)
+            self.assertNotIn(b"IsRetarget", b"".join(v for n, v in files.items() if "AnimationParam" in n), actor)
+
     def test_look_copy_retargets_its_animations(self):
         # Row 184: a copy names a model project of its own, so the item's animation project plays on it
         # only retargeted (as the game's child Epona plays the adult's clips). The copy gets its own
         # AnimationParam with IsRetarget on every resource; the item's own file stays as it was.
+        # (Row 198: off by default, look_items.COPY_RETARGET; this is the param the switch gives back.)
         from puppet_pack import look_items
+        self.retarget_on()
         ap = "Actor/{}.engine__actor__ActorParam.bgyml"
         mi = "Component/ModelInfo/{}.engine__component__ModelInfo.bgyml"
         an = "Component/AnimationParam/{}.engine__component__AnimationParam.bgyml"
@@ -1921,7 +1958,9 @@ class FullBuildTest(unittest.TestCase):
         # of its size-table entry, which grows with its fields (the game's own: 5344 for one resource, 5376 with
         # IsRetarget). Sized as the item's, the game refused to make every shield copy (the puppets kept the game's
         # shield, drawn in your own colours). Every copy, the neutral one too, gets room for what it adds.
+        # (Row 198 again: the game refused them sized so too; off by default, COPY_RETARGET.)
         from puppet_pack import look_items, zs
+        self.retarget_on()
         item, _, _ = self.add_hylian_shield(anim_entry=5344)
         mod = os.path.join(self.dir, "mod")
         said = []
