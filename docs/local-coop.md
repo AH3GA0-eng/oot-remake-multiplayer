@@ -109,8 +109,11 @@ The game sets a layer's viewport itself, with its AI node `OneShotLayerViewport`
 (main+0x28e70e0). It finds the layer by its tag, then writes min x and min y at +0x30 and max x and
 max y at +0x38. On the layer's projection (+0x80) it writes the ratio w / h at +0xb0 and 1 at +0x8,
 which makes the projection again. The module does the same write each frame for the world layer
-while local co-op is on, so player 1's view is its rect of the split. It writes only when the rect
-is not the one wanted, and gives the whole picture back once when local co-op stops.
+while local co-op is on, so player 1's view is its rect of the split. It writes when the rect
+is not the one wanted or when the projection update was incomplete, retrying an unavailable
+projection or failed write on subsequent frames. It also retries a failed return to the whole
+picture when local co-op stops. Once the viewport and projection both succeed, unchanged frames
+write nothing. This is a source-level reliability fix, not proof that the game draws a second view.
 `LICHII_COOP_LOCAL_VIEWS=2` (tests) splits the picture with no second player. Seen in the game
 (Longshot, 2026-11-14): the world is drawn in the left half at the half's ratio (Link is not
 stretched); the HUD stays on the whole picture. Tests:
