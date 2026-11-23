@@ -81,6 +81,7 @@ public:
             layer_ = layer;
             whole_.reset();
             written_ = false;
+            projected_ = false;
         }
         Rect now{};
         if (!m_.read(layer + kLayerRect, &now, sizeof now) || !Usable(now)) return;
@@ -91,8 +92,13 @@ public:
         }
         if (!split) {
             if (written_) {
-                if (now != *whole_) Put(layer, *whole_, "the whole picture again");
+                // The rectangle may be restored even if the projection write failed.
+                // Keep trying until both are back to the whole picture.
+                if (now != *whole_ || !projected_) {
+                    if (!Put(layer, *whole_, "the whole picture again")) return;
+                }
                 written_ = false;
+                projected_ = true;
             } else {
                 whole_ = now;   // (follows the game's own changes while nobody splits)
             }
@@ -102,7 +108,9 @@ public:
             want.players, want.split, static_cast<int>(whole_->W()), static_cast<int>(whole_->H()));
         if (views.count < 1) return;
         const Rect mine = Of(views.rect[0], *whole_);
-        if (now != mine) Put(layer, mine, "player 1's view");
+        // A matching viewport rect is not enough if its camera projection
+        // could not be updated. Retry that write on a later frame.
+        if (now != mine || !projected_) projected_ = Put(layer, mine, "player 1's view");
         written_ = true;
     }
 
@@ -120,24 +128,28 @@ private:
         return layer;
     }
 
-    void Put(std::uint64_t layer, const Rect& r, const char* what) {
+    bool Put(std::uint64_t layer, const Rect& r, const char* what) {
         std::uint64_t projection = 0;
         const float ratio = r.W() / r.H();
         const std::uint8_t again = 1;
         bool ok = m_.write(layer + kLayerRect, &r, sizeof r);
-        if (ok && m_.read(layer + kLayerProjection, &projection, 8) && projection != 0)
-            ok = m_.write(projection + kProjectionRatio, &ratio, 4) && m_.write(projection + kProjectionDirty, &again, 1);
+        if (ok)
+            ok = m_.read(layer + kLayerProjection, &projection, 8) && projection != 0 &&
+                 m_.write(projection + kProjectionRatio, &ratio, 4) &&
+                 m_.write(projection + kProjectionDirty, &again, 1);
         if (m_.log && (++puts_ <= 8 || puts_ % 600 == 0))
             m_.log("local co-op: views: " + std::string(what) + " (" + std::to_string(static_cast<int>(r.min_x)) + " " +
                    std::to_string(static_cast<int>(r.min_y)) + " " + std::to_string(static_cast<int>(r.max_x)) + " " +
                    std::to_string(static_cast<int>(r.max_y)) + ")" + (ok ? "" : ": not written") +
                    (puts_ > 8 ? " (" + std::to_string(puts_) + " times: the game sets it back)" : ""));
+        return ok;
     }
 
     Memory m_;
     std::uint64_t layer_ = 0;
     std::optional<Rect> whole_;
     bool written_ = false;
+    bool projected_ = false;
     std::uint64_t puts_ = 0;
 };
 
