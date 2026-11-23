@@ -148,6 +148,15 @@ at +0x78 and its own projection at +0x80), the binder runs, and the game runs on
 it. But nothing is drawn in the right half: the layer is not in the pipeline's draw yet. Next: what
 the set-up does after the binder for the first layer, and the layer's flags (+0x88).
 
+The experimental switch now logs a **read-only comparison** of world layer 0 and
+world layer 1 before the maker, after the binder, and after the first camera/viewport update
+(then periodically): registered address, raw +0x88 flags, camera, projection and viewport.
+If layer 1 is absent from the renderer's layer array, the log can distinguish that from
+a layer which exists but is not drawn. If layer 1 is present, compare its raw flags
+with layer 0; their meaning is **not** yet established, and equality would not prove
+the GameScene pipeline actually includes layer 1. Do not change the flags based only
+on this log. Inspect the remaining pipeline setup, then verify rendering in game.
+
 ### With no session
 
 Split screen needs no server. With co-op off, `lichii/hook/coop_hook.cpp`'s `LocalFrameOff` reads
