@@ -219,3 +219,63 @@ TEST_CASE("local layer: one try, after 5 s in play, and nothing without the call
     CHECK(calls == 0);
     CHECK(second.Layer() == 0);
 }
+
+TEST_CASE("local layer: renderer slot diagnostics read both layers without writing game memory") {
+    Game g;
+    constexpr std::uint64_t kSecond = 0x9500000;
+    constexpr std::uint64_t kSecondProjection = 0x9600000;
+    g.Set<std::uint64_t>(kArray + 8, kSecond);
+    g.Set<std::uint64_t>(kLayer + CoopLocalLayer::kCamera, 0x9800000);
+    g.Set<std::uint32_t>(kLayer + 0x88, 0x21);
+    g.Set<std::uint64_t>(kSecond + CoopLocalLayer::kCamera, 0x9900000);
+    g.Set<std::uint64_t>(kSecond + CoopLocalView::kLayerProjection, kSecondProjection);
+    g.Set<std::uint32_t>(kSecond + 0x88, 0x20);
+    g.Set(kSecond + CoopLocalView::kLayerRect, Rect{640, 0, 1280, 720});
+
+    CoopLocalLayer::Game game;
+    game.main_base = [] { return kBase; };
+    game.read = [&g](std::uint64_t at, void* out, std::size_t size) {
+        return g.Read(at, out, size);
+    };
+    const auto first = CoopLocalLayer::Inspect(game, 0);
+    const auto second = CoopLocalLayer::Inspect(game, 1);
+    CHECK(first.address == kLayer);
+    CHECK(first.camera == 0x9800000);
+    CHECK(first.projection == kProjection);
+    REQUIRE(first.raw_flags.has_value());
+    CHECK(*first.raw_flags == 0x21);
+    REQUIRE(first.viewport.has_value());
+    CHECK(*first.viewport == Rect{0, 0, 1280, 720});
+    CHECK(second.address == kSecond);
+    CHECK(second.camera == 0x9900000);
+    CHECK(second.projection == kSecondProjection);
+    REQUIRE(second.raw_flags.has_value());
+    CHECK(*second.raw_flags == 0x20);
+    REQUIRE(second.viewport.has_value());
+    CHECK(*second.viewport == Rect{640, 0, 1280, 720});
+    CHECK(g.writes == 0);
+}
+
+TEST_CASE("local layer: diagnostics tolerate absent renderer layers and incomplete fields") {
+    Game g;
+    CoopLocalLayer::Game game;
+    game.main_base = [] { return kBase; };
+    game.read = [&g](std::uint64_t at, void* out, std::size_t size) {
+        return g.Read(at, out, size);
+    };
+
+    CHECK(CoopLocalLayer::Inspect(game, 1).address == 0);  // Free layer slot.
+    CHECK(CoopLocalLayer::Inspect(game, 5).address == 0);  // Diagnostic limit.
+    CHECK(CoopLocalLayer::Inspect(game, 0).address == kLayer);
+
+    g.Set<std::uint64_t>(kArray + 8, kProjection);  // A mapped but incomplete layer.
+    const auto partial = CoopLocalLayer::Inspect(game, 1);
+    CHECK(partial.address == kProjection);
+    CHECK_FALSE(partial.raw_flags.has_value());
+    CHECK_FALSE(partial.viewport.has_value());
+    CHECK(g.writes == 0);
+
+    // Missing renderer produces an empty result and never dereferences a layer.
+    g.Set<std::uint64_t>(kBase + CoopLocalView::kRenderer, 0);
+    CHECK(CoopLocalLayer::Inspect(game, 0).address == 0);
+}

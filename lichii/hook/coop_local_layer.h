@@ -119,6 +119,45 @@ struct Game {
     std::function<void(const std::string&)> log;
 };
 
+// Read-only evidence about the two world layers. This does not infer whether
+// GameScene actually draws a layer: being registered is not proof of a draw.
+struct LayerState {
+    std::uint64_t address = 0;
+    std::uint64_t camera = 0;
+    std::uint64_t projection = 0;
+    std::optional<std::uint32_t> raw_flags;
+    std::optional<CoopLocalView::Rect> viewport;
+};
+
+// The renderer's list is indexed by layer id. Restrict diagnostic reads to the
+// four extra world-layer slots and player 1's existing layer, not arbitrary ids.
+inline LayerState Inspect(const Game& game, std::uint32_t id) {
+    LayerState state;
+    if (id > 4 || !game.main_base || !game.read) return state;
+    const std::uint64_t base = game.main_base();
+    if (!base) return state;
+    const auto r64 = [&](std::uint64_t at) {
+        std::uint64_t v = 0;
+        return game.read(at, &v, sizeof v) ? v : std::uint64_t{0};
+    };
+    const std::uint64_t renderer = r64(base + CoopLocalView::kRenderer);
+    if (!renderer) return state;
+    std::uint32_t count = 0;
+    if (!game.read(renderer + CoopLocalView::kLayerCount, &count, sizeof count) || count <= id) return state;
+    const std::uint64_t array = r64(renderer + CoopLocalView::kLayerArray);
+    if (!array) return state;
+    state.address = r64(array + 8ull * id);
+    if (!state.address) return state;
+    state.camera = r64(state.address + kCamera);
+    state.projection = r64(state.address + CoopLocalView::kLayerProjection);
+    std::uint32_t flags = 0;
+    if (game.read(state.address + 0x88, &flags, sizeof flags)) state.raw_flags = flags;
+    CoopLocalView::Rect rect{};
+    if (game.read(state.address + CoopLocalView::kLayerRect, &rect, sizeof rect) &&
+        CoopLocalView::Usable(rect)) state.viewport = rect;
+    return state;
+}
+
 class Second {
 public:
     explicit Second(Game game) : g_(std::move(game)) {}
@@ -154,6 +193,23 @@ private:
         std::snprintf(b, sizeof b, "%#llx", static_cast<unsigned long long>(v));
         return b;
     }
+    void TraceLayers(const char* stage) const {
+        const LayerState first = Inspect(g_, 0), second = Inspect(g_, kId);
+        const auto describe = [&](const LayerState& a) {
+            std::string out = "address=" + Hex(a.address) + " flags(raw)=" +
+                              (a.raw_flags ? Hex(*a.raw_flags) : std::string("unreadable")) +
+                              " camera=" + Hex(a.camera) + " projection=" + Hex(a.projection);
+            if (!a.viewport) return out + " viewport=unreadable";
+            const auto& v = *a.viewport;
+            return out + " viewport=(" + std::to_string(static_cast<int>(v.min_x)) + "," +
+                   std::to_string(static_cast<int>(v.min_y)) + "," +
+                   std::to_string(static_cast<int>(v.max_x)) + "," +
+                   std::to_string(static_cast<int>(v.max_y)) + ")";
+        };
+        Say(std::string("draw state ") + stage + ": layer 0 " + describe(first) +
+            "; layer 1 " + describe(second) +
+            "; these fields do not prove inclusion in the GameScene draw pass");
+    }
     // [[[slot]] + field]: a global's object's field (slot: the global's pointer, as main's code loads it).
     std::uint64_t Field(std::uint64_t slot, std::uint64_t field) const {
         const std::uint64_t global = R64(slot);
@@ -178,6 +234,7 @@ private:
         const std::uint64_t owner = Field(main + kOwnerSlot, 0x38), heap = Field(main + kHeapSlot, 0x200);
         Say("owner " + Hex(owner) + ", heap " + Hex(heap) + ", layers " + std::to_string(Count()) + ", id 1 holds " +
             Hex(LayerAt(kId)));
+        TraceLayers("before maker");
         if (owner == 0 || heap == 0 || LayerAt(kId) != 0) return Say("not made: no owner/heap, or id 1 is taken");
         const std::uint64_t at = g_.scratch(std::vector<std::uint8_t>(kMakerSize > 256 ? 256 : kMakerSize, 0));
         if (at == 0) return Say("not made: no scratch");
@@ -199,6 +256,7 @@ private:
             g_.call(main + kBind, {bind_at, main_name, main + kGameScene, ptr_at, main + kMasterField, 0, *layer, 0});
         layer_ = *layer;
         failed_ = false;
+        TraceLayers("after binder");
         const std::uint64_t camera = R64(layer_ + kCamera);
         Say(std::string("bound: ") + (bound ? "called" : "not called") + "; the layer's camera " + Hex(camera) +
             " (vtable " + Hex(camera ? R64(camera) - main : 0) + "), projection " +
@@ -227,8 +285,10 @@ private:
         g_.write(camera + kCameraMatrix, m.data(), sizeof m);
         g_.write(camera + kCameraEye, &eye, sizeof eye);
         g_.write(camera + kCameraTarget, &target, sizeof target);
-        if (++follows_ == 1 || follows_ % 1200 == 0)
+        if (++follows_ == 1 || follows_ % 1200 == 0) {
             Say("frame " + std::to_string(follows_) + ": layers " + std::to_string(Count()) + ", rect right half");
+            TraceLayers("after camera and viewport update");
+        }
     }
 
     Game g_;
