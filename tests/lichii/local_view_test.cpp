@@ -31,6 +31,7 @@ struct Game {
     std::map<std::uint64_t, std::uint8_t> bytes;
     std::vector<std::string> log;
     int writes = 0;
+    std::optional<std::uint64_t> blocked_write;
 
     void Put(std::uint64_t a, const void* in, std::size_t n) {
         for (std::size_t i = 0; i < n; i++) bytes[a + i] = static_cast<const std::uint8_t*>(in)[i];
@@ -64,6 +65,7 @@ struct Game {
         m.main_base = [] { return kBase; };
         m.read = [this](std::uint64_t a, void* out, std::size_t n) { return Read(a, out, n); };
         m.write = [this](std::uint64_t a, const void* in, std::size_t n) {
+            if (blocked_write && *blocked_write == a) return false;
             if (!Read(a, std::vector<std::uint8_t>(n).data(), n)) return false;
             Put(a, in, n);
             writes++;
@@ -218,4 +220,49 @@ TEST_CASE("local layer: one try, after 5 s in play, and nothing without the call
     CHECK(log.size() == said);
     CHECK(calls == 0);
     CHECK(second.Layer() == 0);
+}
+
+TEST_CASE("local views: missing projection is retried after the viewport was cropped") {
+    Game g;
+    Views views(g.Memory());
+    // A scene can create its world layer before its projection is ready.
+    g.Set<std::uint64_t>(kLayer + CoopLocalView::kLayerProjection, 0);
+    views.Step(Want{2, Split::Side});
+    CHECK(g.LayerRect() == Rect{0, 0, 640, 720});
+    CHECK(g.Ratio() == doctest::Approx(1280.0 / 720.0));
+    g.Set<std::uint64_t>(kLayer + CoopLocalView::kLayerProjection, kProjection);
+    const int before = g.writes;
+    views.Step(Want{2, Split::Side});
+    CHECK(g.writes > before);
+    CHECK(g.Ratio() == doctest::Approx(640.0 / 720.0));
+    const int after = g.writes;
+    views.Step(Want{2, Split::Side});
+    CHECK(g.writes == after);  // Successful, steady-state frame does not rewrite.
+}
+
+TEST_CASE("local views: failed projection and restoration writes retry until complete") {
+    Game g;
+    Views views(g.Memory());
+    views.Step(Want{2, Split::Side});
+    CHECK(g.Ratio() == doctest::Approx(640.0 / 720.0));
+
+    g.blocked_write = kProjection + CoopLocalView::kProjectionRatio;
+    views.Step(Want{2, Split::Stacked});
+    CHECK(g.LayerRect() == Rect{0, 0, 1280, 360});
+    CHECK(g.Ratio() == doctest::Approx(640.0 / 720.0));
+    g.blocked_write.reset();
+    views.Step(Want{2, Split::Stacked});
+    CHECK(g.Ratio() == doctest::Approx(1280.0 / 360.0));
+
+    // Even a failed attempt to return to full-screen must be retried.
+    g.blocked_write = kLayer + CoopLocalView::kLayerRect;
+    views.Step(Want{0, Split::Side});
+    CHECK(g.LayerRect() == Rect{0, 0, 1280, 360});
+    g.blocked_write.reset();
+    views.Step(Want{0, Split::Side});
+    CHECK(g.LayerRect() == Rect{0, 0, 1280, 720});
+    CHECK(g.Ratio() == doctest::Approx(1280.0 / 720.0));
+    const int done = g.writes;
+    views.Step(Want{0, Split::Side});
+    CHECK(g.writes == done);
 }
